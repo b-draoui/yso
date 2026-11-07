@@ -7220,9 +7220,15 @@ function Get-GuiPicked {
 
 function Update-GuiPickCount {
     if ($script:GuiAskKind -ne 'pick') { return }
-    $n = @(Get-GuiPicked).Count
+    $n = (Get-GuiPicked).Count   # one list, not unrolled: no @() around it
     $script:Ui.RunAskText.Text = $(if ($n -eq 0) { L 'Nothing is ticked.' } else { L '{0} of {1} ticked.' $n $script:GuiPicks.Count })
     $script:Ui.RunAskOk.IsEnabled = ($n -gt 0)
+}
+
+function Set-GuiPicksEnabled([bool]$On) {
+    # (two loops: adding two lists together with + fails in PowerShell)
+    foreach ($c in $script:GuiPicks) { $c.IsEnabled = $On }
+    foreach ($c in $script:GuiPickLinks) { $c.IsEnabled = $On }
 }
 
 function Set-GuiPicks([string]$Which) {
@@ -7284,7 +7290,7 @@ function Show-GuiAsk([string]$Kind, [string]$Prompt, $Default) {
         $ui.RunAskNo.Style = $script:GuiWindow.FindResource([System.Windows.Controls.Button])
         $ui.RunAskNo.Margin = New-GuiThickness '0,0,8,0'
         $script:GuiPickRecommended = @($Default | ForEach-Object { [int]$_ })
-        foreach ($c in @($script:GuiPicks) + @($script:GuiPickLinks)) { if ($c) { $c.IsEnabled = $true } }
+        Set-GuiPicksEnabled $true
         Set-GuiPicks 'rec'
         if (@($script:GuiPicks).Count -gt 0) { [void]$script:GuiPicks[0].Focus() } else { [void]$ui.RunAskNo.Focus() }
     } else { [void]$ui.RunAskContinue.Focus() }
@@ -7299,7 +7305,7 @@ function Send-GuiAnswer($Value) {
     Hide-GuiAsk
     foreach ($b in $script:GuiOptions) { $b.IsEnabled = $false }   # those choices were for this question
     $script:GuiOptions.Clear()
-    foreach ($c in @($script:GuiPicks) + @($script:GuiPickLinks)) { if ($c) { $c.IsEnabled = $false } }
+    Set-GuiPicksEnabled $false
     if ($script:GuiAskKind -eq 'text' -and "$Value") { Add-GuiDocMessage ([object[]]@('line', 'info', (L 'Your answer: {0}' "$Value"))); Update-GuiOutputView }
     $script:GuiShared.Answers.Add($Value)
 }

@@ -1,4 +1,4 @@
-param([string]$ScriptPath, [string]$Sandbox)
+﻿param([string]$ScriptPath, [string]$Sandbox)
 # The window. WPF itself only exists on Windows (the CI draws every page there); this suite
 # checks everything around it on any OS: the layout file, the texts, and the second PowerShell that
 # does the work - what it writes, asks and measures, and how Stop ends it.
@@ -213,6 +213,29 @@ Check ($r.Out[-1] -eq '1,3') "the ticked numbers come back; a number not in the 
 $r = Invoke-WorkerJob ($job -replace "-join ','", "-join ','; 'end'") -Answers @(, [int[]]@())
 Check ($r.Out[-1] -eq 'end' -and $r.Out[-2] -eq '') 'Install nothing: nothing comes back'
 $srcText = Get-Content -LiteralPath $ScriptPath -Raw
+# The window's side of the tick boxes, with stand-ins for the WPF controls.
+$saved = @{ Ui = $script:Ui; Kind = $script:GuiAskKind }
+$script:Ui = @{ RunAsk = [pscustomobject]@{ Visibility = 'Visible' }; RunAskText = [pscustomobject]@{ Text = '' }; RunAskOk = [pscustomobject]@{ IsEnabled = $true } }
+$script:GuiOptions = New-Object System.Collections.Generic.List[object]
+$script:GuiPicks = New-Object System.Collections.Generic.List[object]
+$script:GuiPickLinks = New-Object System.Collections.Generic.List[object]
+foreach ($n in 1..3) { $script:GuiPicks.Add([pscustomobject]@{ Tag = $n; IsChecked = $false; IsEnabled = $false }) }
+$script:GuiPickLinks.Add([pscustomobject]@{ Tag = 'all'; IsEnabled = $false })
+$script:GuiAskKind = 'pick'; $script:GuiPickRecommended = @(1, 3)
+Set-GuiPicksEnabled $true; Set-GuiPicks 'rec'
+Check (((Get-GuiPicked) -join ',') -eq '1,3' -and $script:Ui.RunAskText.Text -eq '2 of 3 ticked.' -and $script:GuiPicks[1].IsEnabled) 'the recommended ones start ticked, and the count says so'
+Set-GuiPicks 'none'
+Check ((Get-GuiPicked).Count -eq 0 -and -not $script:Ui.RunAskOk.IsEnabled -and $script:Ui.RunAskText.Text -eq 'Nothing is ticked.') 'none: nothing ticked, and the install button is off'
+Set-GuiPicks 'all'; $script:GuiPicks[0].IsChecked = $false
+while ($shared.Answers.Count -gt 0) { [void]$shared.Answers.Take() }
+Send-GuiAnswer (Get-GuiPicked)
+$sent = $null; [void]$shared.Answers.TryTake([ref]$sent)
+Check ((@($sent) -join ',') -eq '2,3' -and $script:Ui.RunAsk.Visibility -eq 'Collapsed' -and -not $script:GuiPicks[2].IsEnabled -and -not $script:GuiPickLinks[0].IsEnabled) 'Install sends the ticked numbers, then the boxes are greyed out'
+$script:Ui.RunAsk.Visibility = 'Visible'; $script:GuiAskKind = 'yesno'; $script:GuiPicks.Clear(); $script:GuiPickLinks.Clear()
+Send-GuiAnswer $true
+$sent = $null; [void]$shared.Answers.TryTake([ref]$sent)
+Check ($sent -eq $true) 'other questions still get their answer when there is no tick box at all'
+$script:Ui = $saved.Ui; $script:GuiAskKind = $saved.Kind
 Check ($srcText -match "function Get-GuiPicked \{[^}]*return , \[int\[\]\]") 'the window sends the ticks as one list (an empty or one-item list is not lost on the way)'
 $r = Invoke-WorkerJob 'Wait-Key; ''after''' -Answers @('')
 Check ((@($r.Messages | Where-Object { $_[0] -eq 'ask' })[0][1]) -eq 'continue' -and $r.Out[-1] -eq 'after') 'Press Enter becomes a Continue button'
