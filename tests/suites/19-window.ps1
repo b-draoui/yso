@@ -236,6 +236,8 @@ Send-GuiAnswer $true
 $sent = $null; [void]$shared.Answers.TryTake([ref]$sent)
 Check ($sent -eq $true) 'other questions still get their answer when there is no tick box at all'
 $script:Ui = $saved.Ui; $script:GuiAskKind = $saved.Kind
+$wrapped = @([regex]::Matches($srcText, '@\(\$script:Gui(Picks|PickLinks|Options|Line)\)') | ForEach-Object { $_.Value })
+Check ($wrapped.Count -eq 0) "the window's lists are never wrapped in @() or added together (PowerShell fails with 'Argument types do not match') $($wrapped -join ' ')"
 Check ($srcText -match "function Get-GuiPicked \{[^}]*return , \[int\[\]\]") 'the window sends the ticks as one list (an empty or one-item list is not lost on the way)'
 $r = Invoke-WorkerJob 'Wait-Key; ''after''' -Answers @('')
 Check ((@($r.Messages | Where-Object { $_[0] -eq 'ask' })[0][1]) -eq 'continue' -and $r.Out[-1] -eq 'after') 'Press Enter becomes a Continue button'

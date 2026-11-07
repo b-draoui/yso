@@ -7292,7 +7292,7 @@ function Show-GuiAsk([string]$Kind, [string]$Prompt, $Default) {
         $script:GuiPickRecommended = @($Default | ForEach-Object { [int]$_ })
         Set-GuiPicksEnabled $true
         Set-GuiPicks 'rec'
-        if (@($script:GuiPicks).Count -gt 0) { [void]$script:GuiPicks[0].Focus() } else { [void]$ui.RunAskNo.Focus() }
+        if ($script:GuiPicks.Count -gt 0) { [void]$script:GuiPicks[0].Focus() } else { [void]$ui.RunAskNo.Focus() }
     } else { [void]$ui.RunAskContinue.Focus() }
 }
 

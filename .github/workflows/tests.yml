@@ -107,6 +107,7 @@ jobs:
             $clock = [Diagnostics.Stopwatch]::StartNew()
             # At most 10 minutes each, so a window that hangs still leaves time to show errors.log below.
             $p = Start-Process powershell.exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', '.\YSO.ps1', '-Snapshot', "`"$out\$lang`"") -PassThru -NoNewWindow
+            $null = $p.Handle   # without this, ExitCode stays empty once the process has ended
             if ($p.WaitForExit(600000)) { $code = $p.ExitCode } else { Stop-Process -Id $p.Id -Force; $code = 'timeout' }
             $culture = powershell.exe -NoProfile -Command '(Get-Culture).Name'
             $pics = @(Get-ChildItem "$out\$lang" -Filter *.png -ErrorAction SilentlyContinue)
