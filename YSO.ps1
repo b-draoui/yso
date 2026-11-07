@@ -6336,16 +6336,21 @@ function Read-GuiMessages($Shared, [int]$Max = 400) {
 
 function Invoke-GuiTick {
     # 15 times a second: show what the job wrote and asked, its progress, and start the next job.
+    if ($script:GuiSnapSteps) { Invoke-GuiSafe 'snapshot' { Invoke-GuiSnapshotStep } }
     $job = $script:GuiCurrent
     $msgs = Read-GuiMessages $script:GuiShared
     foreach ($m in $msgs) {
-        switch ($m[0]) {
-            'clear' { if ($job -and $job.Output) { Clear-GuiOutput } }
-            'ask'   { Show-GuiAsk $m[1] $m[2] $m[3] }
-            default {
-                # this session's log keeps the text too (the console is hidden)
-                if ($m[0] -eq 'text') { Write-Host $m[1] -NoNewline:([bool]$m[3]) } else { Write-Host (@($m | Select-Object -Skip 1) -join ' | ') }
-                if ($job -and $job.Output) { Add-GuiDocMessage $m }
+        # One message that cannot be shown is saved in errors.log and skipped: the next ones
+        # (above all a question the job waits for) still arrive.
+        Invoke-GuiSafe ('message ' + $m[0]) {
+            switch ($m[0]) {
+                'clear' { if ($job -and $job.Output) { Clear-GuiOutput } }
+                'ask'   { Show-GuiAsk $m[1] $m[2] $m[3] }
+                default {
+                    # this session's log keeps the text too (the console is hidden)
+                    if ($m[0] -eq 'text') { Write-Host $m[1] -NoNewline:([bool]$m[3]) } elseif ($m[0] -ne 'picklist') { Write-Host (@($m | Select-Object -Skip 1) -join ' | ') }
+                    if ($job -and $job.Output) { Add-GuiDocMessage $m }
+                }
             }
         }
     }
@@ -6355,7 +6360,6 @@ function Invoke-GuiTick {
         if ($job.Handle.IsCompleted -and $script:GuiShared.Queue.IsEmpty) { Complete-GuiJob }
     }
     if (-not $script:GuiCurrent -and $script:GuiJobs.Count -gt 0) { Start-NextGuiJob }
-    if ($script:GuiSnapSteps) { Invoke-GuiSnapshotStep }
 }
 
 function Invoke-GuiSafe([string]$Context, [scriptblock]$Block) {
@@ -7731,8 +7735,12 @@ $rec = @(for ($k = 0; $k -lt $items.Count; $k++) { if (Test-RecommendedUpdate $i
 function Invoke-GuiSnapshotStep {
     if ($script:GuiSnapClock.Elapsed.TotalMinutes -gt 8) {
         $script:GuiSnapFailed = $true
-        Write-YsoError -Context 'window snapshot' -ErrorRecord (New-Object System.Management.Automation.ErrorRecord ((New-Object System.TimeoutException 'The snapshot took more than 8 minutes.')), 'snapshot', 'OperationTimeout', $null)
+        $what = $(if ($script:GuiCurrent) { 'still running: ' + $script:GuiCurrent.Name } else { 'no job running' })
+        Write-YsoError -Context 'window snapshot' -ErrorRecord (New-Object System.Management.Automation.ErrorRecord ((New-Object System.TimeoutException ('The snapshot took more than 8 minutes (' + $what + ').'))), 'snapshot', 'OperationTimeout', $null)
         $script:GuiSnapSteps = $null
+        # a job waiting for an answer would keep the window open: stop it and close anyway
+        $script:GuiCloseWhenIdle = $true
+        if ($script:GuiCurrent) { Stop-GuiJob }
         $script:GuiWindow.Close()
         return
     }

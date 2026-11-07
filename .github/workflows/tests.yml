@@ -105,8 +105,9 @@ jobs:
             # French: also the number formats of a French Windows (comma for decimals), like most French PCs
             Set-Culture $(if ($lang -eq 'fr') { 'fr-FR' } else { 'en-US' })
             $clock = [Diagnostics.Stopwatch]::StartNew()
-            powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\YSO.ps1 -Snapshot "$out\$lang"
-            $code = $LASTEXITCODE
+            # At most 10 minutes each, so a window that hangs still leaves time to show errors.log below.
+            $p = Start-Process powershell.exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', '.\YSO.ps1', '-Snapshot', "`"$out\$lang`"") -PassThru -NoNewWindow
+            if ($p.WaitForExit(600000)) { $code = $p.ExitCode } else { Stop-Process -Id $p.Id -Force; $code = 'timeout' }
             $culture = powershell.exe -NoProfile -Command '(Get-Culture).Name'
             $pics = @(Get-ChildItem "$out\$lang" -Filter *.png -ErrorAction SilentlyContinue)
             "::notice title=Window on ${{ matrix.os }} ($lang - formats $culture)::exit code $code, $($pics.Count) pictures in $([int]$clock.Elapsed.TotalSeconds) s: $(($pics | ForEach-Object { '{0} ({1:N0} KB)' -f $_.BaseName, ($_.Length / 1KB) }) -join ', ')"
