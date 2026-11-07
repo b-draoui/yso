@@ -1,4 +1,4 @@
-param([string]$ScriptPath, [string]$Sandbox, [string]$Pwsh, [string]$Child)
+﻿param([string]$ScriptPath, [string]$Sandbox, [string]$Pwsh, [string]$Child)
 # Updates (28): reading winget's tables in any language, choosing what to install, automatic mode,
 # Windows Update drivers, the scheduled task and the settings. winget, Windows Update and Task
 # Scheduler are replaced by stand-ins; the real ones are exercised on real Windows by the CI job.
@@ -488,6 +488,30 @@ $items = @(
 $out = (Show-UpdateList $items @([pscustomobject]@{ Name = 'Zotero'; Version = '6.0.30'; Available = '7.0.11' }) 6>&1 | Out-String)
 Check ($out -match "MISES À JOUR D'APPLIS" -and $out -match 'pas en auto' -and $out -match 'facultatif' -and $out -match 'PAS MISES À JOUR PAR YSO') 'the list says what is not automatic, what is optional, and what YSO leaves alone'
 $script:Lang = 'en'
+Write-Host "`n===== NAMES AND COLUMNS =====" -ForegroundColor White
+$names = @(
+    @('Ollama version 0.40.10', '0.40.10', 'Ollama'), @('Pinokio 8.2.0', '8.2.0', 'Pinokio'),
+    @(('Miniconda3 py314_26.7.1-1 (Pyth' + [char]0x2026), 'py314_26.7.1-1', 'Miniconda3'), @('Miniforge3 26.3.2-3 (Python 3.1...', '26.3.2-3', 'Miniforge3'),
+    @('Microsoft Visual C++ 2015-2022 Redistributable (x64) - 14.38.33135', '14.38.33135.0', 'Microsoft Visual C++ 2015-2022 Redistributable (x64)'),
+    @('7-Zip 24.09 (x64)', '24.09', '7-Zip (x64)'), @('Inno Setup version 6.7.1', '6.7.1', 'Inno Setup'),
+    @('Java 8 Update 511 (64-bit)', '8.0.5110.32', 'Java 8 Update 511 (64-bit)'), @('Git', '2.56.0.2', 'Git'),
+    @('Visual Studio Build Tools 2019', '16.11.52', 'Visual Studio Build Tools 2019'), @('Ubisoft Connect', ('< 175.1.0.1' + [char]0x2026), 'Ubisoft Connect'),
+    @('2.4.1', '2.4.1', '2.4.1'))
+$bad = @($names | Where-Object { (Get-UpdateName $_[0] $_[1]) -cne $_[2] } | ForEach-Object { '{0} -> {1}' -f $_[0], (Get-UpdateName $_[0] $_[1]) })
+Check ($bad.Count -eq 0) "app names lose the version they carry, and only that ($($bad -join ' ; '))"
+Check ((Format-UpdateVersion '< 3.15.2') -eq 'older' -and (Format-UpdateVersion '3.15.2') -eq '3.15.2') '"< 3.15.2" (winget could not read the installed version) is shown as "older"'
+$long = @(
+    [pscustomobject]@{ Kind = 'App'; Name = 'Miniconda3 py314_26.7.1-1 (Python 3.14.5 64-bit) with a very long name'; Id = 'Anaconda.Miniconda3'; From = 'py314_26.7.1-1'; To = 'py314_26.9.4-0'; Excluded = $false; InUse = $false; Optional = $false; Major = $false },
+    [pscustomobject]@{ Kind = 'App'; Name = 'Ubisoft Connect'; Id = 'Ubisoft.Connect'; From = ('< 175.1.0.1' + [char]0x2026); To = '175.1.0.13416'; Excluded = $false; InUse = $false; Optional = $false; Major = $false },
+    [pscustomobject]@{ Kind = 'Driver'; Name = 'Microsoft Corporation AudioProcessingObject Driver Update (1.0.0.12) and more words'; Id = 'd1'; From = ''; To = ''; Excluded = $false; InUse = $false; Optional = $false })
+$rows = @(Get-UpdateRows $long)
+Check ($rows.Count -eq 3 -and $rows[0].Number -eq 1 -and $rows[2].Number -eq 3 -and $rows[1].Change -eq 'older -> 175.1.0.13416') 'each row keeps its number in the list (the number you type or tick)'
+$script:HostText = New-Object System.Text.StringBuilder
+function Write-Host { param([Parameter(Position = 0)]$Object, [switch]$NoNewline, $ForegroundColor) [void]$script:HostText.Append("$Object"); if (-not $NoNewline) { [void]$script:HostText.Append("`n") } }
+Write-UpdateRows $rows
+Remove-Item function:Write-Host
+$lines = @($script:HostText.ToString() -split "`n" | Where-Object { $_ -match '^\s+\d+\s' })
+Check ($lines.Count -eq 3 -and @($lines | Where-Object { $_.Trim() -notmatch '\S {3,}\S' }).Count -eq 0) "long names stay three spaces away from the next column, so the window keeps them lined up ($($lines.Count) rows)"
 function Get-ScheduledTask { param($TaskName, $ErrorAction) if ($TaskName -eq 'YSO Auto Updates') { [pscustomobject]@{ TaskName = $TaskName } } }
 function Get-Volume { }
 function Clear-Host { }

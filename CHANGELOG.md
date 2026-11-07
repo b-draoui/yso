@@ -23,4 +23,7 @@ Fixes after the first tests on real PCs (same version, corrected build):
 - Copied text no longer shows "Drive C::"; the update list keeps a space between versions and notes.
 - **Windows Update cache**: kept when Windows has downloaded updates it has not installed yet (one PC had 9 GB of them): deleting them only made Windows download them again. YSO names the update and says what to do; Analyze no longer counts it.
 - Readable names for apps found by their cache layout (Ollama, Outlook, Microsoft Store, Windows Settings instead of "ollama app.exe", "Olk"...).
+- **Updates in the window are ticked, not typed**: each update has its own tick box, the recommended ones are ticked first, and "all" or "none" tick the rest in one click. The console still takes numbers.
+- Update names no longer repeat their version ("Ollama version 0.40.10" is now "Ollama"), long names no longer push the versions out of their column, and "< 3.15.2" (winget could not read the installed version) now reads "older".
+- The list says that only apps in the winget catalog are checked: the others update from the app itself.
 - Installed copies of 1.0 offer these fixes with their Update button.

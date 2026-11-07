@@ -33,7 +33,7 @@ To uninstall: Settings > Apps > Installed apps > YSO > Uninstall. YSO asks wheth
 | **Home** | The health of the PC in green, orange or red: disk space and wear, battery, Windows Update, antivirus, startup programs, last cleanup, app updates. Each card has the button that helps. |
 | **Analyze** | Measures what can be freed, part by part. Deletes nothing. |
 | **Clean** | Temporary files, browser caches (every profile of Chrome, Edge, Brave, Vivaldi, Opera, Firefox), offline copies kept by websites, system junk, developer and app caches (including any app built on Chromium), GPU shader caches, Windows Update cache, Windows Disk Cleanup and the component store. Old driver versions and the Recycle Bin only if you tick them. |
-| **Updates** | App updates with winget and driver updates with Windows Update, in one list: manual, "notify me", or automatic on a schedule. |
+| **Updates** | App updates with winget and driver updates with Windows Update, in one list where you tick what to install: manual, "notify me", or automatic on a schedule. Only apps in the winget catalog are checked. |
 | **Startup programs** | Switched on and off the same way as Task Manager, with publisher and boot impact. |
 | **Health report** | Disk wear, battery capacity, Windows Update status, crashes, security, drivers. |
 | **Restore points** | See them, create one, keep only the newest. |

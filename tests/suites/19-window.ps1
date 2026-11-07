@@ -194,6 +194,26 @@ Check ($r.Out[-1].A -eq $false -and $r.Out[-1].B -eq '12' -and $r.Out[-1].C -eq 
 $r = Invoke-WorkerJob '$script:Lang = ''fr''; Confirm-Action ''Turn it off?'' $false; $script:Lang = ''en''' -Answers @($false)
 Check ((@($r.Messages | Where-Object { $_[0] -eq 'ask' })[0][2]) -eq 'Le désactiver ?') 'in French when French is chosen'
 
+$job = @'
+$items = @(
+    [pscustomobject]@{ Kind = 'App'; Name = 'Ollama version 0.40.10'; Id = 'Ollama.Ollama'; From = '0.40.10'; To = '0.40.15'; Excluded = $false; InUse = $false; Optional = $false; Major = $false },
+    [pscustomobject]@{ Kind = 'App'; Name = 'Blender'; Id = 'BlenderFoundation.Blender'; From = '4.4.0'; To = '5.2.3'; Excluded = $false; InUse = $false; Optional = $false; Major = $true },
+    [pscustomobject]@{ Kind = 'Driver'; Name = 'Realtek Audio Driver Update (6.0.9600.1)'; Id = 'd1'; From = ''; To = ''; Excluded = $false; InUse = $false; Optional = $true })
+Show-UpdateList $items @() @()
+@(Read-UpdateSelection 3 @(1)) -join ','
+'@
+$r = Invoke-WorkerJob $job -Answers @(, [int[]]@(1, 3, 7))
+$pl = @($r.Messages | Where-Object { $_[0] -eq 'picklist' })
+$ask = @($r.Messages | Where-Object { $_[0] -eq 'ask' })
+$rowsSent = $(if ($pl.Count) { @($pl[0][1]) } else { @() })
+Check ($pl.Count -eq 1 -and $rowsSent.Count -eq 3 -and $rowsSent[0][2] -eq 'Ollama' -and $rowsSent[1][4] -eq 'new major version' -and $rowsSent[2][1] -eq 'Driver' -and $rowsSent[2][5] -eq $true) 'updates reach the window as a list to tick (name without its version, notes, optional drivers marked)'
+Check (@($r.Messages | Where-Object { $_[0] -eq 'text' -and $_[1] -match 'Ollama' }).Count -eq 0) 'and not as lines of text'
+Check ($ask.Count -eq 1 -and $ask[0][1] -eq 'pick' -and (@($ask[0][3]) -join ',') -eq '1') 'the question asks for ticks, with the recommended ones ticked first'
+Check ($r.Out[-1] -eq '1,3') "the ticked numbers come back; a number not in the list is ignored ($($r.Out[-1]))"
+$r = Invoke-WorkerJob ($job -replace "-join ','", "-join ','; 'end'") -Answers @(, [int[]]@())
+Check ($r.Out[-1] -eq 'end' -and $r.Out[-2] -eq '') 'Install nothing: nothing comes back'
+$srcText = Get-Content -LiteralPath $ScriptPath -Raw
+Check ($srcText -match "function Get-GuiPicked \{[^}]*return , \[int\[\]\]") 'the window sends the ticks as one list (an empty or one-item list is not lost on the way)'
 $r = Invoke-WorkerJob 'Wait-Key; ''after''' -Answers @('')
 Check ((@($r.Messages | Where-Object { $_[0] -eq 'ask' })[0][1]) -eq 'continue' -and $r.Out[-1] -eq 'after') 'Press Enter becomes a Continue button'
 

@@ -3491,44 +3491,90 @@ function Test-RecommendedUpdate($Item, [string]$Mode) {
     return $true
 }
 
-function Show-UpdateList([object[]]$Items, [object[]]$Others, [object[]]$Firmware = @()) {
-    $apps = @($Items | Where-Object { $_.Kind -eq 'App' })
-    $drivers = @($Items | Where-Object { $_.Kind -eq 'Driver' })
+function Get-UpdateName([string]$Name, [string]$Version) {
+    # winget shows the name Windows lists, which often carries the version too: "Ollama version 0.40.10",
+    # "Pinokio 8.2.0", "Miniconda3 py314_26.7.1-1 (Python...". The version has its own column.
+    $n = "$Name".Trim()
+    $v = ("$Version" -replace '^[<>]\s*', '').Trim()
+    if ($v.Length -ge 3 -and $v -match '\d' -and $v -notmatch [char]0x2026) {
+        foreach ($c in @($v, ($v -replace '(\.0)+$', '')) | Select-Object -Unique) {
+            if ($c.Length -lt 3) { continue }
+            $n = [regex]::Replace($n, '(?i)(\s+(version|ver\.?)\s*|\s+v|\s+|^)' + [regex]::Escape($c) + '(?![\w.])', '')
+        }
+    }
+    $n = $n -replace '\s*\([^)]*$', ''   # a bracket winget cut off: "(Pyth..."
+    $n = $n.Trim(' ', '-', ',', '_')
+    if ($n -notmatch '\p{L}') { return "$Name".Trim() }
+    return $n
+}
+
+function Format-UpdateVersion([string]$Version) {
+    # winget writes "< 3.15.2" when it cannot read the installed version, only that it is older.
+    if ("$Version" -match '^\s*<') { return (L 'older') }
+    return (Get-Truncated "$Version".Trim() 14)
+}
+
+function Get-UpdateRows([object[]]$Items) {
+    # The list the console prints and the window shows with tick boxes. Number = place in $Items.
     $n = 0
+    return @(foreach ($it in @($Items)) {
+        $n++
+        if ($it.Kind -eq 'App') {
+            $notes = @()
+            if ($it.Excluded) { $notes += (L 'not automatic') }
+            elseif ($it.Major) { $notes += (L 'new major version') }
+            if ($it.InUse) { $notes += (L 'open now') }
+            [pscustomobject]@{ Number = $n; Kind = 'App'; Name = (Get-UpdateName $it.Name $it.From)
+                               Change = ('{0} -> {1}' -f (Format-UpdateVersion $it.From), (Format-UpdateVersion $it.To)); Note = ($notes -join ', '); Warn = ($notes.Count -gt 0) }
+        } else {
+            [pscustomobject]@{ Number = $n; Kind = 'Driver'; Name = "$($it.Name)"; Change = ''
+                               Note = $(if ($it.Optional) { L 'optional' } else { L 'recommended' }); Warn = [bool]$it.Optional }
+        }
+    })
+}
+
+function Write-UpdateRows([object[]]$Rows) {
+    # Columns stay at least three spaces apart, so long names never run into the version.
+    $apps = @($Rows | Where-Object { $_.Kind -eq 'App' })
+    $drivers = @($Rows | Where-Object { $_.Kind -eq 'Driver' })
     if ($apps.Count -gt 0) {
         Write-Section 'APP UPDATES (winget)'
-        foreach ($a in $apps) {
-            $n++
-            $notes = @()
-            if ($a.Excluded) { $notes += (L 'not automatic') }
-            elseif ($a.Major) { $notes += (L 'new major version') }
-            if ($a.InUse) { $notes += (L 'open now') }
-            Write-Host ('  {0,3}  ' -f $n) -NoNewline -ForegroundColor Green
-            Write-Host ((Get-Truncated $a.Name 34).PadRight(35)) -NoNewline
-            Write-Host (('{0} -> {1}' -f (Get-Truncated $a.From 14), (Get-Truncated $a.To 14)).PadRight(32) + '  ') -NoNewline -ForegroundColor Gray
-            Write-Host ($notes -join ', ') -ForegroundColor Yellow
-        }
-        if (@($apps | Where-Object { $_.Major -and -not $_.Excluded }).Count -gt 0) {
-            Write-Info 'New major version: it can change how the app works - pick it yourself when you are ready.'
+        foreach ($r in $apps) {
+            Write-Host ('  {0,3}  ' -f $r.Number) -NoNewline -ForegroundColor Green
+            Write-Host ((Get-Truncated $r.Name 32).PadRight(35)) -NoNewline
+            if ($r.Note) {
+                Write-Host ((Get-Truncated $r.Change 32).PadRight(35)) -NoNewline -ForegroundColor Gray
+                Write-Host $r.Note -ForegroundColor Yellow
+            } else { Write-Host $r.Change -ForegroundColor Gray }
         }
     }
     if ($drivers.Count -gt 0) {
         Write-Section 'DRIVER UPDATES (Windows Update)'
-        foreach ($d in $drivers) {
-            $n++
-            Write-Host ('  {0,3}  ' -f $n) -NoNewline -ForegroundColor Green
-            Write-Host ((Get-Truncated $d.Name 66).PadRight(67)) -NoNewline
-            if ($d.Optional) { Write-Host (L 'optional') -ForegroundColor Yellow } else { Write-Host (L 'recommended') -ForegroundColor Gray }
+        foreach ($r in $drivers) {
+            Write-Host ('  {0,3}  ' -f $r.Number) -NoNewline -ForegroundColor Green
+            Write-Host ((Get-Truncated $r.Name 64).PadRight(67)) -NoNewline
+            Write-Host $r.Note -ForegroundColor $(if ($r.Warn) { 'Yellow' } else { 'Gray' })
         }
-        if (@($drivers | Where-Object { $_.Optional }).Count -gt 0) {
-            Write-Info 'Optional drivers: Microsoft advises installing them only if that device has a problem.'
-        }
+    }
+}
+
+function Show-UpdateList([object[]]$Items, [object[]]$Others, [object[]]$Firmware = @()) {
+    $rows = @(Get-UpdateRows $Items)
+    if ($rows.Count -gt 0) { Write-UpdateRows $rows }
+    if (@($Items | Where-Object { $_.Kind -eq 'App' -and $_.Major -and -not $_.Excluded }).Count -gt 0) {
+        Write-Info 'New major version: it can change how the app works - pick it yourself when you are ready.'
+    }
+    if (@($Items | Where-Object { $_.Kind -eq 'App' }).Count -gt 0) {
+        Write-Info 'Only apps in the winget catalog are checked. The others update from the app itself or from their website.'
+    }
+    if (@($Items | Where-Object { $_.Kind -eq 'Driver' -and $_.Optional }).Count -gt 0) {
+        Write-Info 'Optional drivers: Microsoft advises installing them only if that device has a problem.'
     }
     if (@($Others).Count -gt 0) {
         Write-Section 'ALSO NEWER, BUT NOT UPDATED BY YSO'
         foreach ($o in $Others) {
-            Write-Host ('       {0}' -f (Get-Truncated $o.Name 34).PadRight(35)) -NoNewline
-            Write-Host ('{0} -> {1}' -f $o.Version, $o.Available) -ForegroundColor DarkGray
+            Write-Host ('       {0}' -f (Get-Truncated (Get-UpdateName $o.Name $o.Version) 32).PadRight(35)) -NoNewline
+            Write-Host ('{0} -> {1}' -f (Format-UpdateVersion $o.Version), (Format-UpdateVersion $o.Available)) -ForegroundColor DarkGray
         }
         Write-Info 'These apps update themselves or need their own updater (winget does not update them automatically).'
     }
@@ -3541,6 +3587,8 @@ function Show-UpdateList([object[]]$Items, [object[]]$Others, [object[]]$Firmwar
 
 function Read-UpdateSelection([int]$Count, [int[]]$Recommended) {
     # A = the recommended ones; T = all; "1,3" or "2-4" = only those; Enter = nothing. Returns 1-based numbers.
+    # (In the window, tick boxes replace this question.)
+    if (@($Recommended).Count -gt 0) { Write-Info (L 'Recommended: {0}' ($Recommended -join ', ')) }
     if (@($Recommended).Count -gt 0) { Write-Option 'A' 'Install the recommended ones' }
     Write-Option 'T' 'Install all of them (new major versions too)'
     $ans = Read-Choice 'Or type numbers (e.g. 1,3 or 2-4), Enter = nothing'
@@ -3808,7 +3856,6 @@ function Invoke-UpdateRun {
         if ($items.Count -gt 0) {
             if ($Mode -eq 'Manual' -and -not $script:DryRun) {
                 Write-Host ''
-                if ($recommended.Count -gt 0) { Write-Info (L 'Recommended: {0}' ($recommended -join ', ')) }
                 $chosen = @(Read-UpdateSelection $items.Count $recommended | ForEach-Object { $items[$_ - 1] })
             } else {
                 $chosen = @($recommended | ForEach-Object { $items[$_ - 1] })
@@ -6195,6 +6242,15 @@ function Enable-GuiAdapters($Shared) {
     function global:Show-HealthDashboard([object[]]$Items) {
         foreach ($i in $Items) { $script:GuiShared.Queue.Enqueue([object[]]@('health', "$($i.Level)", (L $i.Name), "$($i.Text)", "$($i.Action)")) }
     }
+    # Updates: the window shows them with tick boxes, and the question that follows reads them.
+    function global:Write-UpdateRows([object[]]$Rows) {
+        $list = @(foreach ($r in @($Rows)) { , [object[]]@([int]$r.Number, "$($r.Kind)", "$($r.Name)", "$($r.Change)", "$($r.Note)", [bool]$r.Warn) })
+        $script:GuiShared.Queue.Enqueue([object[]]@('picklist', [object[]]$list))
+    }
+    function global:Read-UpdateSelection([int]$Count, [int[]]$Recommended) {
+        $a = Request-GuiAnswer 'pick' (L 'Tick the updates to install.') ([int[]]@($Recommended))
+        return @(@($a) | Where-Object { "$_" -match '^\d+$' } | ForEach-Object { [int]"$_" } | Where-Object { $_ -ge 1 -and $_ -le $Count } | Sort-Object -Unique)
+    }
 }
 
 # ------------------------------------------------------------------
@@ -6943,6 +6999,9 @@ function Clear-GuiOutput {
     $script:GuiLine = New-Object System.Collections.Generic.List[object]
     $script:GuiDocText = New-Object System.Text.StringBuilder
     $script:GuiOptions = New-Object System.Collections.Generic.List[object]
+    $script:GuiPicks = New-Object System.Collections.Generic.List[object]
+    $script:GuiPickLinks = New-Object System.Collections.Generic.List[object]
+    $script:GuiPickRecommended = @()
 }
 
 function Add-GuiBlock($Element) {
@@ -6970,7 +7029,7 @@ function Complete-GuiRawLine {
     $plain = (@($runs | ForEach-Object { $_[0] }) -join '')
     [void]$script:GuiDocText.AppendLine($plain.TrimEnd())
     if (-not $plain.Trim()) { Add-GuiSpacer; return }
-    $aligned = ($plain.Trim() -match '\S {3,}\S')
+    $aligned = ($plain.Trim() -match '\S {3,}\S' -or $plain -match '^\s{2,}\d+\s{2}\S')
     $indent = $plain.Length - $plain.TrimStart().Length
     $cut = $(if ($aligned) { [math]::Min(2, $indent) } else { $indent })
     $tb = New-Object System.Windows.Controls.TextBlock
@@ -7066,6 +7125,7 @@ function Add-GuiDocMessage($m) {
             $script:GuiOptions.Add($b)
             Add-GuiBlock $b
         }
+        'picklist' { Add-GuiPickList @($m[1]) }
         'health' {
             [void]$script:GuiDocText.AppendLine(('{0}: {1}' -f ([string]$m[2]).TrimEnd(':', ' '), $m[3]))
             $look = @{ Good = @('Good', [string][char]0xE73E); Warn = @('Warn', [string][char]0xE7BA); Bad = @('Bad', [string][char]0xEA39); Info = @('Info', [string][char]0xE946) }
@@ -7083,6 +7143,90 @@ function Add-GuiDocMessage($m) {
             Add-GuiBlock $g
         }
     }
+}
+
+function Add-GuiPickList([object[]]$Rows) {
+    # Updates to choose from, one tick box each: Number, Kind, Name, Change, Note, Warn.
+    # They stay greyed out until the question that follows (pick) arrives.
+    if (-not $script:GuiPicks) { $script:GuiPicks = New-Object System.Collections.Generic.List[object] }
+    if (-not $script:GuiPickLinks) { $script:GuiPickLinks = New-Object System.Collections.Generic.List[object] }
+    $quick = New-Object System.Windows.Controls.StackPanel
+    $quick.Orientation = 'Horizontal'
+    $quick.Margin = New-GuiThickness '0,6,0,0'
+    $label = New-GuiText (L 'Tick:') 12.5 'Text3'
+    $label.VerticalAlignment = 'Center'
+    [void]$quick.Children.Add($label)
+    foreach ($q in @(@('rec', (L 'the recommended ones')), @('all', (L 'all')), @('none', (L 'none')))) {
+        $b = New-Object System.Windows.Controls.Button
+        $b.Style = $script:GuiWindow.FindResource('Link')
+        $b.Content = $q[1]
+        $b.Tag = $q[0]
+        $b.IsEnabled = $false
+        $b.Margin = New-GuiThickness '2,0,0,0'
+        $b.Add_Click({ param($s, $e) Invoke-GuiSafe 'tick' { Set-GuiPicks "$($s.Tag)" } })
+        [void]$quick.Children.Add($b)
+        $script:GuiPickLinks.Add($b)
+    }
+    Add-GuiBlock $quick
+    foreach ($kind in @('App', 'Driver')) {
+        $group = @($Rows | Where-Object { $_[1] -eq $kind })
+        if ($group.Count -eq 0) { continue }
+        $title = $(if ($kind -eq 'App') { L 'APP UPDATES (winget)' } else { L 'DRIVER UPDATES (Windows Update)' })
+        [void]$script:GuiDocText.AppendLine('').AppendLine($title)
+        Add-GuiBlock (New-GuiText $title 12 'Text2' 'SemiBold' -Margin '0,14,0,4')
+        foreach ($r in $group) {
+            [void]$script:GuiDocText.AppendLine(('  {0,3}  {1}   {2}   {3}' -f $r[0], $r[2], $r[3], $r[4]).TrimEnd())
+            $cb = New-Object System.Windows.Controls.CheckBox
+            $cb.Tag = [int]$r[0]
+            $cb.IsEnabled = $false
+            $cb.Margin = New-GuiThickness '0,5,0,5'
+            [System.Windows.Automation.AutomationProperties]::SetName($cb, ((@($r[2], $r[3], $r[4]) | Where-Object { $_ }) -join ', '))
+            $g = New-Object System.Windows.Controls.Grid
+            $g.ColumnDefinitions.Add((New-GuiColumn '*'))
+            if ($kind -eq 'App') { $g.ColumnDefinitions.Add((New-GuiColumn '250')) }
+            $g.ColumnDefinitions.Add((New-GuiColumn '160'))
+            $name = New-GuiText ([string]$r[2]) 13 'Text'
+            $name.TextTrimming = 'CharacterEllipsis'
+            $name.ToolTip = [string]$r[2]
+            $g.Children.Add($name) | Out-Null
+            $col = 1
+            if ($kind -eq 'App') {
+                $ch = New-GuiText ([string]$r[3]) 13 'Text2' -Margin '12,0,0,0'
+                $ch.TextTrimming = 'CharacterEllipsis'
+                [System.Windows.Controls.Grid]::SetColumn($ch, 1)
+                $g.Children.Add($ch) | Out-Null
+                $col = 2
+            }
+            $note = New-GuiText ([string]$r[4]) 12.5 $(if ($r[5]) { 'Warn' } else { 'Text3' }) -Margin '12,0,0,0'
+            $note.TextTrimming = 'CharacterEllipsis'
+            [System.Windows.Controls.Grid]::SetColumn($note, $col)
+            $g.Children.Add($note) | Out-Null
+            $cb.Content = $g
+            $cb.Add_Click({ Invoke-GuiSafe 'tick' { Update-GuiPickCount } })
+            $script:GuiPicks.Add($cb)
+            Add-GuiBlock $cb
+        }
+    }
+}
+
+function Get-GuiPicked {
+    # The comma keeps the list whole, even when it is empty or has one number.
+    return , [int[]]@($script:GuiPicks | Where-Object { $_.IsChecked } | ForEach-Object { [int]$_.Tag })
+}
+
+function Update-GuiPickCount {
+    if ($script:GuiAskKind -ne 'pick') { return }
+    $n = @(Get-GuiPicked).Count
+    $script:Ui.RunAskText.Text = $(if ($n -eq 0) { L 'Nothing is ticked.' } else { L '{0} of {1} ticked.' $n $script:GuiPicks.Count })
+    $script:Ui.RunAskOk.IsEnabled = ($n -gt 0)
+}
+
+function Set-GuiPicks([string]$Which) {
+    foreach ($cb in $script:GuiPicks) {
+        $on = switch ($Which) { 'all' { $true } 'none' { $false } default { @($script:GuiPickRecommended) -contains [int]$cb.Tag } }
+        $cb.IsChecked = [bool]$on
+    }
+    Update-GuiPickCount
 }
 
 function Add-GuiOutput([string]$Text, [string]$Color, [bool]$NoNewline) {
@@ -7106,9 +7250,12 @@ function Show-GuiAsk([string]$Kind, [string]$Prompt, $Default) {
     $script:GuiAskDefault = $Default
     $ui.RunAsk.Visibility = 'Visible'
     $ui.RunAskBox.Visibility = $(if ($Kind -eq 'text') { 'Visible' } else { 'Collapsed' })
-    $ui.RunAskOk.Visibility = $(if ($Kind -eq 'text') { 'Visible' } else { 'Collapsed' })
+    $ui.RunAskOk.Visibility = $(if ($Kind -eq 'text' -or $Kind -eq 'pick') { 'Visible' } else { 'Collapsed' })
     $ui.RunAskYes.Visibility = $(if ($Kind -eq 'yesno') { 'Visible' } else { 'Collapsed' })
-    $ui.RunAskNo.Visibility = $(if ($Kind -eq 'yesno') { 'Visible' } else { 'Collapsed' })
+    $ui.RunAskNo.Visibility = $(if ($Kind -eq 'yesno' -or $Kind -eq 'pick') { 'Visible' } else { 'Collapsed' })
+    $ui.RunAskOk.Content = $(if ($Kind -eq 'pick') { L 'Install the ticked updates' } else { L 'OK' })
+    $ui.RunAskNo.Content = $(if ($Kind -eq 'pick') { L 'Install nothing' } else { L 'No' })
+    $ui.RunAskOk.IsEnabled = $true
     $ui.RunAskContinue.Visibility = $(if ($Kind -eq 'continue') { 'Visible' } else { 'Collapsed' })
     $text = ($Prompt -replace '^\[\?\]\s*', '').Trim()
     if ($Kind -eq 'continue') { $text = (L 'Read the result above, then continue.') }
@@ -7128,6 +7275,14 @@ function Show-GuiAsk([string]$Kind, [string]$Prompt, $Default) {
     } elseif ($Kind -eq 'text') {
         $ui.RunAskBox.Text = ''
         [void]$ui.RunAskBox.Focus()
+    } elseif ($Kind -eq 'pick') {
+        # the updates above become tick boxes you can use; the recommended ones are ticked
+        $ui.RunAskNo.Style = $script:GuiWindow.FindResource([System.Windows.Controls.Button])
+        $ui.RunAskNo.Margin = New-GuiThickness '0,0,8,0'
+        $script:GuiPickRecommended = @($Default | ForEach-Object { [int]$_ })
+        foreach ($c in @($script:GuiPicks) + @($script:GuiPickLinks)) { if ($c) { $c.IsEnabled = $true } }
+        Set-GuiPicks 'rec'
+        if (@($script:GuiPicks).Count -gt 0) { [void]$script:GuiPicks[0].Focus() } else { [void]$ui.RunAskNo.Focus() }
     } else { [void]$ui.RunAskContinue.Focus() }
 }
 
@@ -7140,6 +7295,7 @@ function Send-GuiAnswer($Value) {
     Hide-GuiAsk
     foreach ($b in $script:GuiOptions) { $b.IsEnabled = $false }   # those choices were for this question
     $script:GuiOptions.Clear()
+    foreach ($c in @($script:GuiPicks) + @($script:GuiPickLinks)) { if ($c) { $c.IsEnabled = $false } }
     if ($script:GuiAskKind -eq 'text' -and "$Value") { Add-GuiDocMessage ([object[]]@('line', 'info', (L 'Your answer: {0}' "$Value"))); Update-GuiOutputView }
     $script:GuiShared.Answers.Add($Value)
 }
@@ -7428,9 +7584,9 @@ function Show-YsoWindow([string]$Snapshot = '') {
     $ui.RunStop.Add_Click({ Invoke-GuiSafe 'stop' { Stop-GuiJob } })
     $ui.RunBack.Add_Click({ Show-GuiPage $(if ($script:Ui.RunTitle.Text -eq (L 'Analyze')) { 'Clean' } else { 'Home' }) })
     $ui.RunAskYes.Add_Click({ Send-GuiAnswer $true })
-    $ui.RunAskNo.Add_Click({ Send-GuiAnswer $false })
+    $ui.RunAskNo.Add_Click({ if ($script:GuiAskKind -eq 'pick') { Send-GuiAnswer ([int[]]@()) } else { Send-GuiAnswer $false } })
     $ui.RunAskContinue.Add_Click({ Send-GuiAnswer '' })
-    $ui.RunAskOk.Add_Click({ Send-GuiAnswer $script:Ui.RunAskBox.Text })
+    $ui.RunAskOk.Add_Click({ if ($script:GuiAskKind -eq 'pick') { Send-GuiAnswer (Get-GuiPicked) } else { Send-GuiAnswer $script:Ui.RunAskBox.Text } })
     $ui.RunCopy.Add_Click({ Invoke-GuiSafe 'copy' { Copy-GuiOutput } })
     $ui.RunAskBox.Add_KeyDown({ param($s, $e) if ($e.Key -eq 'Return') { Send-GuiAnswer $script:Ui.RunAskBox.Text; $e.Handled = $true } })
 
@@ -7533,10 +7689,43 @@ function Initialize-GuiSnapshot([string]$Dir) {
         { Save-GuiPng '7-question'; $true },
         { if ($script:GuiCurrent) { Send-GuiAnswer '0' }; $true },
         { -not $script:GuiCurrent -and $script:GuiJobs.Count -eq 0 },
+        { Start-GuiUpdateSample; $true },
+        { $script:Ui.RunAsk.Visibility -eq 'Visible' -or -not $script:GuiCurrent },
+        { Save-GuiPng '9-update-choice'; $true },
+        { if ($script:GuiCurrent) { Send-GuiAnswer ([int[]]@()) }; $true },
+        { -not $script:GuiCurrent -and $script:GuiJobs.Count -eq 0 },
         { Show-GuiPage 'Home'; Start-GuiClean -Everything; $true },
         { Save-GuiPng '8-dialog'; Close-GuiDialog $false; $true },
         { $script:GuiWindow.Close(); $true }
     )) { $script:GuiSnapSteps.Enqueue($s) }
+}
+
+function Start-GuiUpdateSample {
+    # For -Snapshot only: the update choice with a made-up list. Nothing is searched or installed.
+    $title = L 'Updates: apps & drivers'
+    Reset-GuiRun $title
+    Show-GuiPage 'Run'
+    $sample = @'
+function New-SampleUpdate($Kind, $Name, $From, $To, $Major = $false, $InUse = $false, $Excluded = $false, $Optional = $false) {
+    [pscustomobject]@{ Kind = $Kind; Name = $Name; Id = 'Sample.App'; From = $From; To = $To; Class = ''; Optional = $Optional; Excluded = $Excluded; InUse = $InUse; Update = $null; Major = $Major }
+}
+$items = @(
+    (New-SampleUpdate 'App' 'Blender' '4.4.0' '5.2.3' $true),
+    (New-SampleUpdate 'App' 'Docker Desktop' '4.46.0' '4.98.0' $false $false $true),
+    (New-SampleUpdate 'App' 'Git' '2.56.0.2' '2.56.0.4'),
+    (New-SampleUpdate 'App' 'Miniconda3 py314_26.7.1-1 (Python 3.14.5 64-bit)' 'py314_26.7.1-1' 'py314_26.9.4-0'),
+    (New-SampleUpdate 'App' 'Ollama version 0.40.10' '0.40.10' '0.40.15' $false $true),
+    (New-SampleUpdate 'App' 'Python Launcher' '< 3.15.2' '3.15.2'),
+    (New-SampleUpdate 'Driver' 'Microsoft Corporation AudioProcessingObject Driver Update (1.0.0.12)' '' ''),
+    (New-SampleUpdate 'Driver' 'Intel Corporation Bluetooth Driver Update (23.150.0.3)' '' '' $false $false $false $true)
+)
+Show-UpdateList $items @() @()
+$rec = @(for ($k = 0; $k -lt $items.Count; $k++) { if (Test-RecommendedUpdate $items[$k] 'Manual') { $k + 1 } })
+[void](Read-UpdateSelection $items.Count $rec)
+[pscustomobject]@{ Run = [pscustomobject]@{ Status = 'done'; Results = @() }; Lang = $script:Lang }
+'@
+    Add-GuiJob -Name 'update sample' -Output -Title $title -Script $sample -OnDone { param($Out, $Err) Complete-GuiRun $(if ($Out.Count -gt 0) { $Out[-1] } else { $null }) $Err }
+    Update-GuiBusy
 }
 
 function Invoke-GuiSnapshotStep {
@@ -8887,6 +9076,17 @@ checked on GitHub when YSO opens ==> vérifiées sur GitHub à l'ouverture de YS
 Check for new versions of YSO ==> Vérifier les nouvelles versions de YSO
 Checksum verified (SHA-256 {0}...). ==> Somme de contrôle vérifiée (SHA-256 {0}...).
 Choose an option above, or type it here. ==> Choisissez une option ci-dessus, ou tapez-la ici.
+Tick the updates to install. ==> Cochez les mises à jour à installer.
+Tick: ==> Cocher :
+the recommended ones ==> les recommandées
+all ==> toutes
+none ==> aucune
+{0} of {1} ticked. ==> Cochées : {0} sur {1}.
+Nothing is ticked. ==> Rien n'est coché.
+Install the ticked updates ==> Installer les mises à jour cochées
+Install nothing ==> Ne rien installer
+older ==> ancienne
+Only apps in the winget catalog are checked. The others update from the app itself or from their website. ==> Seules les applis du catalogue winget sont vérifiées. Les autres se mettent à jour depuis l'appli elle-même ou depuis leur site.
 Copied. ==> Copié.
 Copy the text ==> Copier le texte
 Downloading YSO {0} from GitHub... ==> Téléchargement de YSO {0} depuis GitHub...
