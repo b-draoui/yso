@@ -7758,7 +7758,7 @@ function Add-GuiPickList([object[]]$Rows) {
         if ($group.Count -eq 0) { continue }
         $title = $(if ($kind -eq 'App') { L 'APP UPDATES (winget)' } else { L 'DRIVER UPDATES (Windows Update)' })
         [void]$script:GuiDocText.AppendLine('').AppendLine($title)
-        Add-GuiBlock (New-GuiText $title 12 'Text2' 'SemiBold' -Margin '0,14,0,4')
+        Add-GuiBlock (New-GuiText (ConvertTo-GuiTitle $title) 13.5 'Text' 'SemiBold' -Margin '0,16,0,6')
         foreach ($r in $group) {
             [void]$script:GuiDocText.AppendLine(('  {0,3}  {1}   {2}   {3}' -f $r[0], $r[2], $r[3], $r[4]).TrimEnd())
             $cb = New-Object System.Windows.Controls.CheckBox
