@@ -175,6 +175,31 @@ jobs:
             C:\ProgramData\YSO\Logs\*.log
           if-no-files-found: warn
 
+  store-package:
+    # The Microsoft Store package (docs/STORE.md): built, signed with a test certificate, installed,
+    # checked and removed again. The identity comes from Partner Center (repository variables);
+    # without it a test identity is used. The release does not wait for this job.
+    name: Microsoft Store package (MSIX)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      - name: Build YSO.msix
+        shell: powershell
+        env:
+          STORE_IDENTITY: ${{ vars.STORE_IDENTITY }}
+          STORE_PUBLISHER: ${{ vars.STORE_PUBLISHER }}
+          STORE_PUBLISHER_NAME: ${{ vars.STORE_PUBLISHER_NAME }}
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging\build-msix.ps1 -Build ${{ github.run_number }}
+      - name: Install it, check it, remove it
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging\test-msix.ps1
+      - name: Keep the package (to upload in Partner Center)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
+        with:
+          name: YSO-msix
+          path: packaging/out/YSO.msix
+          if-no-files-found: warn
+
   pictures:
     # Work branches only: the pictures of every page, on branch ci-pictures, to look at them without
     # downloading artifacts. Never on main.

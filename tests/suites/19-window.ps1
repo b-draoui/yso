@@ -185,6 +185,9 @@ $k = @($r.Messages | ForEach-Object { $_[0] }) -join ','
 Check ($k -eq 'section,kv,option,line,health') "headings, values, choices, warnings and health lines arrive as such ($k)"
 $opt = @($r.Messages | Where-Object { $_[0] -eq 'option' })[0]
 Check ($opt[1] -eq '1' -and $opt[2] -eq 'Language / Langue') 'a choice keeps its key, so clicking it answers the question'
+$r = Invoke-WorkerJob 'Write-Option ''1'' ''[x] Ad tracking'' ''Apps get no advertising ID, and Windows stops tailoring ads and tips to what you do.''; Write-Option ''0'' ''Back'''
+$o = @($r.Messages | Where-Object { $_[0] -eq 'option' })
+Check ($o.Count -eq 2 -and $o[0].Count -eq 4 -and $o[0][3] -match 'advertising ID' -and $o[1][3] -eq '') 'a choice can carry a second sentence, shown under it'
 
 $r = Invoke-WorkerJob '[pscustomobject]@{ A = (Confirm-Action ''Create a restore point first? (recommended)'' $true); B = (Read-Host ''  Choose''); C = (Confirm-Action ''Turn it off?'' $false) }' -Answers @($false, '12', $true)
 $asks = @($r.Messages | Where-Object { $_[0] -eq 'ask' })

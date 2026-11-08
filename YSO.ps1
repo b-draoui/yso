@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    YSO - Your System Optimizer 1.0: a Windows cleaner, health check, updater and maintenance tool.
+    YSO - Your System Optimizer 1.1: a Windows cleaner, health check, updater and maintenance tool.
 
 .DESCRIPTION
     One PowerShell script with a window (WPF). English by default; French in Settings.
@@ -18,6 +18,8 @@
         packs the results and logs, with personal details removed, into one zip.
       * Updates (28): apps with winget, drivers with Windows Update - when you start
         them, or automatically on a schedule. Never restarts the PC, never updates the BIOS.
+      * Every setting YSO changes is written down first, with what it was before:
+        Undo YSO changes (32) puts it back.
       * Deliberately absent: registry cleaners, RAM boosters, service killing,
         removing Windows components and network "tweaks".
 
@@ -47,6 +49,11 @@
     powershell -ExecutionPolicy Bypass -File .\YSO.ps1 -Install
     Installs YSO like any program: Program Files, Start menu, Desktop, and "Installed apps"
     (where -Uninstall removes it again). install.ps1 does this after downloading YSO.
+
+.EXAMPLE
+    powershell -ExecutionPolicy Bypass -WindowStyle Hidden -File .\YSO.ps1 -Tray
+    The icon next to the clock (switched on in Settings): started by its scheduled task when
+    you log on, it tells you when the disk is almost full or a drive or the battery wears out.
 #>
 [CmdletBinding()]
 param(
@@ -58,6 +65,7 @@ param(
     [switch]$Install,       # install YSO (Program Files, Start menu, Desktop, Installed apps)
     [switch]$Uninstall,     # remove it again (asks whether to keep the history and settings)
     [switch]$Engine,        # used by the window: loads YSO's functions only, in its second PowerShell
+    [switch]$Tray,          # the icon next to the clock (switched on in Settings, started when you log on)
     [string]$Snapshot = ''  # for automated testing: draws every page of the window into PNG files in this folder
 )
 
@@ -122,7 +130,7 @@ if ($ysoStop) {
 # ==================================================================
 $identity  = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = New-Object Security.Principal.WindowsPrincipal($identity)
-if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+if (-not $Tray -and -not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     $relaunch = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"")
     if ($Auto)   { $relaunch += '-Auto' }
     if ($DryRun) { $relaunch += '-DryRun' }
@@ -186,6 +194,9 @@ $script:LogDir        = Join-Path $script:DataDir 'Logs'
 $script:SettingsPath  = Join-Path $script:DataDir 'settings.json'
 $script:HistoryPath   = Join-Path $script:DataDir 'history.csv'
 $script:DnsBackupPath = Join-Path $script:DataDir 'dns-backup.json'
+$script:JournalPath   = Join-Path $script:DataDir 'changes.json'   # every setting YSO changed, and what it was before (32)
+$script:TrayStatePath = Join-Path $script:DataDir 'tray-alerts.json'
+$script:TrayTaskName  = 'YSO Tray'
 $script:TaskName      = 'YSO Weekly Clean'
 $script:UpdateTaskName = 'YSO Auto Updates'
 $script:UpdateHistoryPath = Join-Path $script:DataDir 'updates.csv'
@@ -196,6 +207,8 @@ $script:ReleaseRepo   = 'b-draoui/yso'   # where new versions of YSO are publish
 $script:ProjectUrl    = 'https://github.com/' + $script:ReleaseRepo
 $script:UpdateCheckPath = Join-Path $script:DataDir 'yso-version-check.json'
 $script:SelfPath      = $PSCommandPath   # this file: compared with the published one (same version, newer build)
+# Installed from the Microsoft Store: the Store updates YSO, so YSO does not update or install itself.
+$script:IsPackaged    = ("$PSCommandPath" -match '\\WindowsApps\\')
 $script:ErrorLogPath  = Join-Path $script:DataDir 'errors.log'
 $script:OsMajor       = [Environment]::OSVersion.Version.Major
 $script:Build         = [Environment]::OSVersion.Version.Build
@@ -218,7 +231,7 @@ $script:StopSignal    = $null    # set by the window: a shared table whose 'Stop
 $script:LastRun       = $null    # what the last option did (status, results, free space): read by the window
 $script:GuiFailure    = ''       # why the window could not open (shown before the console menu opens instead)
 # Every key of the menu that runs an option (Invoke-MenuOption); M, L and Q only change the menu itself.
-$script:MenuKeys      = @(@(1..29 | ForEach-Object { "$_" }) + @('A', 'F', 'R', 'S', 'H', 'T', 'P', 'O'))
+$script:MenuKeys      = @(@(1..32 | ForEach-Object { "$_" }) + @('A', 'F', 'R', 'S', 'H', 'T', 'P', 'O'))
 $script:HealthCache   = $null
 $script:DetectedApps  = @()
 $script:DryRun        = [bool]$DryRun
@@ -379,9 +392,11 @@ function Write-Kv {
     Write-Host "$Value" -ForegroundColor $Color
 }
 
-function Write-Option([string]$Key, [string]$Text) {
+function Write-Option([string]$Key, [string]$Text, [string]$Note = '') {
+    # $Note: one more sentence under the choice, in grey.
     Write-Host ('   {0,-4}' -f $Key) -NoNewline -ForegroundColor Green
     Write-Host (L $Text)
+    if ($Note) { Write-Host ('        ' + (L $Note)) -ForegroundColor DarkGray }
 }
 
 function Read-Choice([string]$Prompt = (N 'Choose'), [object[]]$Buttons = @(), [string]$Hint = '', [switch]$KeepCase) {
@@ -1690,19 +1705,23 @@ function Set-Hibernation {
     Write-Option '2' 'Off (frees the most space)'
     Write-Option '3' 'Full (Windows default)'
     Write-Option '0' 'Back'
-    $steps = $null
+    $steps = $null; $picked = ''
     switch (Read-Choice) {
-        '1' { $steps = @(@('/hibernate', 'on'), @('/hibernate', '/type', 'reduced')) }
-        '2' { $steps = @(, @('/hibernate', 'off')) }
-        '3' { $steps = @(@('/hibernate', 'on'), @('/hibernate', '/type', 'full')) }
+        '1' { $steps = @(@('/hibernate', 'on'), @('/hibernate', '/type', 'reduced')); $picked = (N 'reduced') }
+        '2' { $steps = @(, @('/hibernate', 'off')); $picked = (N 'off') }
+        '3' { $steps = @(@('/hibernate', 'on'), @('/hibernate', '/type', 'full')); $picked = (N 'full') }
         default { return }
     }
     if ($script:DryRun) { Write-Info 'Analyze-only mode: nothing was changed.'; return }
+    $was = Get-HibernationState
+    $change = New-ChangeEntry (N 'Hibernation file') (N 'Hibernation file: {0}') @($picked)
+    [void]$change.Items.Add($was)
     $before = Get-FreeBytes
     foreach ($s in $steps) {
         $out = & powercfg.exe @s 2>&1
-        if ($LASTEXITCODE -ne 0) { Write-Warn (($out | Out-String).Trim()); return }
+        if ($LASTEXITCODE -ne 0) { Write-Warn (($out | Out-String).Trim()); Add-ChangeEntry $change; return }
     }
+    Add-ChangeEntry $change
     $delta = [long]((Get-FreeBytes) - $before)
     if ($delta -gt 0) { Add-Result -Category 'Hibernation file' -Files -1 -Bytes $delta -Skipped 0 }
     $sign = if ($delta -lt 0) { '-' } else { '+' }
@@ -1832,12 +1851,7 @@ function Test-NetworkQuality {
 
 function Save-DnsBackup($Adapters) {
     # Remembers manually set DNS servers so option "restore" can put them back exactly.
-    $list = @(foreach ($a in $Adapters) {
-        $g  = "$($a.InterfaceGuid)"
-        $v4 = (Get-ItemProperty -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\$g" -Name NameServer -ErrorAction SilentlyContinue).NameServer
-        $v6 = (Get-ItemProperty -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters\Interfaces\$g" -Name NameServer -ErrorAction SilentlyContinue).NameServer
-        [pscustomobject]@{ Guid = $g; Name = $a.Name; Servers = [string[]]@(("$v4 $v6") -split '[,\s]+' | Where-Object { $_ }) }
-    })
+    $list = @(Get-DnsSnapshot $Adapters)
     try { ConvertTo-Json -InputObject $list -Depth 3 | Set-Content -LiteralPath $script:DnsBackupPath -Encoding UTF8 } catch { }
 }
 
@@ -1880,9 +1894,14 @@ function Set-DnsServers {
     $c = Read-Choice
     if (-not $c -or $c -eq '0') { return }
     if ($script:DryRun) { Write-Info 'Analyze-only mode: nothing was changed.'; return }
+    # written down first (Undo YSO changes, 32): the servers each adapter had
+    $was = [pscustomobject]@{ Kind = 'dns'; Adapters = @(Get-DnsSnapshot $adapters) }
     if ($script:DnsProviders.Contains($c)) {
         if (-not $hasBackup) { Save-DnsBackup $adapters }
         $prov = $script:DnsProviders[$c]
+        $change = New-ChangeEntry (N 'Change DNS servers') (N 'DNS servers: {0}') @($prov.Name)
+        [void]$change.Items.Add($was)
+        Add-ChangeEntry $change
         foreach ($a in $adapters) {
             try {
                 Set-DnsClientServerAddress -InterfaceIndex $a.ifIndex -ServerAddresses $prov.Servers -ErrorAction Stop
@@ -1892,6 +1911,9 @@ function Set-DnsServers {
         Clear-DnsClientCache -ErrorAction SilentlyContinue
         Write-Info 'You can go back at any time with option 4 on this screen.'
     } elseif ($c -eq '4') {
+        $change = New-ChangeEntry (N 'Change DNS servers') $(if ($hasBackup) { N 'DNS servers: back to your previous ones' } else { N 'DNS servers: automatic' })
+        [void]$change.Items.Add($was)
+        Add-ChangeEntry $change
         Restore-DnsServers $adapters
     }
 }
@@ -1976,11 +1998,13 @@ function Set-YsoPowerPlan {
         default { return }
     }
     if ($script:DryRun) { Write-Info 'Analyze-only mode: nothing was changed.'; return }
+    $was = Get-ActivePlanGuid
     powercfg /setactive $want 2>&1 | Out-Null
-    if (((powercfg /getactivescheme) -join ' ') -match $want) { Write-Ok (L '{0} plan is now active.' (L $name)); return }
+    if (((powercfg /getactivescheme) -join ' ') -match $want) { Save-PowerChange $was; Write-Ok (L '{0} plan is now active.' (L $name)); return }
     if ($want -eq $script:PlanUltimateYso) {
         powercfg /setactive $script:PlanHigh 2>&1 | Out-Null
         if (((powercfg /getactivescheme) -join ' ') -match $script:PlanHigh) {
+            Save-PowerChange $was
             Write-Ok 'Ultimate is not available here - High Performance is now active instead.'
             return
         }
@@ -2071,8 +2095,12 @@ function Get-StartupEntries {
 }
 
 function Set-StartupEntryState($Entry, [bool]$Enabled) {
+    # Written down first (Undo YSO changes, 32): the on/off value as it was before.
+    $change = New-ChangeEntry (N 'Startup programs') $(if ($Enabled) { N '{0} starts with Windows again' } else { N '{0} no longer starts with Windows' }) @("$($Entry.Name)")
+    Add-RegChange $change $Entry.Approved $Entry.ValueName
     Set-ApprovedBytes $Entry.Approved $Entry.ValueName (New-StartupApprovedBytes $Enabled)
     $Entry.Enabled = $Enabled
+    Add-ChangeEntry $change
     try {
         [pscustomobject]@{ When = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'); Name = $Entry.Name; State = $(if ($Enabled) { 'on' } else { 'off' }); Command = $Entry.Command } |
             Export-Csv -LiteralPath (Join-Path $script:DataDir 'startup-changes.csv') -Append -NoTypeInformation -Encoding UTF8
@@ -3292,6 +3320,917 @@ function Invoke-VDiskCompact {
 }
 
 # ==================================================================
+#  CHANGE JOURNAL  (Undo YSO changes, 32)
+#  Every setting YSO changes is written down first, with what it was before, in
+#  %ProgramData%\YSO\changes.json. Undo YSO changes (32) puts any of it back.
+#  The registry is read and written by the four small functions below only.
+# ==================================================================
+function Read-RegValue([string]$Path, [string]$Name) {
+    # What a registry value is now: whether its key and the value exist, its kind and its data.
+    $r = [pscustomobject]@{ KeyExisted = $false; Existed = $false; Type = ''; Data = $null }
+    $key = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
+    if (-not $key) { return $r }
+    $r.KeyExisted = $true
+    if (@($key.GetValueNames()) -notcontains $Name) { return $r }
+    $kind = "$($key.GetValueKind($Name))"
+    $v = $key.GetValue($Name, $null, 'DoNotExpandEnvironmentNames')
+    switch ($kind) {
+        'Binary'      { $v = [Convert]::ToBase64String([byte[]]$v) }
+        'MultiString' { $v = [string[]]@($v) }
+        'DWord'       { $v = [long]$v }
+        'QWord'       { $v = [long]$v }
+        default       { $v = "$v" }
+    }
+    $r.Existed = $true; $r.Type = $kind; $r.Data = $v
+    return $r
+}
+
+function Write-RegValue([string]$Path, [string]$Name, $Value, [string]$Type = 'DWord') {
+    if (-not (Test-Path -LiteralPath $Path)) { New-Item -Path $Path -Force | Out-Null }
+    switch ($Type) {
+        'Binary'      { if ($Value -is [string]) { $Value = [Convert]::FromBase64String($Value) } }
+        'MultiString' { $Value = [string[]]@($Value) }
+        'DWord'       { $Value = [int]$Value }
+        'QWord'       { $Value = [long]$Value }
+        default       { $Value = "$Value" }
+    }
+    New-ItemProperty -LiteralPath $Path -Name $Name -Value $Value -PropertyType $Type -Force -ErrorAction Stop | Out-Null
+}
+
+function Remove-RegValue([string]$Path, [string]$Name) {
+    if (Test-Path -LiteralPath $Path) { Remove-ItemProperty -LiteralPath $Path -Name $Name -Force -ErrorAction SilentlyContinue }
+}
+
+function Get-MissingRegParent([string]$Path) {
+    # The highest key of $Path that does not exist yet ('' when $Path exists): what a change creates.
+    $missing = ''
+    $p = $Path
+    while ($p -and -not (Test-Path -LiteralPath $p)) {
+        $missing = $p
+        $parent = Split-Path -Parent $p
+        if (-not $parent -or $parent -eq $p) { break }
+        $p = $parent
+    }
+    return $missing
+}
+
+function Remove-EmptyRegKeys([string]$Path, [string]$Top) {
+    # After an undo: the keys YSO created (from $Path up to $Top) go again, while they are empty.
+    if (-not $Top) { return }
+    $p = $Path
+    while ($p -and $p.Length -ge $Top.Length) {
+        $k = Get-Item -LiteralPath $p -ErrorAction SilentlyContinue
+        if ($k) {
+            if ($k.SubKeyCount -gt 0 -or $k.ValueCount -gt 0) { return }
+            Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue
+        }
+        if ($p -eq $Top) { return }
+        $p = Split-Path -Parent $p
+    }
+}
+
+function New-ChangeEntry([string]$Tool, [string]$Title, [object[]]$Arguments = @()) {
+    # One line of Undo YSO changes (32). Tool, Title and Arguments are translated when shown;
+    # an argument that is a list is shown joined with commas.
+    return [pscustomobject]@{
+        Id = [guid]::NewGuid().ToString('N').Substring(0, 12); When = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+        Tool = $Tool; Title = $Title; Args = [object[]]@($Arguments); Undone = ''
+        Items = (New-Object System.Collections.ArrayList)
+    }
+}
+
+function Add-RegChange($Change, [string]$Path, [string]$Name) {
+    # Writes down a registry value as it is now, before YSO changes it.
+    $s = Read-RegValue $Path $Name
+    $created = $(if ($s.KeyExisted) { '' } else { Get-MissingRegParent $Path })
+    [void]$Change.Items.Add([pscustomobject]@{ Kind = 'reg'; Path = $Path; Name = $Name; Existed = [bool]$s.Existed; Type = "$($s.Type)"; Data = $s.Data; Created = $created })
+}
+
+function Set-RegValueLogged($Change, [string]$Path, [string]$Name, $Value, [string]$Type = 'DWord') {
+    if ($Change) { Add-RegChange $Change $Path $Name }
+    Write-RegValue $Path $Name $Value $Type
+}
+
+function Remove-RegValueLogged($Change, [string]$Path, [string]$Name) {
+    if (-not (Read-RegValue $Path $Name).Existed) { return }
+    if ($Change) { Add-RegChange $Change $Path $Name }
+    Remove-RegValue $Path $Name
+}
+
+function Read-ChangeJournal {
+    if (-not (Test-Path -LiteralPath $script:JournalPath)) { return @() }
+    try {
+        $raw = [System.IO.File]::ReadAllText($script:JournalPath)
+        if (-not $raw.Trim()) { return @() }
+        return @(($raw | ConvertFrom-Json) | ForEach-Object { $_ } | Where-Object { $_ -and $_.Id })
+    } catch {
+        Write-YsoError -Context 'read the list of changes' -ErrorRecord $_
+        return @()
+    }
+}
+
+function Save-ChangeJournal([object[]]$Entries) {
+    # The last 300 changes are kept.
+    New-Item -ItemType Directory -Path $script:DataDir -Force | Out-Null
+    $keep = @($Entries | Select-Object -Last 300)
+    $json = ConvertTo-Json -InputObject $keep -Depth 8
+    [System.IO.File]::WriteAllText($script:JournalPath, $json, (New-Object System.Text.UTF8Encoding $false))
+}
+
+function Add-ChangeEntry($Change) {
+    # Saves a change (unless nothing was changed). A problem here never stops the option itself.
+    if (-not $Change -or @($Change.Items).Count -eq 0) { return }
+    try { Save-ChangeJournal (@(Read-ChangeJournal) + @($Change)) }
+    catch { Write-YsoError -Context 'save the list of changes' -ErrorRecord $_ }
+}
+
+function Format-ChangeWhen($When) {
+    if ($When -is [datetime]) { return $When.ToString('yyyy-MM-dd HH:mm') }
+    $t = "$When"
+    if ($t.Length -ge 16) { return $t.Substring(0, 16) }
+    return $t
+}
+
+function Get-ChangeTitle($Change) {
+    $a = @(foreach ($x in @($Change.Args)) {
+        if ($x -is [System.Array]) { (@($x) | ForEach-Object { L "$_" }) -join ', ' } else { L "$x" }
+    })
+    if ($a.Count -gt 0) { return (L "$($Change.Title)" @a) }
+    return (L "$($Change.Title)")
+}
+
+function Get-ChangeItemText($Item) {
+    switch ("$($Item.Kind)") {
+        'reg'       { return (L 'Setting {0}' (("$($Item.Path)\$($Item.Name)") -replace '^HK(CU|LM):', 'HK$1')) }
+        'power'     { return (L 'Power plan') }
+        'hibernate' { return (L 'Hibernation file') }
+        'dns'       { return (L 'DNS servers of {0}' ((@($Item.Adapters) | ForEach-Object { "$($_.Name)" }) -join ', ')) }
+        'recycled'  { return (L 'Folder {0} (in the Recycle Bin)' "$($Item.Path)") }
+        'regkey'    { return (L 'Registry key {0} (saved in {1})' "$($Item.Key)" (Split-Path -Leaf "$($Item.File)")) }
+    }
+    return "$($Item.Kind)"
+}
+
+function Get-ActivePlanGuid {
+    $m = [regex]::Match(((powercfg /getactivescheme) -join ' '), '[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}')
+    if ($m.Success) { return $m.Value.ToLowerInvariant() }
+    return ''
+}
+
+function Save-PowerChange([string]$Before) {
+    # Power plan (16): written down when the active plan really changed.
+    $line = (powercfg /getactivescheme) -join ' '
+    if (-not $Before -or $line -match [regex]::Escape($Before)) { return }
+    $name = $(if ($line -match '\(([^)]+)\)\s*$') { $Matches[1] } else { '?' })
+    $c = New-ChangeEntry (N 'Power plan') (N 'Power plan: {0}') @($name)
+    [void]$c.Items.Add([pscustomobject]@{ Kind = 'power'; Before = $Before })
+    Add-ChangeEntry $c
+}
+
+function Get-HibernationState {
+    $on = [bool](Get-Item -LiteralPath (Join-Path $env:SystemDrive 'hiberfil.sys') -Force -ErrorAction SilentlyContinue)
+    $type = (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Power' -Name HiberFileType -ErrorAction SilentlyContinue).HiberFileType
+    return [pscustomobject]@{ Kind = 'hibernate'; Enabled = $on; Type = $(if ($type -eq 1) { 'reduced' } else { 'full' }) }
+}
+
+function Get-DnsSnapshot($Adapters) {
+    # The DNS servers set by hand on each adapter (none = automatic), to put them back later.
+    return @(foreach ($a in $Adapters) {
+        $g  = "$($a.InterfaceGuid)"
+        $v4 = (Get-ItemProperty -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\$g" -Name NameServer -ErrorAction SilentlyContinue).NameServer
+        $v6 = (Get-ItemProperty -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters\Interfaces\$g" -Name NameServer -ErrorAction SilentlyContinue).NameServer
+        [pscustomobject]@{ Guid = $g; Name = "$($a.Name)"; Servers = [string[]]@(("$v4 $v6") -split '[,\s]+' | Where-Object { $_ }) }
+    })
+}
+
+function Restore-DnsSnapshot([object[]]$Saved) {
+    $ok = $true
+    $adapters = @(Get-NetAdapter -ErrorAction SilentlyContinue)
+    foreach ($s in $Saved) {
+        $a = @($adapters | Where-Object { "$($_.InterfaceGuid)" -eq "$($s.Guid)" }) | Select-Object -First 1
+        if (-not $a) { $ok = $false; continue }
+        $servers = @(@($s.Servers) | Where-Object { $_ })
+        try {
+            if ($servers.Count -gt 0) { Set-DnsClientServerAddress -InterfaceIndex $a.ifIndex -ServerAddresses $servers -ErrorAction Stop }
+            else { Set-DnsClientServerAddress -InterfaceIndex $a.ifIndex -ResetServerAddresses -ErrorAction Stop }
+        } catch { $ok = $false }
+    }
+    Clear-DnsClientCache -ErrorAction SilentlyContinue
+    return $ok
+}
+
+function Move-ToRecycleBin([string]$Path) {
+    # Like Delete in File Explorer: it can still be put back from the Recycle Bin.
+    Add-Type -AssemblyName Microsoft.VisualBasic
+    $ui = [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs
+    $bin = [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
+    if (Test-Path -LiteralPath $Path -PathType Container) { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($Path, $ui, $bin) }
+    else { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($Path, $ui, $bin) }
+}
+
+function Restore-FromRecycleBin([string]$Path) {
+    # Puts back the most recent item of that name that was deleted from that folder.
+    if (Test-Path -LiteralPath $Path) { return $true }
+    $parent = Split-Path -Parent $Path
+    $leaf = Split-Path -Leaf $Path
+    $bare = [System.IO.Path]::GetFileNameWithoutExtension($leaf)
+    $shell = New-Object -ComObject Shell.Application
+    $best = $null; $bestDate = [datetime]::MinValue
+    foreach ($it in @($shell.Namespace(10).Items())) {
+        if ("$($it.ExtendedProperty('System.Recycle.DeletedFrom'))" -ine $parent) { continue }
+        $n = "$($it.Name)"
+        if ($n -ine $leaf -and $n -ine $bare) { continue }
+        $d = $it.ExtendedProperty('System.Recycle.DateDeleted')
+        if (-not ($d -is [datetime])) { $d = [datetime]::MinValue }
+        if (-not $best -or $d -gt $bestDate) { $best = $it; $bestDate = $d }
+    }
+    if (-not $best) { return $false }
+    New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    $shell.Namespace($parent).MoveHere($best, 0x14)
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    while (-not (Test-Path -LiteralPath $Path) -and $clock.ElapsedMilliseconds -lt 15000) { Start-Sleep -Milliseconds 250 }
+    return (Test-Path -LiteralPath $Path)
+}
+
+function Undo-ChangeItem($Item) {
+    # Puts one thing back as it was. $true when it worked.
+    switch ("$($Item.Kind)") {
+        'reg' {
+            if ($Item.Existed) { Write-RegValue "$($Item.Path)" "$($Item.Name)" $Item.Data "$($Item.Type)" }
+            else {
+                Remove-RegValue "$($Item.Path)" "$($Item.Name)"
+                Remove-EmptyRegKeys "$($Item.Path)" "$($Item.Created)"
+            }
+            return $true
+        }
+        'power' {
+            & powercfg.exe /setactive "$($Item.Before)" 2>&1 | Out-Null
+            return ($LASTEXITCODE -eq 0)
+        }
+        'hibernate' {
+            $type = $(if ("$($Item.Type)" -eq 'reduced') { 'reduced' } else { 'full' })
+            $steps = $(if ($Item.Enabled) { @(@('/hibernate', 'on'), @('/hibernate', '/type', $type)) } else { @(, @('/hibernate', 'off')) })
+            foreach ($s in $steps) {
+                & powercfg.exe @s 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) { return $false }
+            }
+            return $true
+        }
+        'dns' { return (Restore-DnsSnapshot @($Item.Adapters)) }
+        'recycled' { return (Restore-FromRecycleBin "$($Item.Path)") }
+        'regkey' {
+            if (-not (Test-Path -LiteralPath "$($Item.File)")) { return $false }
+            & reg.exe import "$($Item.File)" 2>&1 | Out-Null
+            return ($LASTEXITCODE -eq 0)
+        }
+    }
+    return $false
+}
+
+function Undo-ChangeEntry($Change) {
+    # Last change first, so a value changed twice gets its very first state back.
+    $ok = 0; $failed = 0
+    $items = @($Change.Items)
+    for ($i = $items.Count - 1; $i -ge 0; $i--) {
+        $done = $false
+        try { $done = [bool](Undo-ChangeItem $items[$i]) }
+        catch { Write-YsoError -Context ('undo: ' + (Get-ChangeItemText $items[$i])) -ErrorRecord $_ }
+        if ($done) { $ok++ } else { $failed++; Write-Warn (L 'Could not put back: {0}' (Get-ChangeItemText $items[$i])) }
+    }
+    return [pscustomobject]@{ Ok = $ok; Failed = $failed }
+}
+
+function Show-ChangeList([object[]]$Entries) {
+    $i = 0
+    foreach ($e in $Entries) {
+        $i++
+        Write-Host ('  {0,3}  ' -f $i) -NoNewline -ForegroundColor Green
+        Write-Host ((Format-ChangeWhen $e.When).PadRight(18)) -NoNewline -ForegroundColor DarkGray
+        Write-Host ((Get-Truncated (L "$($e.Tool)") 22).PadRight(24)) -NoNewline -ForegroundColor Gray
+        $t = Get-Truncated (Get-ChangeTitle $e) 64
+        if ($e.Undone) {
+            Write-Host $t.PadRight(66) -NoNewline -ForegroundColor DarkGray
+            Write-Host (L 'undone') -ForegroundColor DarkGray
+        } else { Write-Host $t }
+    }
+}
+
+function Show-UndoCenter([object[]]$Sample = $null) {
+    # -Sample: made-up changes for the window's pictures; choosing one only ends the page.
+    while ($true) {
+        Clear-Host
+        Write-Section 'UNDO YSO CHANGES'
+        Write-Info 'Every setting YSO changes is written down here, with what it was before. Choose one to put it back as it was.'
+        $all = $(if ($null -ne $Sample) { @($Sample) } else { @(Read-ChangeJournal) })
+        $list = @($all | Select-Object -Last 60)
+        [array]::Reverse($list)
+        Write-Host ''
+        if ($list.Count -eq 0) {
+            Write-Info 'Nothing yet. Changes made by Privacy & ads (30), Uninstall apps (31), Startup programs (17), Power plan (16), Change DNS servers (12) and Hibernation file (10) show up here.'
+            return
+        }
+        Show-ChangeList $list
+        Write-Host ''
+        $c = Read-Choice 'Number = undo it, Enter = back' -Buttons @(, @('', 'Back')) -Hint 'Click a change to undo it.'
+        if (-not $c -or $null -ne $Sample) { return }
+        if ($c -notmatch '^\d+$' -or [int]$c -lt 1 -or [int]$c -gt $list.Count) { continue }
+        $e = $list[[int]$c - 1]
+        Write-Host ''
+        if ($e.Undone) {
+            Write-Info (L 'Already undone ({0}).' (Format-ChangeWhen $e.Undone))
+            [void](Read-Choice 'Press Enter to continue' -Buttons @(, @('', 'OK')))
+            continue
+        }
+        Write-Step (Get-ChangeTitle $e)
+        $items = @($e.Items)
+        foreach ($it in @($items | Select-Object -First 10)) { Write-Info ('- ' + (Get-ChangeItemText $it)) }
+        if ($items.Count -gt 10) { Write-Info (L '... and {0} more' ($items.Count - 10)) }
+        if ($script:DryRun) {
+            Write-Info 'Analyze-only mode: nothing was changed.'
+            [void](Read-Choice 'Press Enter to continue' -Buttons @(, @('', 'OK')))
+            continue
+        }
+        if (-not (Confirm-Action 'Put this back as it was?' $true)) { continue }
+        $r = Undo-ChangeEntry $e
+        if ($r.Failed -eq 0) {
+            $e.Undone = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+            Write-Ok 'Done: it is back as it was.'
+            if ("$($e.Tool)" -eq 'Privacy & ads') { Write-Info 'Some changes show after you sign out and back in, or after a restart.' }
+        } else {
+            Write-Warn (L '{0} of {1} could not be put back. You can try again later.' $r.Failed ($r.Ok + $r.Failed))
+        }
+        try { Save-ChangeJournal $all } catch { Write-YsoError -Context 'save the list of changes' -ErrorRecord $_ }
+        [void](Read-Choice 'Press Enter to continue' -Buttons @(, @('', 'OK')))
+    }
+}
+
+# ==================================================================
+#  PRIVACY & ADS  (30) - ads, tracking and AI features of Windows and Edge, switched off
+#  with the settings Windows and Edge offer for it (the same values as Win11Debloat).
+#  Each change is written down first: Undo YSO changes (32) puts it back.
+#  Never touches Microsoft Defender, Windows Update or the Microsoft Store.
+# ==================================================================
+function Get-PrivacyGroups {
+    $cdm  = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'
+    $adv  = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+    $pol  = 'Software\Policies\Microsoft\Windows'
+    $edge = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
+    $paint = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Paint'
+    # Each value: key, name, value that switches the feature off, Windows default ($null = no value).
+    # Managed: a policy, so Windows or Edge says some settings are "managed by your organization".
+    $groups = @(
+        @{ Id = 'ads'; Name = (N 'Ads and suggestions in Windows'); Recommended = $true; Managed = $true
+            Note = (N 'Start menu, Settings, File Explorer and notifications: no more app suggestions, offers and tips.')
+            Values = @(
+                @($cdm, 'SubscribedContent-310093Enabled', 0, 1), @($cdm, 'SubscribedContent-338388Enabled', 0, 1), @($cdm, 'SystemPaneSuggestionsEnabled', 0, 1),
+                @($cdm, 'SubscribedContent-338389Enabled', 0, 1), @($cdm, 'SoftLandingEnabled', 0, 1), @($cdm, 'SubscribedContent-338393Enabled', 0, 1),
+                @($cdm, 'SubscribedContent-353694Enabled', 0, 1), @($cdm, 'SubscribedContent-353696Enabled', 0, 1), @($cdm, 'SubscribedContent-353698Enabled', 0, 1),
+                @($cdm, 'SilentInstalledAppsEnabled', 0, 1),
+                @($adv, 'Start_IrisRecommendations', 0, $null), @($adv, 'ShowSyncProviderNotifications', 0, $null),
+                @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Windows.SystemToast.Suggested', 'Enabled', 0, $null),
+                @("HKLM:\$pol\CloudContent", 'DisableConsumerAccountStateContent', 1, $null)) }
+        @{ Id = 'lock'; Name = (N 'Tips and fun facts on the lock screen'); Recommended = $true; Managed = $false
+            Note = (N 'The lock screen shows your picture and the time, nothing else.')
+            Values = @(@($cdm, 'SubscribedContent-338387Enabled', 0, 1), @($cdm, 'RotatingLockScreenOverlayEnabled', 0, 1)) }
+        @{ Id = 'bing'; Name = (N 'Web results (Bing) in the Start menu search'); Recommended = $true; Managed = $true
+            Note = (N 'Searching from the Start menu finds your apps, files and settings only.')
+            Values = @(@("HKCU:\$pol\Explorer", 'DisableSearchBoxSuggestions', 1, $null), @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Search', 'BingSearchEnabled', 0, $null)) }
+        @{ Id = 'tracking'; Name = (N 'Ad tracking'); Recommended = $true; Managed = $false
+            Note = (N 'Apps get no advertising ID, and Windows stops tailoring ads and tips to what you do.')
+            Values = @(
+                @('HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo', 'Enabled', 0, 1),
+                @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Privacy', 'TailoredExperiencesWithDiagnosticDataEnabled', 0, 1),
+                @($adv, 'Start_TrackProgs', 0, $null)) }
+        @{ Id = 'telemetry'; Name = (N 'Diagnostic data and activity history'); Recommended = $false; Managed = $true
+            Note = (N 'Windows sends Microsoft only the required minimum, keeps no history of your activities and stops asking for feedback.')
+            Values = @(
+                @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection', 'AllowTelemetry', 0, $null),
+                @("HKLM:\$pol\System", 'PublishUserActivities', 0, $null),
+                @('HKCU:\Software\Microsoft\Siuf\Rules', 'NumberOfSIUFInPeriod', 0, $null)) }
+        @{ Id = 'copilot'; Name = (N 'Copilot in Windows'); Recommended = $false; Managed = $true
+            Note = (N 'No Copilot button on the taskbar, and the Copilot built into Windows is switched off. A Copilot app you installed stays.')
+            Values = @(@($adv, 'ShowCopilotButton', 0, $null), @("HKCU:\$pol\WindowsCopilot", 'TurnOffWindowsCopilot', 1, $null), @("HKLM:\$pol\WindowsCopilot", 'TurnOffWindowsCopilot', 1, $null)) }
+        @{ Id = 'recall'; Name = (N 'Recall and Click to Do'); Recommended = $false; Managed = $true; MinBuild = 26100
+            Note = (N 'On Copilot+ PCs: no snapshots of your screen, no Click to Do.')
+            Values = @(
+                @("HKCU:\$pol\WindowsAI", 'DisableAIDataAnalysis', 1, $null), @("HKLM:\$pol\WindowsAI", 'DisableAIDataAnalysis', 1, $null),
+                @("HKLM:\$pol\WindowsAI", 'TurnOffSavingSnapshots', 1, $null),
+                @("HKCU:\$pol\WindowsAI", 'DisableClickToDo', 1, $null), @("HKLM:\$pol\WindowsAI", 'DisableClickToDo', 1, $null)) }
+        @{ Id = 'aiapps'; Name = (N 'AI in Edge, Notepad and Paint'); Recommended = $false; Managed = $true
+            Note = (N 'Copilot in Edge (and the Edge sidebar), the AI buttons of Notepad, and image creation, generative fill and erase in Paint.')
+            Values = @(
+                @($edge, 'CopilotCDPPageContext', 0, $null), @($edge, 'CopilotPageContext', 0, $null), @($edge, 'HubsSidebarEnabled', 0, $null),
+                @($edge, 'Microsoft365CopilotChatIconEnabled', 0, $null), @($edge, 'EdgeHistoryAISearchEnabled', 0, $null), @($edge, 'ComposeInlineEnabled', 0, $null),
+                @($edge, 'NewTabPageBingChatEnabled', 0, $null),
+                @('HKLM:\SOFTWARE\Policies\WindowsNotepad', 'DisableAIFeatures', 1, $null),
+                @($paint, 'DisableCocreator', 1, $null), @($paint, 'DisableGenerativeFill', 1, $null), @($paint, 'DisableImageCreator', 1, $null),
+                @($paint, 'DisableGenerativeErase', 1, $null), @($paint, 'DisableRemoveBackground', 1, $null)) }
+        @{ Id = 'edgeads'; Name = (N 'Ads and suggestions in Edge'); Recommended = $false; Managed = $true
+            Note = (N 'No news and offers on the new tab page, no shopping pop-ups, no suggestions, and Edge stops using what you browse to personalize ads.')
+            Values = @(
+                @($edge, 'NewTabPageContentEnabled', 0, $null), @($edge, 'EdgeShoppingAssistantEnabled', 0, $null), @($edge, 'ShowRecommendationsEnabled', 0, $null),
+                @($edge, 'UserFeedbackAllowed', 0, $null), @($edge, 'SpotlightExperiencesAndRecommendationsEnabled', 0, $null), @($edge, 'PersonalizationReportingEnabled', 0, $null)) }
+    )
+    return @($groups | Where-Object { -not $_.MinBuild -or $script:Build -ge $_.MinBuild })
+}
+
+function Test-PrivacyGroup($Group) {
+    # True when every value of the group already switches the feature off.
+    foreach ($v in $Group.Values) {
+        $s = Read-RegValue $v[0] $v[1]
+        if (-not $s.Existed -or "$($s.Data)" -ne "$($v[2])") { return $false }
+    }
+    return $true
+}
+
+function Set-PrivacyGroup($Change, $Group, [bool]$Off) {
+    # Off: the values that switch the feature off. Otherwise: the Windows default (or no value).
+    # Returns how many values could not be changed.
+    $failed = 0
+    foreach ($v in $Group.Values) {
+        try {
+            if ($Off) { Set-RegValueLogged $Change $v[0] $v[1] $v[2] 'DWord' }
+            elseif ($null -eq $v[3]) { Remove-RegValueLogged $Change $v[0] $v[1] }
+            else { Set-RegValueLogged $Change $v[0] $v[1] $v[3] 'DWord' }
+        } catch {
+            $failed++
+            Write-YsoError -Context ('privacy: ' + $v[1]) -ErrorRecord $_
+        }
+    }
+    return $failed
+}
+
+function Show-PrivacySettings {
+    $groups = @(Get-PrivacyGroups)
+    $now = [bool[]]@(foreach ($g in $groups) { Test-PrivacyGroup $g })
+    $want = [bool[]]@($now)
+    while ($true) {
+        Clear-Host
+        Write-Section 'PRIVACY & ADS'
+        Write-Info 'Ticked = switched off. Tick what you do not want, then Apply. Every change is written down: Undo YSO changes (32) puts any of it back.'
+        Write-Host ''
+        for ($i = 0; $i -lt $groups.Count; $i++) {
+            $mark = $(if ($want[$i]) { '[x]' } else { '[ ]' })
+            $note = L $groups[$i].Note
+            if ($want[$i] -and -not $now[$i]) { $note = (L 'Will be switched off.') + ' ' + $note }
+            elseif ($now[$i] -and -not $want[$i]) { $note = (L 'Will be switched back on.') + ' ' + $note }
+            Write-Option "$($i + 1)" ('{0} {1}' -f $mark, (L $groups[$i].Name)) $note
+        }
+        Write-Host ''
+        $c = Read-Choice 'Number = tick or untick, R = recommended, A = apply, Enter = cancel' -Buttons @(@('A', 'Apply'), @('R', 'Tick the recommended ones'), @('', 'Cancel')) -Hint 'Click a line to tick or untick it, then Apply.'
+        if (-not $c) { Write-Info 'Nothing was changed.'; return }
+        if ($c -eq 'A') { break }
+        if ($c -eq 'R') {
+            for ($i = 0; $i -lt $groups.Count; $i++) { if ($groups[$i].Recommended) { $want[$i] = $true } }
+            continue
+        }
+        if ($c -match '^\d+$' -and [int]$c -ge 1 -and [int]$c -le $groups.Count) { $want[[int]$c - 1] = -not $want[[int]$c - 1] }
+    }
+    $off = @(for ($i = 0; $i -lt $groups.Count; $i++) { if ($want[$i] -and -not $now[$i]) { $groups[$i] } })
+    $back = @(for ($i = 0; $i -lt $groups.Count; $i++) { if ($now[$i] -and -not $want[$i]) { $groups[$i] } })
+    Write-Host ''
+    if ($off.Count + $back.Count -eq 0) { Write-Ok 'Nothing to change: everything is already as you chose.'; return }
+    foreach ($g in $off) { Write-Info ('- ' + (L 'Switch off: {0}' (L $g.Name))) }
+    foreach ($g in $back) { Write-Info ('- ' + (L 'Switch back on: {0}' (L $g.Name))) }
+    if (@($off | Where-Object { $_.Managed }).Count -gt 0) {
+        Write-Warn 'Windows and Edge will then say that some settings are "managed by your organization": that is how these switches work. Nothing else changes, and Undo removes it.'
+    }
+    Write-Info 'Some changes show after you sign out and back in, or after a restart.'
+    if ($script:DryRun) { Write-Info 'Analyze-only mode: nothing was changed.'; return }
+    if (-not (Confirm-Action 'Apply these changes?' $true)) { Write-Info 'Nothing was changed.'; return }
+    $title = $(if ($off.Count -and $back.Count) { N 'Switched off: {0}. Back on: {1}' } elseif ($off.Count) { N 'Switched off: {0}' } else { N 'Back on: {0}' })
+    $names = @()
+    if ($off.Count) { $names += , [string[]]@($off | ForEach-Object { $_.Name }) }
+    if ($back.Count) { $names += , [string[]]@($back | ForEach-Object { $_.Name }) }
+    $change = New-ChangeEntry (N 'Privacy & ads') $title $names
+    $failed = 0
+    foreach ($g in $off) { $failed += Set-PrivacyGroup $change $g $true }
+    foreach ($g in $back) { $failed += Set-PrivacyGroup $change $g $false }
+    Add-ChangeEntry $change
+    if ($failed -eq 0) { Write-Ok 'Done. Undo YSO changes (32) can put everything back.' }
+    else { Write-Warn (L 'Done, but {0} setting(s) could not be changed. The details were saved.' $failed) }
+    if (Confirm-Action 'Restart File Explorer now, so the Start menu and the taskbar change right away? Open File Explorer windows close.' $false) {
+        Get-Process -Name explorer -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        # Windows starts it again by itself, as you (not as administrator)
+        $clock = [System.Diagnostics.Stopwatch]::StartNew()
+        while (-not (Get-Process -Name explorer -ErrorAction SilentlyContinue) -and $clock.ElapsedMilliseconds -lt 10000) { Start-Sleep -Milliseconds 500 }
+        if (-not (Get-Process -Name explorer -ErrorAction SilentlyContinue)) { Start-Process explorer.exe }
+    }
+}
+
+# ==================================================================
+#  UNINSTALL APPS  (31) - the app's own uninstaller first, then what it left behind
+#  (folders, registry keys), only what you tick. Folders go to the Recycle Bin and
+#  registry keys are saved to a .reg file first: Undo YSO changes (32) puts them back.
+# ==================================================================
+function ConvertTo-InstalledApp([hashtable]$V, [string]$KeyPath, [string]$KeyName, [string]$Scope) {
+    # One entry of "Installed apps", or $null for what you do not uninstall yourself:
+    # Windows components, updates, parts of another app, entries without an uninstaller.
+    $name = "$($V['DisplayName'])".Trim()
+    $un = "$($V['UninstallString'])".Trim()
+    if (-not $name -or -not $un -or $KeyName -eq 'YSO') { return $null }
+    if ("$($V['SystemComponent'])" -eq '1' -or "$($V['ParentKeyName'])" -or "$($V['ReleaseType'])" -match 'Update|Hotfix') { return $null }
+    $date = $null
+    if ("$($V['InstallDate'])" -match '^(\d{8})') {
+        try { $date = [datetime]::ParseExact($Matches[1], 'yyyyMMdd', [System.Globalization.CultureInfo]::InvariantCulture) } catch { }
+    }
+    $size = 0L
+    if ("$($V['EstimatedSize'])" -match '^\d+$') { $size = [long]"$($V['EstimatedSize'])" * 1KB }
+    return [pscustomobject]@{
+        Name = $name; Publisher = "$($V['Publisher'])".Trim(); Version = "$($V['DisplayVersion'])".Trim()
+        Size = $size; Installed = $date; LastUsed = $null
+        Location = "$($V['InstallLocation'])".Trim().Trim('"').TrimEnd('\')
+        Icon = ("$($V['DisplayIcon'])" -replace ',\s*-?\d+$', '').Trim().Trim('"')
+        Uninstall = $un; Msi = ("$($V['WindowsInstaller'])" -eq '1')
+        KeyPath = $KeyPath; KeyName = $KeyName; Scope = $Scope
+    }
+}
+
+function Get-InstalledApps {
+    # The apps of Settings > Apps > Installed apps that have an uninstaller (desktop apps).
+    $roots = @(
+        @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall', (N 'everyone')),
+        @('HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall', (N 'everyone')),
+        @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall', (N 'you'))
+    )
+    $seen = @{}
+    $apps = New-Object System.Collections.Generic.List[object]
+    foreach ($r in $roots) {
+        $root = Get-Item -LiteralPath $r[0] -ErrorAction SilentlyContinue
+        if (-not $root) { continue }
+        foreach ($sub in @($root.GetSubKeyNames())) {
+            $k = $null
+            try { $k = $root.OpenSubKey($sub) } catch { }
+            if (-not $k) { continue }
+            $v = @{}
+            try { foreach ($n in @($k.GetValueNames())) { if ($n) { $v[$n] = $k.GetValue($n) } } } catch { } finally { $k.Close() }
+            $app = ConvertTo-InstalledApp $v ($r[0] + '\' + $sub) $sub $r[1]
+            if (-not $app) { continue }
+            $id = ($app.Name + '|' + $app.Version).ToLowerInvariant()
+            if ($seen.ContainsKey($id)) { continue }
+            $seen[$id] = $true
+            $apps.Add($app)
+        }
+    }
+    return $apps.ToArray()
+}
+
+function Get-PrefetchTimes {
+    # When each program last ran, from Windows' own Prefetch files: program file name -> date.
+    $h = @{}
+    foreach ($f in @(Get-ChildItem -LiteralPath (Join-Path $env:WINDIR 'Prefetch') -Filter '*.pf' -File -ErrorAction SilentlyContinue)) {
+        $i = $f.Name.LastIndexOf('-')
+        if ($i -le 0) { continue }
+        $exe = $f.Name.Substring(0, $i).ToLowerInvariant()
+        if (-not $h.ContainsKey($exe) -or $f.LastWriteTime -gt $h[$exe]) { $h[$exe] = $f.LastWriteTime }
+    }
+    return $h
+}
+
+function Set-AppLastUsed([object[]]$Apps, [hashtable]$Times) {
+    foreach ($a in $Apps) {
+        $exes = @()
+        if ($a.Icon -match '(?i)\.exe$') { $exes += [System.IO.Path]::GetFileName($a.Icon) }
+        if ($a.Location -and (Test-Path -LiteralPath $a.Location -PathType Container)) {
+            $exes += @(Get-ChildItem -LiteralPath $a.Location -Filter '*.exe' -File -ErrorAction SilentlyContinue | Select-Object -First 25 | ForEach-Object { $_.Name })
+        }
+        $best = $null
+        foreach ($e in $exes) {
+            $n = "$e".ToLowerInvariant()
+            if ($n -match '^(unins|uninst|uninstall|update|updater|setup|crash)') { continue }
+            if ($Times.ContainsKey($n) -and ($null -eq $best -or $Times[$n] -gt $best)) { $best = $Times[$n] }
+        }
+        $a.LastUsed = $best
+    }
+}
+
+function Format-AppDate($Date) {
+    if (-not $Date) { return '-' }
+    return (Format-DaysAgo $Date)
+}
+
+function Show-AppList([object[]]$Apps) {
+    Write-Host ('       ' + (L 'Name').PadRight(38) + (L 'Publisher').PadRight(26) + (L 'Size').PadRight(11) + (L 'Last used')) -ForegroundColor DarkGray
+    $i = 0
+    foreach ($a in $Apps) {
+        $i++
+        Write-Host ('  {0,3}  ' -f $i) -NoNewline -ForegroundColor Green
+        Write-Host ((Get-Truncated $a.Name 36).PadRight(38)) -NoNewline
+        Write-Host ((Get-Truncated $(if ($a.Publisher) { $a.Publisher } else { '-' }) 24).PadRight(26)) -NoNewline -ForegroundColor DarkGray
+        Write-Host ($(if ($a.Size -gt 0) { Format-Size $a.Size } else { '-' })).PadRight(11) -NoNewline
+        Write-Host (Format-AppDate $a.LastUsed) -ForegroundColor Gray
+    }
+}
+
+function Get-SortedApps([object[]]$Apps, [string]$Sort, [string]$Filter) {
+    $list = @($Apps | Where-Object { -not $Filter -or $_.Name.IndexOf($Filter, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or "$($_.Publisher)".IndexOf($Filter, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
+    switch ($Sort) {
+        'size' { return @($list | Sort-Object @{ Expression = { $_.Size }; Descending = $true }, Name) }
+        # never used for the longest time first; apps Windows has no date for come last
+        'used' { return @($list | Sort-Object @{ Expression = { if ($_.LastUsed) { $_.LastUsed } else { [datetime]::MaxValue } } }, Name) }
+    }
+    return @($list | Sort-Object Name)
+}
+
+function Test-SharedComponent($App) {
+    # Runtimes, frameworks and drivers: other apps need them.
+    return ("$($App.Name)" -match '(?i)redistributable|runtime|\.net|webview2|visual c\+\+|directx|driver|chipset|framework|\bsdk\b')
+}
+
+function Get-UninstallCommand([string]$Command) {
+    # The uninstall command, split into program and arguments. Windows Installer apps: msiexec /x {code}.
+    $c = $Command.Trim()
+    if ($c -match '(?i)msiexec(\.exe)?"?\s' -and $c -match '(\{[0-9A-Fa-f\-]{36}\})') {
+        return [pscustomobject]@{ File = (Join-Path $env:WINDIR 'System32\msiexec.exe'); Arguments = '/x ' + $Matches[1] }
+    }
+    if ($c -match '^"([^"]+)"\s*(.*)$') { return [pscustomobject]@{ File = $Matches[1]; Arguments = $Matches[2].Trim() } }
+    if ($c -match '(?i)^(.+?\.exe)(\s+.*)?$') { return [pscustomobject]@{ File = $Matches[1]; Arguments = "$($Matches[2])".Trim() } }
+    return [pscustomobject]@{ File = (Join-Path $env:WINDIR 'System32\cmd.exe'); Arguments = '/c "' + $c + '"' }
+}
+
+function Test-AppStillInstalled($App) { return [bool](Test-Path -LiteralPath $App.KeyPath) }
+
+function Get-NameKey([string]$Text) { return ("$Text".ToLowerInvariant() -replace '[^a-z0-9]', '') }
+
+function Get-CommonNameKeys {
+    # Words too common to tell one app from another: never used to find leftovers.
+    return @('microsoft', 'windows', 'update', 'updates', 'driver', 'drivers', 'intel', 'nvidia', 'nvidiacorporation', 'amd', 'realtek', 'google', 'adobe',
+        'apple', 'mozilla', 'oracle', 'java', 'python', 'visual', 'runtime', 'tools', 'system', 'service', 'services', 'common', 'commonfiles', 'program',
+        'programs', 'programfiles', 'files', 'office', 'software', 'games', 'game', 'temp', 'packages', 'data', 'local', 'roaming', 'users', 'public', 'default',
+        'cache', 'logs', 'setup', 'installer', 'launcher', 'client', 'apps', 'free', 'studio', 'player', 'helper', 'online', 'desktop', 'classes', 'policies',
+        'wow6432node', 'clients', 'registeredapplications', 'appdata', 'programfilesx86', 'microsoftcorporation', 'package', 'packagecache', 'installshield', 'nsis')
+}
+
+function Get-AppNameKeys($App) {
+    # Names its folders and registry keys usually have, squeezed to letters and digits:
+    # "Mozilla Firefox (x64 en-US)" -> mozillafirefox, firefox. Never too short or too common.
+    $n = "$($App.Name)" -replace '\([^)]*\)', ' ' -replace '(?i)\bv?\d+(\.\d+)+\S*', ' ' -replace '(?i)\b(x64|x86|64-bit|32-bit|amd64|arm64|version)\b', ' '
+    $n = ($n -replace '\s+', ' ').Trim(' ', '-', '_', '.')
+    $keys = New-Object System.Collections.Generic.List[string]
+    $full = Get-NameKey $n
+    $keys.Add($full)
+    foreach ($p in @(Get-AppPublisherKeys $App -All)) { if ($full.StartsWith($p) -and $full.Length - $p.Length -ge 4) { $keys.Add($full.Substring($p.Length)) } }
+    $keys.Add((Get-NameKey (@($n -split ' ')[0])))
+    $common = Get-CommonNameKeys
+    $out = @($keys | Where-Object { $_.Length -ge 4 -and $common -notcontains $_ })
+    # the app's own folder name ("VLC" in C:\Program Files\VideoLAN\VLC) is a good sign, even short
+    if ($App.Location) {
+        $leaf = Get-NameKey (Split-Path -Leaf $App.Location)
+        if ($leaf.Length -ge 3 -and $common -notcontains $leaf) { $out += $leaf }
+    }
+    return @($out | Select-Object -Unique)
+}
+
+function Get-AppPublisherKeys($App, [switch]$All) {
+    # Folder names of the publisher, where apps often keep a folder of their own (AppData\Mozilla\Firefox).
+    # Never Microsoft or Windows folders (unless -All: to cut the publisher off the app's name).
+    $keys = @()
+    $p = ("$($App.Publisher)" -replace '(?i)[,.]?\s*\b(inc|llc|ltd|gmbh|corp|corporation|co|limited|software|technologies|foundation|s\.?a\.?)\b\.?', ' ').Trim()
+    if ($p) { $keys += (Get-NameKey $p); $keys += (Get-NameKey (@($p -split '\s+')[0])) }
+    if ($App.Location) {
+        $parent = Split-Path -Parent $App.Location
+        if ($parent) { $keys += (Get-NameKey (Split-Path -Leaf $parent)) }
+    }
+    $system = @('microsoft', 'microsoftcorporation', 'windows', 'programfiles', 'programfilesx86', 'programs', 'common', 'commonfiles', 'local',
+        'locallow', 'roaming', 'appdata', 'users', 'packages', 'temp', 'classes', 'policies', 'wow6432node', 'clients')
+    return @($keys | Where-Object { $_.Length -ge 3 -and ($All -or $system -notcontains $_) } | Select-Object -Unique)
+}
+
+function Test-SafeLeftoverFolder([string]$Path, [string[]]$OtherLocations) {
+    # Never a drive, a folder near the top (C:\Games), a system or profile folder, a root like
+    # Program Files, or a folder that holds (or is inside) another installed app.
+    $norm = { param($x) "$x".Replace('/', '\').TrimEnd('\') }
+    $p = & $norm $Path
+    if (-not ([System.IO.Path]::IsPathRooted($Path) -or $p -match '^[A-Za-z]:\\') -or @($p -split '\\' | Where-Object { $_ }).Count -lt 3) { return $false }
+    $roots = @($env:WINDIR, $env:ProgramData, $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:APPDATA, $env:LOCALAPPDATA, $env:USERPROFILE, $env:PUBLIC)
+    $roots += @($roots | Where-Object { $_ } | ForEach-Object { [System.IO.Path]::Combine($_, 'Common Files'); [System.IO.Path]::Combine($_, 'Programs'); [System.IO.Path]::Combine($_, 'Microsoft') })
+    if ($env:USERPROFILE) { foreach ($d in @('AppData', 'AppData\LocalLow', 'Documents', 'Desktop', 'Downloads', 'Pictures', 'Music', 'Videos', 'OneDrive')) { $roots += [System.IO.Path]::Combine($env:USERPROFILE, $d) } }
+    foreach ($r in @($roots | Where-Object { $_ })) { if ($p -ieq (& $norm $r)) { return $false } }
+    if ($env:WINDIR -and ($p + '\').StartsWith((& $norm $env:WINDIR) + '\', [StringComparison]::OrdinalIgnoreCase)) { return $false }
+    foreach ($o in @($OtherLocations | Where-Object { $_ })) {
+        $o2 = & $norm $o
+        if ($p -ieq $o2 -or $o2.StartsWith($p + '\', [StringComparison]::OrdinalIgnoreCase) -or $p.StartsWith($o2 + '\', [StringComparison]::OrdinalIgnoreCase)) { return $false }
+    }
+    return $true
+}
+
+function Get-FolderBytes([string]$Path) {
+    # Size of a folder, without following links. Read-only.
+    $sum = 0L; $n = 0
+    $stack = New-Object System.Collections.Generic.Stack[string]
+    $stack.Push($Path)
+    while ($stack.Count -gt 0 -and $n -lt 300000) {
+        $di = [System.IO.DirectoryInfo]::new($stack.Pop())
+        try { foreach ($f in $di.EnumerateFiles()) { $sum += $f.Length; $n++ } } catch { }
+        try { foreach ($d in $di.EnumerateDirectories()) { if (-not ($d.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { $stack.Push($d.FullName) } } } catch { }
+    }
+    return $sum
+}
+
+function Get-LeftoverFolderBases {
+    $b = @($env:APPDATA, $env:LOCALAPPDATA, $env:ProgramData, $env:ProgramFiles, ${env:ProgramFiles(x86)})
+    if ($env:LOCALAPPDATA) { $b += [System.IO.Path]::Combine($env:LOCALAPPDATA, 'Programs') }
+    if ($env:USERPROFILE) { $b += [System.IO.Path]::Combine($env:USERPROFILE, 'AppData', 'LocalLow') }
+    return @($b | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Container) } | Select-Object -Unique)
+}
+
+function Get-LeftoverRegistryBases { return @('HKCU:\Software', 'HKLM:\SOFTWARE', 'HKLM:\SOFTWARE\WOW6432Node') }
+
+function Get-RegSubKeyNames([string]$Path) {
+    $k = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
+    if (-not $k) { return @() }
+    return @($k.GetSubKeyNames())
+}
+
+function Find-AppLeftovers($App, [object[]]$Others) {
+    # What an uninstalled app left behind: folders and registry keys named like it, at the places
+    # apps use. Names another installed app also uses are skipped (they may be its own).
+    $taken = @{}
+    foreach ($o in $Others) { foreach ($k in @(Get-AppNameKeys $o)) { $taken[$k] = $true } }
+    $names = @(Get-AppNameKeys $App | Where-Object { -not $taken.ContainsKey($_) })
+    if ($names.Count -eq 0) { return @() }
+    $pubs = @(Get-AppPublisherKeys $App)
+    $otherLocs = [string[]]@($Others | Where-Object { $_.Location } | ForEach-Object { $_.Location })
+    $found = New-Object System.Collections.Generic.List[object]
+    $seen = @{}
+    $candidates = New-Object System.Collections.Generic.List[string]
+    if ($App.Location -and (Test-Path -LiteralPath $App.Location -PathType Container)) { $candidates.Add($App.Location) }
+    foreach ($b in @(Get-LeftoverFolderBases)) {
+        foreach ($d in @(Get-ChildItem -LiteralPath $b -Directory -Force -ErrorAction SilentlyContinue)) {
+            if ($d.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { continue }
+            $k = Get-NameKey $d.Name
+            if ($names -contains $k) { $candidates.Add($d.FullName); continue }
+            if ($pubs -notcontains $k) { continue }
+            $inside = @(Get-ChildItem -LiteralPath $d.FullName -Directory -Force -ErrorAction SilentlyContinue | Where-Object { -not ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) })
+            foreach ($s in $inside) { if ($names -contains (Get-NameKey $s.Name)) { $candidates.Add($s.FullName) } }
+        }
+    }
+    foreach ($p in $candidates) {
+        $full = $p.TrimEnd('\', '/')
+        if ($seen.ContainsKey($full.ToLowerInvariant())) { continue }
+        $seen[$full.ToLowerInvariant()] = $true
+        if (-not (Test-SafeLeftoverFolder $full $otherLocs)) { continue }
+        $found.Add([pscustomobject]@{ Kind = 'folder'; Path = $full; Size = (Get-FolderBytes $full) })
+    }
+    foreach ($rb in @(Get-LeftoverRegistryBases)) {
+        foreach ($n in @(Get-RegSubKeyNames $rb)) {
+            $k = Get-NameKey $n
+            if ($names -contains $k) { $found.Add([pscustomobject]@{ Kind = 'registry'; Path = "$rb\$n"; Size = 0L }); continue }
+            if ($pubs -notcontains $k) { continue }
+            foreach ($s in @(Get-RegSubKeyNames "$rb\$n")) {
+                if ($names -contains (Get-NameKey $s)) { $found.Add([pscustomobject]@{ Kind = 'registry'; Path = "$rb\$n\$s"; Size = 0L }) }
+            }
+        }
+    }
+    return $found.ToArray()
+}
+
+function Export-RegKey([string]$Key, [string]$File) {
+    $out = & reg.exe export $Key $File /y 2>&1
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $File)) { throw (L 'could not save it first: {0}' (($out | Out-String).Trim())) }
+}
+
+function Get-LeftoverText($Item) {
+    if ($Item.Kind -eq 'folder') { return (L '{0} ({1})' $Item.Path (Format-Size $Item.Size)) }
+    return (L '{0} (settings in the registry)' ("$($Item.Path)" -replace '^HK(CU|LM):', 'HK$1'))
+}
+
+function Remove-AppLeftovers($App, [object[]]$Left, [string]$Status) {
+    # You choose; folders go to the Recycle Bin, registry keys are saved to a .reg file first.
+    # big folders stay unticked: look inside first (a game library, a mail profile...)
+    $tick = [bool[]]@($Left | ForEach-Object { -not ($_.Kind -eq 'folder' -and $_.Size -ge 1GB) })
+    while ($true) {
+        Clear-Host
+        Write-Section 'UNINSTALL APPS'
+        if ($Status) { Write-Ok $Status }
+        Write-Host ''
+        Write-Step (L 'Left behind by {0}: untick what you want to keep' $App.Name)
+        for ($i = 0; $i -lt $Left.Count; $i++) {
+            $mark = $(if ($tick[$i]) { '[x]' } else { '[ ]' })
+            Write-Option "$($i + 1)" ('{0} {1}' -f $mark, (Get-LeftoverText $Left[$i]))
+        }
+        Write-Info 'A folder can hold your own data for that app (game saves, a mail profile): untick it to keep it. Folders of 1 GB or more start unticked.'
+        Write-Info 'Folders go to the Recycle Bin. Registry keys are saved to a file first. Undo YSO changes (32) puts everything back.'
+        $c = Read-Choice 'Number = tick or untick, D = remove the ticked ones, Enter = keep everything' -Buttons @(@('D', 'Remove the ticked ones'), @('', 'Keep everything')) -Hint 'Click a line to tick or untick it.'
+        if (-not $c) { Write-Info 'Nothing was removed.'; return }
+        if ($c -eq 'D') { break }
+        if ($c -match '^\d+$' -and [int]$c -ge 1 -and [int]$c -le $Left.Count) { $tick[[int]$c - 1] = -not $tick[[int]$c - 1] }
+    }
+    $chosen = @(for ($i = 0; $i -lt $Left.Count; $i++) { if ($tick[$i]) { $Left[$i] } })
+    if ($chosen.Count -eq 0) { Write-Info 'Nothing was removed.'; return }
+    $change = New-ChangeEntry (N 'Uninstall apps') (N 'Leftovers of {0} removed') @("$($App.Name)")
+    $backup = Join-Path $script:DataDir 'Backups'
+    New-Item -ItemType Directory -Path $backup -Force | Out-Null
+    $n = 0; $bytes = 0L; $done = 0
+    foreach ($l in $chosen) {
+        $n++
+        try {
+            if ($l.Kind -eq 'folder') {
+                Move-ToRecycleBin $l.Path
+                if (Test-Path -LiteralPath $l.Path) { throw (L 'it is still there (a file may be in use)') }
+                [void]$change.Items.Add([pscustomobject]@{ Kind = 'recycled'; Path = $l.Path })
+                $bytes += $l.Size
+            } else {
+                $key = "$($l.Path)" -replace '^HK(CU|LM):', 'HK$1'
+                $file = Join-Path $backup ('{0}-{1}.reg' -f $change.Id, $n)
+                Export-RegKey $key $file
+                Remove-Item -LiteralPath $l.Path -Recurse -Force -ErrorAction Stop
+                [void]$change.Items.Add([pscustomobject]@{ Kind = 'regkey'; Key = $key; File = $file })
+            }
+            $done++
+            Write-Ok (L 'Removed: {0}' ("$($l.Path)" -replace '^HK(CU|LM):', 'HK$1'))
+        } catch { Write-Warn (L 'Not removed: {0} ({1})' ("$($l.Path)" -replace '^HK(CU|LM):', 'HK$1') $_.Exception.Message) }
+    }
+    Add-ChangeEntry $change
+    if ($bytes -gt 0) { Write-Info (L '{0} moved to the Recycle Bin: empty it (5) to free the space.' (Format-Size $bytes)) }
+}
+
+function Invoke-AppUninstall($App, [object[]]$All) {
+    Clear-Host
+    Write-Section 'UNINSTALL APPS'
+    Write-Step $App.Name
+    Write-Kv 'Publisher' $(if ($App.Publisher) { $App.Publisher } else { '-' })
+    if ($App.Version) { Write-Kv 'Version' $App.Version }
+    Write-Kv 'Size' $(if ($App.Size -gt 0) { Format-Size $App.Size } else { '-' })
+    if ($App.Installed) { Write-Kv 'Installed' (Format-DaysAgo $App.Installed) }
+    Write-Kv 'Last used' (Format-AppDate $App.LastUsed)
+    if ($App.Location) { Write-Kv 'Folder' $App.Location }
+    Write-Host ''
+    $shared = Test-SharedComponent $App
+    if ($shared) { Write-Warn 'Other apps need this to work (a runtime, a framework or a driver). Uninstall it only if you know which app it came with.' }
+    Write-Info 'YSO starts the app''s own uninstaller: follow its window. Then YSO looks for what it left behind.'
+    if (-not (Confirm-Action (L 'Uninstall {0}?' $App.Name) (-not $shared))) { return }
+    if ($script:DryRun) { Write-Info 'Analyze-only mode: nothing was changed.'; return }
+    $cmd = Get-UninstallCommand $App.Uninstall
+    Write-Step (L 'The uninstaller of {0} is open: follow its window.' $App.Name)
+    try {
+        if ($cmd.Arguments) { $p = Start-Process -FilePath $cmd.File -ArgumentList $cmd.Arguments -PassThru -ErrorAction Stop }
+        else { $p = Start-Process -FilePath $cmd.File -PassThru -ErrorAction Stop }
+    } catch {
+        Write-Warn (L 'The uninstaller could not start: {0}' $_.Exception.Message)
+        return
+    }
+    Wait-ProcessWithProgress $p (L 'Uninstalling {0}' $App.Name)
+    # some uninstallers start a copy of themselves and close at once: wait for you in that case
+    if (Test-AppStillInstalled $App) {
+        [void](Read-Choice 'Press Enter when the uninstaller has finished' -Buttons @(, @('', 'The uninstaller has finished')) -Hint 'If its window is still open, finish it first.')
+    }
+    $status = ''
+    if (Test-AppStillInstalled $App) {
+        Write-Warn (L '{0} still looks installed: its uninstaller was cancelled, or it finishes after a restart.' $App.Name)
+        if (-not (Confirm-Action 'Look for what it left behind anyway?' $false)) { return }
+    } else {
+        $status = L '{0} was uninstalled.' $App.Name
+        Write-Ok $status
+    }
+    Write-Step 'Looking for what it left behind...'
+    $left = @(Find-AppLeftovers $App @($All | Where-Object { $_.KeyPath -ne $App.KeyPath }))
+    if ($left.Count -eq 0) { Write-Ok 'Nothing left behind.'; return }
+    Remove-AppLeftovers $App $left $status
+}
+
+function Show-Uninstaller([object[]]$Sample = $null) {
+    # -Sample: a made-up list for the window's pictures; choosing an app only ends the page.
+    if ($null -ne $Sample) { $all = @($Sample) }
+    else {
+        Write-Section 'UNINSTALL APPS'
+        Write-Step 'Reading the list of apps...'
+        $all = @(Get-InstalledApps)
+        Set-AppLastUsed $all (Get-PrefetchTimes)
+    }
+    $sort = 'name'; $filter = ''
+    while ($true) {
+        Clear-Host
+        Write-Section 'UNINSTALL APPS'
+        Write-Info 'Choose an app: YSO starts its own uninstaller, then shows what it left behind (folders, settings) and removes what you tick, to the Recycle Bin.'
+        Write-Info 'Apps from the Microsoft Store are uninstalled in Settings > Apps.'
+        $list = @(Get-SortedApps $all $sort $filter)
+        Write-Host ''
+        if ($filter) { Write-Info (L '{0} app(s) with "{1}" in their name.' $list.Count $filter) }
+        else { Write-Info (L '{0} apps.' $list.Count) }
+        if ($list.Count -gt 0) { Show-AppList $list }
+        Write-Host ''
+        $c = Read-Choice 'Number = uninstall, S = biggest first, U = least used first, N = by name, or type part of a name. Enter = back' -Buttons @(@('S', 'Biggest first'), @('U', 'Least used first'), @('N', 'By name'), @('', 'Back')) -Hint 'Click an app to uninstall it. To find one, type part of its name.' -KeepCase
+        if (-not $c) {
+            if ($filter) { $filter = ''; continue }
+            return
+        }
+        if ($c -match '^[sS]$') { $sort = 'size' }
+        elseif ($c -match '^[uU]$') { $sort = 'used' }
+        elseif ($c -match '^[nN]$') { $sort = 'name' }
+        elseif ($c -match '^\d+$') {
+            if ($null -ne $Sample) { return }
+            if ([int]$c -ge 1 -and [int]$c -le $list.Count) {
+                Invoke-AppUninstall $list[[int]$c - 1] $all
+                [void](Read-Choice 'Press Enter to go back to the list' -Buttons @(, @('', 'Back to the list')))
+                $all = @(Get-InstalledApps)
+                Set-AppLastUsed $all (Get-PrefetchTimes)
+            }
+        } else { $filter = $c.Trim() }
+    }
+}
+
+# ==================================================================
 #  UPDATES  (28) - apps with winget, drivers with Windows Update
 #  Manual: you see the list and choose. Automatic: a scheduled task runs
 #  "-AutoUpdate" as you (elevated), installs what is safe and never restarts the PC.
@@ -4246,7 +5185,7 @@ function Install-YsoCopy([string]$Source = $PSCommandPath) {
 
 function Remove-YsoCopyIfUnused {
     if (Test-YsoInstalled) { return }   # installed YSO lives there: only Uninstall removes it
-    foreach ($t in @($script:TaskName, $script:UpdateTaskName)) {
+    foreach ($t in @($script:TaskName, $script:UpdateTaskName, $script:TrayTaskName)) {
         if (Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue) { return }
     }
     Remove-Item -LiteralPath (Join-Path $env:ProgramFiles 'YSO') -Recurse -Force -ErrorAction SilentlyContinue
@@ -4838,7 +5777,10 @@ function Show-Settings {
         Write-Kv 'Weekly auto-clean cleans' (Get-AutoCleanList)
         $ex = @($script:Settings.ExcludeFolders)
         Write-Kv 'Never touch' $(if ($ex.Count) { $ex -join '; ' } else { L '(none)' })
-        Write-Kv 'New versions of YSO' $(if ($script:Settings.CheckForUpdates) { L 'checked on GitHub when YSO opens' } else { L 'not checked' })
+        if ($script:IsPackaged) { Write-Kv 'New versions of YSO' (L 'installed by the Microsoft Store') }
+        else { Write-Kv 'New versions of YSO' $(if ($script:Settings.CheckForUpdates) { L 'checked on GitHub when YSO opens' } else { L 'not checked' }) }
+        $trayOn = Test-TrayOn
+        Write-Kv 'Icon next to the clock' $(if ($trayOn) { L 'on: tells you when something needs you' } else { L 'not shown' })
         Write-Kv 'Settings file' $script:SettingsPath 'DarkGray'
         if ($script:SettingsError) { Write-Warn 'settings.json has an error, so defaults are in use. Fix it (6) or reset it (7).' }
         Write-Host ''
@@ -4849,7 +5791,8 @@ function Show-Settings {
         Write-Option '5' 'Remove a folder from that list'
         Write-Option '6' 'Edit the settings file in Notepad'
         Write-Option '7' 'Reset to defaults'
-        Write-Option '8' $(if ($script:Settings.CheckForUpdates) { N 'Stop checking for new versions of YSO' } else { N 'Check for new versions of YSO' })
+        if (-not $script:IsPackaged) { Write-Option '8' $(if ($script:Settings.CheckForUpdates) { N 'Stop checking for new versions of YSO' } else { N 'Check for new versions of YSO' }) }
+        Write-Option '9' $(if ($trayOn) { N 'Remove the YSO icon next to the clock' } else { N 'Show a YSO icon next to the clock (alerts)' })
         Write-Option '0' 'Back'
         switch (Read-Choice) {
             '1' {
@@ -4925,9 +5868,15 @@ function Show-Settings {
                 }
             }
             '8' {
+                if ($script:IsPackaged) { break }
                 $script:Settings.CheckForUpdates = -not $script:Settings.CheckForUpdates
                 Remove-Item -LiteralPath $script:UpdateCheckPath -Force -ErrorAction SilentlyContinue
                 [void](Save-Settings)
+            }
+            '9' {
+                Write-Host ''
+                if ($trayOn) { Disable-YsoTray } else { Enable-YsoTray }
+                [void](Read-Choice 'Press Enter to continue' -Buttons @(, @('', 'OK')))
             }
             '0' { return }
         }
@@ -5365,6 +6314,26 @@ function Invoke-SelfTest {
         $d = @(Get-VirtualDisks)
         Result-Ok (L '{0} virtual disk(s) found' $d.Count)
     }
+    Test-Check 'Apps & privacy' 'Privacy & ads (30)' {
+        $g = @(Get-PrivacyGroups)
+        $off = @($g | Where-Object { Test-PrivacyGroup $_ }).Count
+        Result-Ok (L '{0} of {1} switched off' $off $g.Count)
+    }
+    Test-Check 'Apps & privacy' 'Uninstall apps (31)' {
+        $a = @(Get-InstalledApps)
+        if ($a.Count -eq 0) { return (Result-Missing (L 'no installed apps found')) }
+        Result-Ok (L '{0} apps found' $a.Count)
+    }
+    Test-Check 'Apps & privacy' 'Undo YSO changes (32)' {
+        $j = @(Read-ChangeJournal)
+        Result-Ok (L '{0} change(s) written down' $j.Count)
+    }
+    Test-Check 'Apps & privacy' 'Icon next to the clock' {
+        if (Test-TrayOn) { Result-Ok (L 'on') } else { Result-Info (L 'off (Settings, O)') }
+    }
+    Test-Check 'Apps & privacy' 'Microsoft Store package' {
+        if ($script:IsPackaged) { Result-Ok (L 'YSO runs from its Microsoft Store package') } else { Result-Info (L 'YSO runs from its file') }
+    }
     Test-Check 'Space' 'Space finder (27)' {
         $t = [System.Diagnostics.Stopwatch]::StartNew()
         $scan = Get-FolderSizes -Root (Join-Path $env:WINDIR 'Web')
@@ -5637,6 +6606,9 @@ function Invoke-MenuOption {
             '27' { Show-SpaceFinder }
             '28' { Show-UpdatesMenu }
             '29' { Invoke-VDiskCompact }
+            '30' { Show-PrivacySettings }
+            '31' { Show-Uninstaller }
+            '32' { Show-UndoCenter }
             'A'  { Invoke-Analysis }
             'F'  { Invoke-FullMaintenance -Plan $Plan }
             'R'  { Show-RestorePoints }
@@ -5786,7 +6758,12 @@ function Show-Menu {
         (M '11' 'Network check (speed, DNS, Wi-Fi)'),
         (M '12' 'Change DNS servers'),
         (M '13' 'Flush DNS cache'),
-        (M '14' 'Full network reset')
+        (M '14' 'Full network reset'),
+        (M ''   ''),
+        (M '#'  'APPS & PRIVACY'),
+        (M '30' 'Privacy & ads (Windows, Edge, Copilot)'),
+        (M '31' 'Uninstall apps (and their leftovers)'),
+        (M '32' 'Undo YSO changes')
     )
     $right = @(
         (M '#'  'OPTIMIZE'),
@@ -6579,7 +7556,7 @@ function Enable-GuiAdapters($Shared) {
     function global:Write-Warn([string]$Text) { $script:GuiShared.Queue.Enqueue([object[]]@('line', 'warn', (L $Text))) }
     function global:Write-Bad([string]$Text) { $script:GuiShared.Queue.Enqueue([object[]]@('line', 'bad', (L $Text))) }
     function global:Write-Info([string]$Text) { $script:GuiShared.Queue.Enqueue([object[]]@('line', 'info', (L $Text))) }
-    function global:Write-Option([string]$Key, [string]$Text) { $script:GuiShared.Queue.Enqueue([object[]]@('option', $Key, (L $Text))) }
+    function global:Write-Option([string]$Key, [string]$Text, [string]$Note = '') { $script:GuiShared.Queue.Enqueue([object[]]@('option', $Key, (L $Text), $(if ($Note) { L $Note } else { '' }))) }
     function global:Write-KeyHint([string]$Text) { }   # the window has buttons for these keys
     function global:Read-Choice([string]$Prompt = (N 'Choose'), [object[]]$Buttons = @(), [string]$Hint = '', [switch]$KeepCase) {
         if (@($Buttons).Count -gt 0) {
@@ -6934,6 +7911,7 @@ function Get-GuiToolGroups {
             (M '8' 'Deep clean (Disk Cleanup)'), (M '9' 'Old Windows version (Windows.old)'), (M '10' 'Hibernation file')) }
         @{ Title = (N 'NETWORK'); Items = @((M '11' 'Network check (speed, DNS, Wi-Fi)'), (M '12' 'Change DNS servers'), (M '13' 'Flush DNS cache'), (M '14' 'Full network reset')) }
         @{ Title = (N 'OPTIMIZE'); Items = @((M '15' 'Optimize drives (TRIM / defrag)'), (M '16' 'Power plan'), (M '17' 'Startup programs'), (M '18' 'Boot time analyzer')) }
+        @{ Title = (N 'APPS & PRIVACY'); Items = @((M '30' 'Privacy & ads (Windows, Edge, Copilot)'), (M '31' 'Uninstall apps (and their leftovers)'), (M '32' 'Undo YSO changes')) }
         @{ Title = (N 'DIAGNOSE & REPAIR'); Items = @((M '19' 'System health report'), (M '20' 'Crashes & errors'), (M '21' 'Security check & Defender scan'),
             (M '22' 'What runs automatically? (audit)'), (M '23' 'Driver problems'), (M '24' 'Check drives for errors'), (M '25' 'Memory test'), (M '26' 'Repair Windows files (DISM + SFC)')) }
         @{ Title = (N 'SPACE & UPDATES'); Items = @((M '27' 'Space finder (what fills my disk?)'), (M '28' 'Updates: apps & drivers'), (M '29' 'Virtual disks (compact VMs, WSL, Docker)')) }
@@ -7695,6 +8673,16 @@ function Add-GuiDocMessage($m) {
                 }
                 $t = New-GuiText $label 13 'Text' -Wrap -Margin '8,0,8,0'
                 $t.VerticalAlignment = 'Center'
+                $note = $(if ($m.Count -gt 3) { [string]$m[3] } else { '' })
+                if ($note) {
+                    # a second line under the choice
+                    [void]$script:GuiDocText.AppendLine('        ' + $note)
+                    $sp = New-Object System.Windows.Controls.StackPanel
+                    $sp.VerticalAlignment = 'Center'
+                    $sp.Children.Add($t) | Out-Null
+                    $sp.Children.Add((New-GuiText $note 12 'Text3' -Wrap -Margin '8,2,8,0')) | Out-Null
+                    $t = $sp
+                }
                 [System.Windows.Controls.Grid]::SetColumn($t, 1)
                 $g.Children.Add($t) | Out-Null
                 $chev = New-GuiIcon ([string][char]0xE76C) 11 'Text3'
@@ -8049,6 +9037,9 @@ function Get-GuiToolInfo([string]$Key) {
         '27' = @(0xEB05, (N 'See which folders fill your disk.'))
         '28' = @(0xE896, (N 'Apps and drivers, from one list.'))
         '29' = @(0xE7F8, (N 'Gives back the space VMs, WSL and Docker no longer use.'))
+        '30' = @(0xE72E, (N 'Switch off ads, tracking and AI features. Undo any time.'))
+        '31' = @(0xE738, (N 'Removes an app, then what it left behind.'))
+        '32' = @(0xE7A7, (N 'Puts back any setting YSO changed.'))
         'A'  = @(0xE721, (N 'See what can be freed. Deletes nothing.'))
         'F'  = @(0xE74D, (N 'Everything at once, with a restore point first.'))
         'R'  = @(0xE777, (N 'Create one, or see the ones you have.'))
@@ -8372,6 +9363,26 @@ function Initialize-GuiSnapshot([string]$Dir) {
         { Save-GuiPng '15-virtual-disks'; $true },
         { if ($script:GuiCurrent) { Send-GuiAnswer '0' }; $true },
         { -not $script:GuiCurrent -and $script:GuiJobs.Count -eq 0 },
+        { Start-GuiOption '30'; $true },
+        { $script:Ui.RunAsk.Visibility -eq 'Visible' -or -not $script:GuiCurrent },
+        { Save-GuiPng '16-privacy'; $true },
+        { if ($script:GuiCurrent) { Send-GuiAnswer '' }; $true },
+        { -not $script:GuiCurrent -and $script:GuiJobs.Count -eq 0 },
+        { Start-GuiUninstallSample; $true },
+        { $script:Ui.RunAsk.Visibility -eq 'Visible' -or -not $script:GuiCurrent },
+        { Save-GuiPng '17-uninstall'; $true },
+        { if ($script:GuiCurrent) { Send-GuiAnswer '' }; $true },
+        { -not $script:GuiCurrent -and $script:GuiJobs.Count -eq 0 },
+        { Start-GuiLeftoverSample; $true },
+        { $script:Ui.RunAsk.Visibility -eq 'Visible' -or -not $script:GuiCurrent },
+        { Save-GuiPng '18-leftovers'; $true },
+        { if ($script:GuiCurrent) { Send-GuiAnswer '' }; $true },
+        { -not $script:GuiCurrent -and $script:GuiJobs.Count -eq 0 },
+        { Start-GuiUndoSample; $true },
+        { $script:Ui.RunAsk.Visibility -eq 'Visible' -or -not $script:GuiCurrent },
+        { Save-GuiPng '19-undo'; $true },
+        { if ($script:GuiCurrent) { Send-GuiAnswer '' }; $true },
+        { -not $script:GuiCurrent -and $script:GuiJobs.Count -eq 0 },
         { Start-GuiOption 'O'; $true },
         { $script:Ui.RunAsk.Visibility -eq 'Visible' -or -not $script:GuiCurrent },
         { Save-GuiPng '14-settings'; $true },
@@ -8436,6 +9447,69 @@ $null = Read-VDiskChoice $disks
     Update-GuiBusy
 }
 
+function Start-GuiSample([string]$Key, [string]$Name, [string]$Body) {
+    # For -Snapshot only: a page of the window filled with made-up data. Nothing is read or changed.
+    Reset-GuiRun (Get-GuiOptionTitle $Key)
+    $script:GuiRunKey = $Key
+    Show-GuiPage 'Run' $Key
+    $code = $Body + "`n[pscustomobject]@{ Run = [pscustomobject]@{ Status = 'done'; Results = @() }; Lang = `$script:Lang }"
+    Add-GuiJob -Name $Name -Output -Title (Get-GuiOptionTitle $Key) -Script $code -OnDone { param($Out, $Err) Complete-GuiRun $(if ($Out.Count -gt 0) { $Out[-1] } else { $null }) $Err }
+    Update-GuiBusy
+}
+
+function Get-GuiAppSampleScript {
+    return @'
+function New-SampleApp($Name, $Publisher, $Size, $Days) {
+    [pscustomobject]@{ Name = $Name; Publisher = $Publisher; Version = '1.0'; Size = [long]$Size; Installed = (Get-Date).AddDays(-400)
+        LastUsed = $(if ($Days -ge 0) { (Get-Date).AddDays(-$Days) } else { $null }); Location = ''; Icon = ''; Uninstall = 'sample'; Msi = $false
+        KeyPath = 'sample'; KeyName = 'sample'; Scope = 'everyone' }
+}
+'@
+}
+
+function Start-GuiUninstallSample {
+    Start-GuiSample '31' 'uninstall sample' ((Get-GuiAppSampleScript) + @'
+$apps = @(
+    (New-SampleApp '7-Zip 24.09 (x64)' 'Igor Pavlov' 5.8MB 3), (New-SampleApp 'Audacity 3.7.5' 'Audacity Team' 98MB 210),
+    (New-SampleApp 'Blender 5.2' 'Blender Foundation' 1.1GB 45), (New-SampleApp 'Discord' 'Discord Inc.' 410MB 0),
+    (New-SampleApp 'GIMP 3.0.6' 'The GIMP Team' 1.4GB 380), (New-SampleApp 'Mozilla Firefox (x64 en-US)' 'Mozilla' 262MB 1),
+    (New-SampleApp 'Spotify' 'Spotify AB' 380MB 12), (New-SampleApp 'Steam' 'Valve Corporation' 22MB 6),
+    (New-SampleApp 'VLC media player' 'VideoLAN' 160MB 30), (New-SampleApp 'WinRAR 7.13 (64-bit)' 'win.rar GmbH' 9MB -1))
+Show-Uninstaller -Sample $apps
+'@)
+}
+
+function Start-GuiLeftoverSample {
+    Start-GuiSample '31' 'leftovers sample' ((Get-GuiAppSampleScript) + @'
+$app = New-SampleApp 'GIMP 3.0.6' 'The GIMP Team' 1.4GB 380
+$left = @(
+    [pscustomobject]@{ Kind = 'folder'; Path = 'C:\Users\you\AppData\Roaming\GIMP'; Size = 48MB },
+    [pscustomobject]@{ Kind = 'folder'; Path = 'C:\Users\you\AppData\Local\GIMP'; Size = 310MB },
+    [pscustomobject]@{ Kind = 'folder'; Path = 'C:\Program Files\GIMP 3'; Size = 12MB },
+    [pscustomobject]@{ Kind = 'registry'; Path = 'HKCU:\Software\GIMP'; Size = 0 })
+Remove-AppLeftovers $app $left (L '{0} was uninstalled.' $app.Name)
+'@)
+}
+
+function Start-GuiUndoSample {
+    Start-GuiSample '32' 'undo sample' @'
+function New-SampleChange($Hours, $Tool, $Title, $Arguments, $Undone = '') {
+    $c = New-ChangeEntry $Tool $Title $Arguments
+    $c.When = (Get-Date).AddHours(-$Hours).ToString('yyyy-MM-dd HH:mm:ss')
+    $c.Undone = $Undone
+    [void]$c.Items.Add([pscustomobject]@{ Kind = 'power'; Before = 'sample' })
+    $c
+}
+$changes = @(
+    (New-SampleChange 300 'Change DNS servers' 'DNS servers: {0}' @('Cloudflare') '2026-11-01 10:12:00'),
+    (New-SampleChange 120 'Power plan' 'Power plan: {0}' @('High performance')),
+    (New-SampleChange 26 'Startup programs' '{0} no longer starts with Windows' @('Spotify')),
+    (New-SampleChange 2 'Uninstall apps' 'Leftovers of {0} removed' @('GIMP 3.0.6')),
+    (New-SampleChange 1 'Privacy & ads' 'Switched off: {0}' @(, [string[]]@('Ads and suggestions in Windows', 'Tips and fun facts on the lock screen', 'Ad tracking'))))
+Show-UndoCenter -Sample $changes
+'@
+}
+
 function Invoke-GuiSnapshotStep {
     if ($script:GuiSnapClock.Elapsed.TotalMinutes -gt 8) {
         $script:GuiSnapFailed = $true
@@ -8458,6 +9532,235 @@ function Invoke-GuiSnapshotStep {
         $done = $true
     }
     if ($done -and $script:GuiSnapSteps) { [void]$script:GuiSnapSteps.Dequeue() }
+}
+
+# ==================================================================
+#  ICON NEXT TO THE CLOCK  (switched on in Settings, O)
+#  A small YSO started when you log on (a scheduled task, -Tray): every 6 hours it checks
+#  free space, the drives and the battery, and tells you only when something needs you,
+#  at most once a week for each thing. Nothing is changed by it.
+# ==================================================================
+function New-TrayAlert([string]$Id, [string]$Title, [string]$Text, [string]$Kind = 'Warning') {
+    return [pscustomobject]@{ Id = $Id; Title = $Title; Text = $Text; Kind = $Kind }
+}
+
+function Get-TrayDiskAlert($Volume) {
+    # Less than 10 GB or less than 10 % free on the Windows drive.
+    if (-not $Volume -or [double]$Volume.Size -le 0) { return $null }
+    $free = [double]$Volume.SizeRemaining
+    if ($free -ge 10GB -and (100 * $free / [double]$Volume.Size) -ge 10) { return $null }
+    return (New-TrayAlert 'disk-space' (L 'Your disk is almost full') (L '{0} only {1} free. Open YSO to see what can be freed.' ("$($Volume.DriveLetter):") (Format-Size $free)))
+}
+
+function Get-LastAutoClean {
+    # The last weekly cleanup (history H): when, and how much it freed.
+    if (-not (Test-Path -LiteralPath $script:HistoryPath)) { return $null }
+    $rows = @(Import-Csv -LiteralPath $script:HistoryPath -ErrorAction Stop | Where-Object { $_.Mode -eq 'Auto' -and "$($_.Run)".Length -ge 19 })
+    if ($rows.Count -eq 0) { return $null }
+    $last = @($rows | ForEach-Object { "$($_.Run)" } | Sort-Object)[-1]
+    $bytes = (@($rows | Where-Object { "$($_.Run)" -eq $last }) | ForEach-Object { [long]$_.Bytes } | Measure-Object -Sum).Sum
+    $when = [datetime]::ParseExact($last.Substring(0, 19), 'yyyy-MM-dd HH:mm:ss', [System.Globalization.CultureInfo]::InvariantCulture)
+    return [pscustomobject]@{ When = $when; Bytes = [long]$bytes }
+}
+
+function Get-TrayAlerts {
+    # What deserves a notification now. Each check stands alone and only reads.
+    $alerts = New-Object System.Collections.Generic.List[object]
+    try {
+        $sys = "$env:SystemDrive".TrimEnd(':', '\')
+        $a = Get-TrayDiskAlert (@(Get-FixedVolumes | Where-Object { "$($_.DriveLetter)" -eq $sys }) | Select-Object -First 1)
+        if ($a) { $alerts.Add($a) }
+    } catch { }
+    try {
+        $disks = @(Get-PhysicalDisk -ErrorAction Stop)
+        $wear = $null
+        try { foreach ($r in @($disks | Get-StorageReliabilityCounter -ErrorAction Stop)) { if ($null -ne $r.Wear -and ($null -eq $wear -or $r.Wear -gt $wear)) { $wear = [int]$r.Wear } } } catch { }
+        if (@($disks | Where-Object { "$($_.HealthStatus)" -eq 'Unhealthy' }).Count -gt 0) {
+            $alerts.Add((New-TrayAlert 'disk-health' (L 'A drive reports a failure') (L 'Back up your files now. Details in YSO: System health report.')))
+        } elseif (@($disks | Where-Object { "$($_.HealthStatus)" -eq 'Warning' }).Count -gt 0 -or $wear -ge 80) {
+            $alerts.Add((New-TrayAlert 'disk-wear' (L 'A drive is wearing out') (L 'Keep your backups up to date. Details in YSO: System health report.')))
+        }
+    } catch { }
+    try {
+        if (Test-IsLaptop) {
+            $bh = Get-BatteryHealth
+            if ($bh -and (Get-BatteryVerdict $bh).Level -eq 'Bad') {
+                $alerts.Add((New-TrayAlert 'battery' (L 'The battery is worn') (L 'It holds {0} % of its original charge: think about replacing it.' ([int]$bh.Percent))))
+            }
+        }
+    } catch { }
+    try {
+        $c = Get-LastAutoClean
+        if ($c -and $c.Bytes -gt 0 -and ((Get-Date) - $c.When).TotalHours -lt 24) {
+            $alerts.Add((New-TrayAlert ('clean-' + $c.When.ToString('yyyyMMddHHmm')) (L 'Weekly cleanup done') (L 'It freed {0}.' (Format-Size $c.Bytes)) 'Info'))
+        }
+    } catch { }
+    return $alerts.ToArray()
+}
+
+function Read-TrayState {
+    # When each alert was last shown (yyyyMMddHHmmss: no dashes, so it stays plain text in JSON).
+    $h = @{}
+    try {
+        if (Test-Path -LiteralPath $script:TrayStatePath) {
+            $o = [System.IO.File]::ReadAllText($script:TrayStatePath) | ConvertFrom-Json
+            foreach ($p in $o.PSObject.Properties) { $h[$p.Name] = "$($p.Value)" }
+        }
+    } catch { }
+    return $h
+}
+
+function Save-TrayState([hashtable]$State) {
+    try {
+        $keep = [ordered]@{}
+        foreach ($k in @($State.Keys | Sort-Object)) { $keep[$k] = "$($State[$k])" }
+        [System.IO.File]::WriteAllText($script:TrayStatePath, (ConvertTo-Json -InputObject $keep), (New-Object System.Text.UTF8Encoding $false))
+    } catch { }
+}
+
+function Test-TrayDue([hashtable]$State, [string]$Id, [datetime]$Now) {
+    # An alert is shown again only a week after the last time.
+    if (-not $State.ContainsKey($Id)) { return $true }
+    try { $t = [datetime]::ParseExact("$($State[$Id])", 'yyyyMMddHHmmss', [System.Globalization.CultureInfo]::InvariantCulture) } catch { return $true }
+    return (($Now - $t).TotalDays -ge 7 -or $t -gt $Now)
+}
+
+function Get-TrayMessage([object[]]$Alerts) {
+    # One notification for everything due: title, text (Windows shows up to about 250 characters), kind.
+    if ($Alerts.Count -eq 1) { return [pscustomobject]@{ Title = $Alerts[0].Title; Text = $Alerts[0].Text; Kind = $Alerts[0].Kind } }
+    $text = (@($Alerts | Select-Object -First 3 | ForEach-Object { $_.Title })) -join "`n"
+    $kind = $(if (@($Alerts | Where-Object { $_.Kind -eq 'Warning' }).Count -gt 0) { 'Warning' } else { 'Info' })
+    return [pscustomobject]@{ Title = (L '{0} things to look at' $Alerts.Count); Text = (Get-Truncated $text 250); Kind = $kind }
+}
+
+function Invoke-TrayCheck([switch]$Now) {
+    $state = Read-TrayState
+    $when = Get-Date
+    $due = @(Get-TrayAlerts | Where-Object { $Now -or (Test-TrayDue $state $_.Id $when) })
+    if ($due.Count -eq 0) {
+        if ($Now) { Show-TrayBalloon (L 'Everything looks fine') (L 'Free space, drives and battery are OK.') 'Info' }
+        return
+    }
+    $m = Get-TrayMessage $due
+    Show-TrayBalloon $m.Title $m.Text $m.Kind
+    foreach ($a in $due) { $state[$a.Id] = $when.ToString('yyyyMMddHHmmss') }
+    Save-TrayState $state
+}
+
+function Show-TrayBalloon([string]$Title, [string]$Text, [string]$Kind = 'Info') {
+    if (-not $script:TrayIcon) { return }
+    try { $script:TrayIcon.ShowBalloonTip(15000, $Title, $Text, [System.Windows.Forms.ToolTipIcon]::$Kind) } catch { }
+}
+
+function Start-YsoFromTray {
+    # Opens YSO like its shortcut does (no console window).
+    try {
+        $c = Get-YsoLaunchCommand $script:SelfPath $false
+        Start-Process -FilePath $c.File -ArgumentList $c.Arguments -WindowStyle Hidden
+    } catch { }
+}
+
+function Start-YsoTray {
+    # The icon itself: one per user session (a second start just ends).
+    $created = $false
+    $mutex = New-Object System.Threading.Mutex($true, 'Local\YSO-Tray', [ref]$created)
+    if (-not $created) { return }
+    try {
+        Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+        [System.Windows.Forms.Application]::EnableVisualStyles()
+        $script:TrayExit = New-Object System.Threading.EventWaitHandle($false, [System.Threading.EventResetMode]::ManualReset, 'Local\YSO-Tray-Exit')
+        $ni = New-Object System.Windows.Forms.NotifyIcon
+        $ico = Join-Path $script:InstallDir 'YSO.ico'
+        $ni.Icon = $(if (Test-Path -LiteralPath $ico) { New-Object System.Drawing.Icon $ico, 16, 16 } else { [System.Drawing.SystemIcons]::Application })
+        $ni.Text = 'YSO'
+        $menu = New-Object System.Windows.Forms.ContextMenuStrip
+        $open = $menu.Items.Add((L 'Open YSO'))
+        $open.Font = New-Object System.Drawing.Font($open.Font, [System.Drawing.FontStyle]::Bold)
+        $open.Add_Click({ Start-YsoFromTray })
+        $menu.Items.Add((L 'Check my PC now')).Add_Click({ Invoke-TrayCheck -Now })
+        [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+        $menu.Items.Add((L 'Remove this icon')).Add_Click({
+            try { Unregister-ScheduledTask -TaskName $script:TrayTaskName -Confirm:$false -ErrorAction Stop } catch { }
+            [System.Windows.Forms.Application]::Exit()
+        })
+        $ni.ContextMenuStrip = $menu
+        $ni.Add_DoubleClick({ Start-YsoFromTray })
+        $ni.Add_BalloonTipClicked({ Start-YsoFromTray })
+        $ni.Visible = $true
+        $script:TrayIcon = $ni
+        # first check 2 minutes after logon (the PC is busy before), then every 6 hours
+        $script:TrayTimer = New-Object System.Windows.Forms.Timer
+        $script:TrayTimer.Interval = 120000
+        $script:TrayTimer.Add_Tick({ $script:TrayTimer.Interval = 21600000; Invoke-TrayCheck })
+        $script:TrayTimer.Start()
+        # Settings or Uninstall ask the icon to go away (Stop-YsoTray)
+        $script:TrayExitTimer = New-Object System.Windows.Forms.Timer
+        $script:TrayExitTimer.Interval = 2000
+        $script:TrayExitTimer.Add_Tick({ if ($script:TrayExit.WaitOne(0)) { [System.Windows.Forms.Application]::Exit() } })
+        $script:TrayExitTimer.Start()
+        [System.Windows.Forms.Application]::Run()
+    } catch {
+        Write-YsoError -Context 'icon next to the clock' -ErrorRecord $_
+    } finally {
+        if ($script:TrayIcon) { $script:TrayIcon.Visible = $false; $script:TrayIcon.Dispose() }
+        try { $mutex.ReleaseMutex() } catch { }
+        $mutex.Dispose()
+    }
+}
+
+function Test-TrayOn { return [bool](Get-ScheduledTask -TaskName $script:TrayTaskName -ErrorAction SilentlyContinue) }
+
+function Register-TrayTask {
+    # Starts the icon when you log on, as you, with the rights to open YSO without a UAC prompt.
+    $target = Install-YsoCopy
+    if (-not $target) { Write-Warn 'Start YSO from its file to use this option.'; return $false }
+    $ico = Join-Path $script:InstallDir 'YSO.ico'
+    try {
+        if (-not (Test-Path -LiteralPath $ico)) { Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase -ErrorAction Stop; Save-YsoIcon $ico }
+    } catch { }
+    $c = Get-YsoLaunchCommand $target (Test-HeadlessConsole)
+    $action = New-ScheduledTaskAction -Execute $c.File -Argument ($c.Arguments + ' -Tray')
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User (Get-CurrentUserName)
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+    $principal = New-ScheduledTaskPrincipal -UserId (Get-CurrentUserName) -LogonType Interactive -RunLevel Highest
+    try {
+        Register-ScheduledTask -TaskName $script:TrayTaskName -Action $action -Trigger $trigger -Settings $settings `
+            -Principal $principal -Description 'YSO - Your System Optimizer - icon next to the clock (alerts)' -Force -ErrorAction Stop | Out-Null
+        return $true
+    } catch {
+        Write-Warn (L 'Could not create the scheduled task: {0}' $_.Exception.Message)
+        return $false
+    }
+}
+
+function Stop-YsoTray {
+    # Asks a running icon to go away; ends it if it does not within 5 seconds.
+    try { $e = [System.Threading.EventWaitHandle]::OpenExisting('Local\YSO-Tray-Exit'); [void]$e.Set(); $e.Dispose() } catch { return }
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($clock.ElapsedMilliseconds -lt 5000) {
+        $left = $null
+        try { $left = [System.Threading.EventWaitHandle]::OpenExisting('Local\YSO-Tray-Exit') } catch { return }
+        $left.Dispose()
+        Start-Sleep -Milliseconds 300
+    }
+    foreach ($p in @(Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue | Where-Object { "$($_.CommandLine)" -match '(?i)YSO\.ps1"?\s+-Tray' })) {
+        Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Enable-YsoTray {
+    Write-Info 'The icon starts with Windows. Every 6 hours it checks free space, the drives and the battery, and tells you only when something needs you (at most once a week for each). It also tells you what the weekly cleanup freed.'
+    if (-not (Confirm-Action 'Show the YSO icon next to the clock?' $true)) { return }
+    if (-not (Register-TrayTask)) { return }
+    try { Start-ScheduledTask -TaskName $script:TrayTaskName -ErrorAction Stop } catch { }
+    Write-Ok 'Done. The icon is next to the clock (it may hide behind the ^ arrow).'
+}
+
+function Disable-YsoTray {
+    try { Unregister-ScheduledTask -TaskName $script:TrayTaskName -Confirm:$false -ErrorAction Stop } catch { }
+    Stop-YsoTray
+    Remove-YsoCopyIfUnused
+    Write-Ok 'The YSO icon was removed.'
 }
 
 # ==================================================================
@@ -8511,6 +9814,7 @@ function New-YsoShortcut([string]$Path, $Command, [string]$Icon) {
 
 function Install-Yso {
     Write-Section 'INSTALL YSO'
+    if ($script:IsPackaged) { Write-Info 'This YSO comes from the Microsoft Store: it is already installed, and the Store keeps it up to date.'; return $false }
     if (-not $PSCommandPath) { Write-Bad 'Start YSO from its file to install it.'; return $false }
     try {
         $target = Install-YsoCopy
@@ -8574,11 +9878,12 @@ function Confirm-Box([string]$Question, [bool]$Default) {
 
 function Uninstall-Yso {
     Write-Section 'UNINSTALL YSO'
-    if (-not (Confirm-Box 'Uninstall YSO? Its weekly cleanup and automatic updates stop too.' $true)) { Write-Info 'Nothing was changed.'; return $false }
+    if (-not (Confirm-Box 'Uninstall YSO? Its weekly cleanup, automatic updates and icon next to the clock stop too.' $true)) { Write-Info 'Nothing was changed.'; return $false }
     try {
-        foreach ($t in @($script:TaskName, $script:UpdateTaskName)) {
+        foreach ($t in @($script:TaskName, $script:UpdateTaskName, $script:TrayTaskName)) {
             if (Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue) { Unregister-ScheduledTask -TaskName $t -Confirm:$false -ErrorAction SilentlyContinue }
         }
+        Stop-YsoTray
         foreach ($lnk in (Get-YsoShortcutPaths)) { Remove-Item -LiteralPath $lnk -Force -ErrorAction SilentlyContinue }
         Remove-Item -Path $script:UninstallKey -Recurse -Force -ErrorAction SilentlyContinue
         $keep = Confirm-Box (L 'Keep the history, logs and settings of YSO ({0})? They are useful if you install it again.' $script:DataDir) $true
@@ -8660,6 +9965,7 @@ function Get-YsoFileHash {
 function Get-YsoUpdateOffer([switch]$Force) {
     # The YSO to offer, or $null: a newer version, or a corrected build of this version (its file
     # differs from this one). Asks GitHub at most once an hour; the answer is kept meanwhile.
+    if ($script:IsPackaged) { return $null }   # the Microsoft Store updates YSO
     if (-not $script:Settings.CheckForUpdates -and -not $Force) { return $null }
     $release = $null
     $sum = ''
@@ -8736,6 +10042,7 @@ function Invoke-YsoSelfUpdate($Release, [string]$Target) {
 function Install-YsoUpdate {
     # Replaces $Target with the YSO of $Release. Returns $true when done; anything wrong leaves YSO as it was.
     param($Release, [string]$Target)
+    if ($script:IsPackaged) { Write-Info 'This YSO comes from the Microsoft Store: the Store installs its new versions.'; return $false }
     Write-Step (L 'Downloading YSO {0} from GitHub...' $Release.Version)
     $bytes = Get-YsoWebBytes $Release.Url 5MB
     $sumText = [System.Text.Encoding]::ASCII.GetString((Get-YsoWebBytes $Release.SumUrl 4KB))
@@ -9734,7 +11041,6 @@ The Recycle Bin is kept. ==> La Corbeille est conservée.
 The window opened, but the part that does the work did not start: {0} ==> La fenêtre s'est ouverte, mais la partie qui fait le travail n'a pas démarré : {0}
 Tick at least one line to clean. ==> Cochez au moins une ligne à nettoyer.
 UNINSTALL YSO ==> DÉSINSTALLER YSO
-Uninstall YSO? Its weekly cleanup and automatic updates stop too. ==> Désinstaller YSO ? Son nettoyage hebdomadaire et ses mises à jour automatiques s'arrêtent aussi.
 Uninstalling failed: {0} ==> La désinstallation a échoué : {0}
 unknown error ==> erreur inconnue
 Updates that are already installed, and the Delivery Optimization cache. ==> Mises à jour déjà installées, et le cache de l'Optimisation de la distribution.
@@ -9913,6 +11219,169 @@ YSO {0} is installed ==> YSO {0} est installé
 YSO {0} is installed. ==> YSO {0} est installé.
 YSO downloads it from GitHub, checks its SHA-256 checksum, then replaces itself. Your settings and history stay. ==> YSO la télécharge depuis GitHub, vérifie sa somme SHA-256, puis se remplace. Vos réglages et votre historique sont conservés.
 The YSO window could not open, so YSO opens its console menu instead. The details were saved: use P (Report a problem) to send them. ==> La fenêtre de YSO n'a pas pu s'ouvrir : YSO ouvre son menu console à la place. Les détails ont été enregistrés : utilisez P (Signaler un problème) pour les envoyer.
+... and {0} more ==> ... et {0} de plus
+{0} ({1}) ==> {0} ({1})
+{0} (settings in the registry) ==> {0} (réglages dans le registre)
+{0} app(s) with "{1}" in their name. ==> {0} application(s) avec « {1} » dans leur nom.
+{0} apps found ==> {0} applications trouvées
+{0} apps. ==> {0} applications.
+{0} change(s) written down ==> {0} modification(s) notée(s)
+{0} moved to the Recycle Bin: empty it (5) to free the space. ==> {0} mis à la Corbeille : videz-la (5) pour libérer l'espace.
+{0} no longer starts with Windows ==> {0} ne démarre plus avec Windows
+{0} of {1} could not be put back. You can try again later. ==> {0} sur {1} n'ont pas pu être remis. Vous pourrez réessayer plus tard.
+{0} of {1} switched off ==> {0} sur {1} désactivés
+{0} only {1} free. Open YSO to see what can be freed. ==> {0} plus que {1} de libre. Ouvrez YSO pour voir ce qui peut être libéré.
+{0} starts with Windows again ==> {0} démarre de nouveau avec Windows
+{0} still looks installed: its uninstaller was cancelled, or it finishes after a restart. ==> {0} semble toujours installé : sa désinstallation a été annulée, ou elle se termine après un redémarrage.
+{0} things to look at ==> {0} choses à regarder
+{0} was uninstalled. ==> {0} a été désinstallé.
+A drive is wearing out ==> Un disque s'use
+A drive reports a failure ==> Un disque signale une panne
+A folder can hold your own data for that app (game saves, a mail profile): untick it to keep it. Folders of 1 GB or more start unticked. ==> Un dossier peut contenir vos propres données pour cette application (sauvegardes de jeu, profil de messagerie) : décochez-le pour le garder. Les dossiers de 1 Go ou plus sont décochés au départ.
+Ad tracking ==> Suivi publicitaire
+Ads and suggestions in Edge ==> Publicités et suggestions dans Edge
+Ads and suggestions in Windows ==> Publicités et suggestions dans Windows
+AI in Edge, Notepad and Paint ==> IA dans Edge, le Bloc-notes et Paint
+Already undone ({0}). ==> Déjà annulé ({0}).
+Apply ==> Appliquer
+Apply these changes? ==> Appliquer ces changements ?
+APPS & PRIVACY ==> APPLICATIONS ET VIE PRIVÉE
+Apps from the Microsoft Store are uninstalled in Settings > Apps. ==> Les applications du Microsoft Store se désinstallent dans Paramètres > Applications.
+Apps get no advertising ID, and Windows stops tailoring ads and tips to what you do. ==> Les applications n'ont plus d'identifiant publicitaire, et Windows n'adapte plus les publicités et les conseils à ce que vous faites.
+Back on: {0} ==> Réactivé : {0}
+Back to the list ==> Retour à la liste
+Back up your files now. Details in YSO: System health report. ==> Sauvegardez vos fichiers maintenant. Détails dans YSO : Rapport de santé du système.
+Biggest first ==> Les plus gros d'abord
+By name ==> Par nom
+Check my PC now ==> Vérifier mon PC maintenant
+Choose an app: YSO starts its own uninstaller, then shows what it left behind (folders, settings) and removes what you tick, to the Recycle Bin. ==> Choisissez une application : YSO lance son propre programme de désinstallation, puis montre ce qu'elle a laissé (dossiers, réglages) et retire ce que vous cochez, vers la Corbeille.
+Click a change to undo it. ==> Cliquez sur une modification pour l'annuler.
+Click a line to tick or untick it, then Apply. ==> Cliquez sur une ligne pour la cocher ou la décocher, puis sur Appliquer.
+Click a line to tick or untick it. ==> Cliquez sur une ligne pour la cocher ou la décocher.
+Click an app to uninstall it. To find one, type part of its name. ==> Cliquez sur une application pour la désinstaller. Pour en trouver une, tapez une partie de son nom.
+Copilot in Edge (and the Edge sidebar), the AI buttons of Notepad, and image creation, generative fill and erase in Paint. ==> Copilot dans Edge (et la barre latérale d'Edge), les boutons IA du Bloc-notes, et la création d'images, le remplissage et l'effacement génératifs dans Paint.
+Copilot in Windows ==> Copilot dans Windows
+Could not put back: {0} ==> Impossible de remettre : {0}
+could not save it first: {0} ==> impossible de l'enregistrer d'abord : {0}
+Diagnostic data and activity history ==> Données de diagnostic et historique des activités
+DNS servers of {0} ==> Serveurs DNS de {0}
+DNS servers: {0} ==> Serveurs DNS : {0}
+DNS servers: automatic ==> Serveurs DNS : automatiques
+DNS servers: back to your previous ones ==> Serveurs DNS : retour aux précédents
+Done, but {0} setting(s) could not be changed. The details were saved. ==> Terminé, mais {0} réglage(s) n'ont pas pu être modifiés. Les détails ont été enregistrés.
+Done: it is back as it was. ==> Terminé : tout est revenu comme avant.
+Done. The icon is next to the clock (it may hide behind the ^ arrow). ==> Terminé. L'icône est à côté de l'horloge (elle peut se cacher derrière la flèche ^).
+Done. Undo YSO changes (32) can put everything back. ==> Terminé. Annuler les modifications de YSO (32) peut tout remettre.
+Every setting YSO changes is written down here, with what it was before. Choose one to put it back as it was. ==> Chaque réglage modifié par YSO est noté ici, avec ce qu'il était avant. Choisissez-en un pour le remettre comme avant.
+Everything looks fine ==> Tout va bien
+Folder ==> Dossier
+Folder {0} (in the Recycle Bin) ==> Dossier {0} (dans la Corbeille)
+Folders go to the Recycle Bin. Registry keys are saved to a file first. Undo YSO changes (32) puts everything back. ==> Les dossiers vont dans la Corbeille. Les clés du registre sont d'abord enregistrées dans un fichier. Annuler les modifications de YSO (32) remet tout.
+Free space, drives and battery are OK. ==> Espace libre, disques et batterie : tout est bon.
+full ==> complet
+Icon next to the clock ==> Icône à côté de l'horloge
+If its window is still open, finish it first. ==> Si sa fenêtre est encore ouverte, terminez-la d'abord.
+Installed ==> Installé
+installed by the Microsoft Store ==> installées par le Microsoft Store
+It freed {0}. ==> Il a libéré {0}.
+It holds {0} % of its original charge: think about replacing it. ==> Elle garde {0} % de sa charge d'origine : pensez à la remplacer.
+it is still there (a file may be in use) ==> il est toujours là (un fichier est peut-être utilisé)
+Keep everything ==> Tout garder
+Keep your backups up to date. Details in YSO: System health report. ==> Gardez vos sauvegardes à jour. Détails dans YSO : Rapport de santé du système.
+Last used ==> Dernière utilisation
+Least used first ==> Les moins utilisées d'abord
+Left behind by {0}: untick what you want to keep ==> Laissé par {0} : décochez ce que vous voulez garder
+Leftovers of {0} removed ==> Restes de {0} supprimés
+Look for what it left behind anyway? ==> Chercher quand même ce qu'elle a laissé ?
+Looking for what it left behind... ==> Recherche de ce qu'elle a laissé...
+Microsoft Store package ==> Paquet Microsoft Store
+Name ==> Nom
+not shown ==> non affichée
+No Copilot button on the taskbar, and the Copilot built into Windows is switched off. A Copilot app you installed stays. ==> Plus de bouton Copilot dans la barre des tâches, et le Copilot intégré à Windows est désactivé. Une application Copilot que vous avez installée reste.
+no installed apps found ==> aucune application installée trouvée
+No news and offers on the new tab page, no shopping pop-ups, no suggestions, and Edge stops using what you browse to personalize ads. ==> Plus d'actualités ni d'offres sur la page Nouvel onglet, plus de fenêtres d'achat, plus de suggestions, et Edge n'utilise plus ce que vous visitez pour personnaliser les publicités.
+Not removed: {0} ({1}) ==> Pas supprimé : {0} ({1})
+Nothing left behind. ==> Rien n'a été laissé.
+Nothing to change: everything is already as you chose. ==> Rien à changer : tout est déjà comme vous l'avez choisi.
+Nothing was removed. ==> Rien n'a été supprimé.
+Nothing yet. Changes made by Privacy & ads (30), Uninstall apps (31), Startup programs (17), Power plan (16), Change DNS servers (12) and Hibernation file (10) show up here. ==> Rien pour l'instant. Les modifications faites par Vie privée et publicités (30), Désinstaller des applications (31), Programmes au démarrage (17), Mode d'alimentation (16), Changer de serveurs DNS (12) et Fichier de veille prolongée (10) apparaissent ici.
+Number = tick or untick, D = remove the ticked ones, Enter = keep everything ==> Numéro = cocher ou décocher, D = supprimer ce qui est coché, Entrée = tout garder
+Number = tick or untick, R = recommended, A = apply, Enter = cancel ==> Numéro = cocher ou décocher, R = recommandés, A = appliquer, Entrée = annuler
+Number = undo it, Enter = back ==> Numéro = l'annuler, Entrée = retour
+Number = uninstall, S = biggest first, U = least used first, N = by name, or type part of a name. Enter = back ==> Numéro = désinstaller, S = les plus gros d'abord, U = les moins utilisées d'abord, N = par nom, ou tapez une partie d'un nom. Entrée = retour
+off ==> désactivé
+off (Settings, O) ==> désactivée (Réglages, O)
+on ==> activée
+On Copilot+ PCs: no snapshots of your screen, no Click to Do. ==> Sur les PC Copilot+ : aucune capture de votre écran, pas de Click to Do.
+on: tells you when something needs you ==> activée : vous prévient quand quelque chose demande votre attention
+Open YSO ==> Ouvrir YSO
+Other apps need this to work (a runtime, a framework or a driver). Uninstall it only if you know which app it came with. ==> D'autres applications en ont besoin pour fonctionner (un runtime, un framework ou un pilote). Désinstallez-le seulement si vous savez avec quelle application il est venu.
+Power plan: {0} ==> Mode d'alimentation : {0}
+Press Enter to continue ==> Appuyez sur Entrée pour continuer
+Press Enter to go back to the list ==> Appuyez sur Entrée pour revenir à la liste
+Press Enter when the uninstaller has finished ==> Appuyez sur Entrée quand la désinstallation est terminée
+Privacy & ads ==> Vie privée et publicités
+PRIVACY & ADS ==> VIE PRIVÉE ET PUBLICITÉS
+Privacy & ads (30) ==> Vie privée et publicités (30)
+Privacy & ads (Windows, Edge, Copilot) ==> Vie privée, publicités (Windows, Edge, Copilot)
+Publisher ==> Éditeur
+Put this back as it was? ==> Remettre comme avant ?
+Puts back any setting YSO changed. ==> Remet n'importe quel réglage modifié par YSO.
+Reading the list of apps... ==> Lecture de la liste des applications...
+Recall and Click to Do ==> Recall et Click to Do
+reduced ==> réduit
+Registry key {0} (saved in {1}) ==> Clé du registre {0} (enregistrée dans {1})
+Remove the ticked ones ==> Supprimer ce qui est coché
+Remove the YSO icon next to the clock ==> Retirer l'icône YSO à côté de l'horloge
+Remove this icon ==> Retirer cette icône
+Removed: {0} ==> Supprimé : {0}
+Removes an app, then what it left behind. ==> Retire une application, puis ce qu'elle a laissé.
+Restart File Explorer now, so the Start menu and the taskbar change right away? Open File Explorer windows close. ==> Redémarrer l'Explorateur de fichiers maintenant, pour que le menu Démarrer et la barre des tâches changent tout de suite ? Les fenêtres de l'Explorateur ouvertes se ferment.
+Searching from the Start menu finds your apps, files and settings only. ==> Une recherche depuis le menu Démarrer trouve seulement vos applications, fichiers et paramètres.
+Setting {0} ==> Réglage {0}
+Show a YSO icon next to the clock (alerts) ==> Afficher une icône YSO à côté de l'horloge (alertes)
+Show the YSO icon next to the clock? ==> Afficher l'icône YSO à côté de l'horloge ?
+Some changes show after you sign out and back in, or after a restart. ==> Certains changements apparaissent après une déconnexion puis reconnexion, ou après un redémarrage.
+Start menu, Settings, File Explorer and notifications: no more app suggestions, offers and tips. ==> Menu Démarrer, Paramètres, Explorateur de fichiers et notifications : plus de suggestions d'applications, d'offres ni de conseils.
+Switch back on: {0} ==> Réactiver : {0}
+Switch off ads, tracking and AI features. Undo any time. ==> Désactive publicités, suivi et fonctions IA. Annulable à tout moment.
+Switch off: {0} ==> Désactiver : {0}
+Switched off: {0} ==> Désactivé : {0}
+Switched off: {0}. Back on: {1} ==> Désactivé : {0}. Réactivé : {1}
+The battery is worn ==> La batterie est usée
+The icon starts with Windows. Every 6 hours it checks free space, the drives and the battery, and tells you only when something needs you (at most once a week for each). It also tells you what the weekly cleanup freed. ==> L'icône démarre avec Windows. Toutes les 6 heures, elle vérifie l'espace libre, les disques et la batterie, et vous prévient seulement quand quelque chose demande votre attention (au plus une fois par semaine pour chaque chose). Elle vous dit aussi ce que le nettoyage hebdomadaire a libéré.
+The lock screen shows your picture and the time, nothing else. ==> L'écran de verrouillage montre votre image et l'heure, rien d'autre.
+The uninstaller could not start: {0} ==> La désinstallation n'a pas pu démarrer : {0}
+The uninstaller has finished ==> La désinstallation est terminée
+The uninstaller of {0} is open: follow its window. ==> La désinstallation de {0} est ouverte : suivez sa fenêtre.
+The YSO icon was removed. ==> L'icône YSO a été retirée.
+This YSO comes from the Microsoft Store: it is already installed, and the Store keeps it up to date. ==> Ce YSO vient du Microsoft Store : il est déjà installé, et le Store le tient à jour.
+This YSO comes from the Microsoft Store: the Store installs its new versions. ==> Ce YSO vient du Microsoft Store : le Store installe ses nouvelles versions.
+Tick the recommended ones ==> Cocher les recommandés
+Ticked = switched off. Tick what you do not want, then Apply. Every change is written down: Undo YSO changes (32) puts any of it back. ==> Coché = désactivé. Cochez ce que vous ne voulez pas, puis Appliquer. Chaque changement est noté : Annuler les modifications de YSO (32) peut tout remettre.
+Tips and fun facts on the lock screen ==> Conseils et anecdotes sur l'écran de verrouillage
+Undo YSO changes ==> Annuler les modifications de YSO
+UNDO YSO CHANGES ==> ANNULER LES MODIFICATIONS DE YSO
+Undo YSO changes (32) ==> Annuler les modifications de YSO (32)
+undone ==> annulé
+Uninstall {0}? ==> Désinstaller {0} ?
+Uninstall apps ==> Désinstaller des applications
+UNINSTALL APPS ==> DÉSINSTALLER DES APPLICATIONS
+Uninstall apps (31) ==> Désinstaller des applications (31)
+Uninstall apps (and their leftovers) ==> Désinstaller des applications (et leurs restes)
+Uninstall YSO? Its weekly cleanup, automatic updates and icon next to the clock stop too. ==> Désinstaller YSO ? Son nettoyage hebdomadaire, ses mises à jour automatiques et son icône à côté de l'horloge s'arrêtent aussi.
+Uninstalling {0} ==> Désinstallation de {0}
+Version ==> Version
+Web results (Bing) in the Start menu search ==> Résultats web (Bing) dans la recherche du menu Démarrer
+Weekly cleanup done ==> Nettoyage hebdomadaire terminé
+Will be switched back on. ==> Sera réactivé.
+Will be switched off. ==> Sera désactivé.
+Windows and Edge will then say that some settings are "managed by your organization": that is how these switches work. Nothing else changes, and Undo removes it. ==> Windows et Edge diront alors que certains paramètres sont « gérés par votre organisation » : c'est ainsi que fonctionnent ces réglages. Rien d'autre ne change, et Annuler l'enlève.
+Windows sends Microsoft only the required minimum, keeps no history of your activities and stops asking for feedback. ==> Windows n'envoie à Microsoft que le minimum obligatoire, ne garde aucun historique de vos activités et ne demande plus votre avis.
+Your disk is almost full ==> Votre disque est presque plein
+YSO runs from its file ==> YSO fonctionne depuis son fichier
+YSO runs from its Microsoft Store package ==> YSO fonctionne depuis son paquet Microsoft Store
+YSO starts the app's own uninstaller: follow its window. Then YSO looks for what it left behind. ==> YSO lance le programme de désinstallation de l'application : suivez sa fenêtre. Ensuite, YSO cherche ce qu'elle a laissé.
 '@
     $h = New-Object System.Collections.Hashtable ([StringComparer]::Ordinal)
     foreach ($line in ($pairs -split "`r?`n")) {
@@ -9933,6 +11402,13 @@ try {
         $script:OsText = Get-OsText
         $script:Profiles = @(Get-ProfilePaths)
         return
+    }
+    if ($Tray) {
+        # The icon next to the clock (its scheduled task starts it when you log on): no window, no log.
+        $script:FR = Get-FrenchStrings
+        Import-Settings
+        Start-YsoTray
+        exit 0
     }
     Protect-YsoDataDir
     try { New-Item -ItemType Directory -Path $script:LogDir -Force | Out-Null } catch { }
@@ -10029,7 +11505,7 @@ try {
         Write-Host ''
         Invoke-MenuOption $choice
         # Options with their own menu (17, 28, R, O) come back here directly - unless something went wrong.
-        if (@('17', '28', 'R', 'O') -contains $choice -and $script:LastRun.Status -eq 'done') { continue main }
+        if (@('17', '28', '31', '32', 'R', 'O') -contains $choice -and $script:LastRun.Status -eq 'done') { continue main }
         Wait-Key
     }
 } catch {
