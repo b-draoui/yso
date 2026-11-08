@@ -224,4 +224,15 @@ foreach ($case in @(@(120, 'fr'), @(120, 'en'), @(80, 'fr'))) {
     Check (($text -split "`n" | Where-Object { $_ -match '^\s+(1|28|Q)\s' -or $_ -match '\s(15|27)\s{2}' }).Count -ge 1) "menu $($case[1]) at $($case[0]) columns: items present"
 }
 
+Write-Host "`n===== CRASH DUMPS OF WINDOWS SERVICES, OLLAMA INSTALLERS =====" -ForegroundColor White
+$script:SeenTargets = @()
+function Invoke-Purge { param($Category, $Targets) $script:SeenTargets += @($Targets) }
+$oldWin = $env:WINDIR; $env:WINDIR = 'C:\Windows'
+try { Clear-SystemJunk 6>$null; $null = Get-AppCacheTargets } catch { } finally { $env:WINDIR = $oldWin }
+Remove-Item function:Invoke-Purge
+$svc = @($script:SeenTargets | Where-Object { "$($_.Path)" -match 'ServiceProfiles\\(LocalService|NetworkService)\\AppData\\Local\\Temp$' })
+Check ($svc.Count -eq 2 -and @($svc | Where-Object { [double]$_.Days -ge 1 }).Count -eq 2) 'the temp folders of Windows services are cleaned (old dumps there can be several GB), and only their old files'
+$oll = @(Get-AppCacheTargets | Where-Object { "$($_.Path)" -match 'Ollama[\\/]updates$' })
+Check ($oll.Count -ge 1 -and [double]$oll[0].Days -ge 1) 'the installers Ollama downloads for its own updates are cleaned once they are a few days old'
+
 Write-Host ("`nRESULT: {0}" -f $(if ($script:fail) { "$($script:fail) FAILURE(S)" } else { 'ALL CHECKS PASSED' })) -ForegroundColor $(if ($script:fail) { 'Red' } else { 'Green' })

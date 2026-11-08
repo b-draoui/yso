@@ -1168,7 +1168,7 @@ function Clear-BrowserCaches {
 
 function Clear-SystemJunk {
     $keepDays = [double]$script:Settings.LogMinAgeDays
-    Write-Step (L 'System junk - error reports, crash dumps, logs older than {0} days, thumbnail cache' $keepDays)
+    Write-Step (L 'System junk - error reports, crash dumps (also in the temp folders of Windows services), logs older than {0} days, thumbnail cache' $keepDays)
     $W  = Esc $env:WINDIR
     $PD = Esc $env:ProgramData
     $targets = @(
@@ -1178,7 +1178,11 @@ function Clear-SystemJunk {
         @{ Path = "$W\Logs"; Days = $keepDays },
         @{ Path = "$W\Minidump"; Days = $keepDays },
         @{ Path = "$W\MEMORY.DMP"; Days = $keepDays },
-        @{ Path = "$W\LiveKernelReports"; Days = $keepDays; Filter = '*.dmp' }
+        @{ Path = "$W\LiveKernelReports"; Days = $keepDays; Filter = '*.dmp' },
+        # Temp folders of Windows services: old crash dumps (.dmp) pile up there, sometimes several GB each.
+        # Only files older than the log age, so nothing a running service still uses.
+        @{ Path = "$W\ServiceProfiles\LocalService\AppData\Local\Temp"; Days = $keepDays },
+        @{ Path = "$W\ServiceProfiles\NetworkService\AppData\Local\Temp"; Days = $keepDays }
     )
     foreach ($p in $script:Profiles) {
         $L = "$(Esc $p)\AppData\Local"
@@ -1366,6 +1370,8 @@ function Get-AppCacheTargets {
             "$L\Steam\htmlcache\Cache", "$L\Steam\htmlcache\Code Cache", "$L\Steam\htmlcache\GPUCache", # Steam's built-in browser
             "$L\EpicGamesLauncher\Saved\webcache*"                        # Epic launcher web cache
         )) { $targets += @{ Path = $c } }
+        # Installers Ollama downloaded for its own updates (1.5 GB each): it downloads one again if it still needs it.
+        $targets += @{ Path = "$L\Ollama\updates"; Days = 2 }
         # Built-in browsers of Spotify (classic + Microsoft Store) and OneDrive: only their cache folders, never their logins.
         foreach ($web in @("$L\Spotify\Browser", "$L\Packages\SpotifyAB.SpotifyMusic_*\LocalCache\Spotify\Browser", "$L\Microsoft\OneDrive\EBWebView")) {
             foreach ($sub in @('Cache', 'Code Cache', 'GPUCache', 'DawnCache', 'DawnGraphiteCache', 'DawnWebGPUCache')) {
@@ -6538,7 +6544,7 @@ function Get-GuiCleanItems {
         @{ Key = 'SiteCaches';  Name = (N 'Site offline caches');    On = $true;  Cats = @('Site offline caches')
            Desc = (N 'Offline copies kept by websites and web apps. You stay logged in.') }
         @{ Key = 'SystemJunk';  Name = (N 'System junk');            On = $true;  Cats = @('System junk')
-           Desc = (N 'Error reports, crash dumps, old logs and the thumbnail cache.') }
+           Desc = (N 'Error reports, crash dumps (also those of Windows services), old logs and the thumbnail cache.') }
         @{ Key = 'DevApps';     Name = (N 'Developer & app caches');  On = $true;  Cats = @('Developer & app caches', 'Other app caches')
            Desc = (N 'npm, pip, VS Code, Discord, Teams, Spotify, Steam... and every app built on Chromium.') }
         @{ Key = 'Gpu';         Name = (N 'GPU shader caches');      On = $true;  Cats = @('GPU shader caches')
@@ -8714,7 +8720,7 @@ SYSTEM ==> SYSTÈME
 System errors (7 days) ==> Erreurs système (7 jours)
 System health report ==> Rapport de santé du système
 System junk ==> Fichiers système inutiles
-System junk - error reports, crash dumps, logs older than {0} days, thumbnail cache ==> Fichiers système inutiles - rapports d'erreurs, vidages, journaux de plus de {0} jours, cache des miniatures
+System junk - error reports, crash dumps (also in the temp folders of Windows services), logs older than {0} days, thumbnail cache ==> Fichiers système inutiles - rapports d'erreurs, vidages après plantage (aussi dans les dossiers temporaires des services Windows), journaux de plus de {0} jours, cache des miniatures
 System junk (reports, dumps, old logs) ==> Fichiers inutiles (rapports, vidages, journaux)
 System Restore looks turned off. Turn it on for the system drive? ==> La Restauration du système semble désactivée. L'activer pour le disque système ?
 Tamper protection ==> Protection anti-falsification
@@ -8986,7 +8992,7 @@ Continue ==> Continuer
 Copied to {0} ==> Copié dans {0}
 Create a restore point first (recommended) ==> Créer d'abord un point de restauration (recommandé)
 Details ==> Détails
-Error reports, crash dumps, old logs and the thumbnail cache. ==> Rapports d'erreurs, vidages après plantage, anciens journaux et cache des miniatures.
+Error reports, crash dumps (also those of Windows services), old logs and the thumbnail cache. ==> Rapports d'erreurs, vidages après plantage (aussi ceux des services Windows), anciens journaux et cache des miniatures.
 Every option of YSO. Each one explains what it does and asks before changing anything. ==> Toutes les options de YSO. Chacune explique ce qu'elle fait et demande avant de modifier quoi que ce soit.
 Finished. ==> Terminé.
 Free disk space: {0} -> {1} ==> Espace libre : {0} -> {1}
