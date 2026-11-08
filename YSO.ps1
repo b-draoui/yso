@@ -218,7 +218,7 @@ $script:StopSignal    = $null    # set by the window: a shared table whose 'Stop
 $script:LastRun       = $null    # what the last option did (status, results, free space): read by the window
 $script:GuiFailure    = ''       # why the window could not open (shown before the console menu opens instead)
 # Every key of the menu that runs an option (Invoke-MenuOption); M, L and Q only change the menu itself.
-$script:MenuKeys      = @(@(1..28 | ForEach-Object { "$_" }) + @('A', 'F', 'R', 'S', 'H', 'T', 'P', 'O'))
+$script:MenuKeys      = @(@(1..29 | ForEach-Object { "$_" }) + @('A', 'F', 'R', 'S', 'H', 'T', 'P', 'O'))
 $script:HealthCache   = $null
 $script:DetectedApps  = @()
 $script:DryRun        = [bool]$DryRun
@@ -2996,6 +2996,302 @@ function Show-SpaceFinder {
 }
 
 # ==================================================================
+#  VIRTUAL DISKS  (29) - VirtualBox (.vdi), WSL and Docker Desktop (.vhdx)
+#  A virtual disk grows when its machine writes and never shrinks by itself: files deleted inside
+#  the machine stay in the file on Windows. Compacting gives that space back. Nothing inside the
+#  machine changes. YSO only touches a disk whose machine is fully off and whose file nobody uses.
+# ==================================================================
+function Get-VBoxManagePath {
+    $cands = @()
+    foreach ($v in @($env:VBOX_MSI_INSTALL_PATH, $env:VBOX_INSTALL_PATH)) { if ($v) { $cands += (Join-Path $v 'VBoxManage.exe') } }
+    if ($env:ProgramFiles) { $cands += (Join-Path $env:ProgramFiles 'Oracle\VirtualBox\VBoxManage.exe') }
+    foreach ($c in $cands) { if (Test-Path -LiteralPath $c -PathType Leaf) { return $c } }
+    $cmd = Get-Command -Name 'VBoxManage.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($cmd) { return $cmd.Source }
+    return $null
+}
+
+function Read-VdiHeader([string]$Path) {
+    # Size of the virtual disk (what the machine sees) from the header of a .vdi, or $null.
+    try {
+        $fs = [System.IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
+        try {
+            $buf = New-Object byte[] 400
+            if ($fs.Read($buf, 0, 400) -lt 400) { return $null }
+        } finally { $fs.Dispose() }
+        if ([BitConverter]::ToUInt32($buf, 0x40) -ne 0xBEDA107FL) { return $null }   # not a VDI (L: without it, PowerShell reads a negative number)
+        if ([BitConverter]::ToUInt16($buf, 0x46) -ne 1) { return $null }            # header version 1.x
+        $capacity = [BitConverter]::ToUInt64($buf, 0x170)
+        $block = [BitConverter]::ToUInt32($buf, 0x178)
+        $blocks = [BitConverter]::ToUInt32($buf, 0x180)
+        $used = [BitConverter]::ToUInt32($buf, 0x184)
+        if ($capacity -le 0 -or $block -eq 0 -or $used -gt $blocks) { return $null }
+        return [pscustomobject]@{ Capacity = [long]$capacity; Allocated = [long]$used * $block }
+    } catch { return $null }
+}
+
+function Get-VBoxMachines([string]$VBoxHome = '') {
+    # The machines VirtualBox knows for this user, read from its own files (VirtualBox.xml and each
+    # .vbox): name, kind of system, saved state, snapshots and its .vdi disks.
+    if (-not $VBoxHome) { $VBoxHome = $(if ($env:VBOX_USER_HOME) { $env:VBOX_USER_HOME } else { Join-Path ([Environment]::GetFolderPath('UserProfile')) '.VirtualBox' }) }
+    $list = Join-Path $VBoxHome 'VirtualBox.xml'
+    if (-not (Test-Path -LiteralPath $list -PathType Leaf)) { return @() }
+    try { [xml]$reg = Get-Content -LiteralPath $list -Raw -Encoding UTF8 } catch { return @() }
+    $out = @()
+    foreach ($e in @($reg.VirtualBox.Global.MachineRegistry.MachineEntry)) {
+        if (-not $e -or -not $e.src) { continue }
+        $vbox = [Environment]::ExpandEnvironmentVariables("$($e.src)")
+        if (-not [System.IO.Path]::IsPathRooted($vbox)) { $vbox = [System.IO.Path]::Combine($VBoxHome, $vbox) }
+        if (-not (Test-Path -LiteralPath $vbox -PathType Leaf)) { continue }
+        try { [xml]$x = Get-Content -LiteralPath $vbox -Raw -Encoding UTF8 } catch { continue }
+        $m = $x.VirtualBox.Machine
+        if (-not $m) { continue }
+        $dir = Split-Path -Parent $vbox
+        $disks = @()
+        $stack = New-Object System.Collections.Stack
+        foreach ($h in @($m.MediaRegistry.HardDisks.HardDisk)) { if ($h) { $stack.Push($h) } }
+        while ($stack.Count -gt 0) {
+            $h = $stack.Pop()
+            $kids = @($h.HardDisk | Where-Object { $_ })
+            foreach ($k in $kids) { $stack.Push($k) }
+            if ("$($h.format)" -ne 'VDI' -or $kids.Count -gt 0) { continue }   # only the disk the machine writes to
+            $loc = "$($h.location)".Replace('/', '\')
+            if (-not [System.IO.Path]::IsPathRooted($loc)) { $loc = [System.IO.Path]::Combine($dir, $loc) }
+            $disks += $loc
+        }
+        $out += [pscustomobject]@{
+            Name = "$($m.name)"; OsType = "$($m.OSType)"; VboxPath = $vbox
+            Saved = [bool]"$($m.stateFile)"
+            Snapshots = ([bool]"$($m.currentSnapshot)" -or [bool]$m.Snapshot)
+            Disks = $disks
+        }
+    }
+    return $out
+}
+
+function ConvertFrom-LxssEntries([object[]]$Entries) {
+    # WSL distributions (from HKCU\...\Lxss): name and the path of their disk. WSL 1 has none.
+    $out = @()
+    foreach ($e in @($Entries)) {
+        if (-not $e -or -not $e.DistributionName -or -not $e.BasePath) { continue }
+        if ($e.Version -and [int]$e.Version -lt 2) { continue }
+        $base = "$($e.BasePath)" -replace '^\\\\\?\\', ''
+        $file = $(if ($e.VhdFileName) { "$($e.VhdFileName)" } else { 'ext4.vhdx' })
+        $kind = $(if ("$($e.DistributionName)" -like 'docker-desktop*') { 'Docker' } else { 'WSL' })
+        $out += [pscustomobject]@{ Kind = $kind; Name = "$($e.DistributionName)"; Path = [System.IO.Path]::Combine($base, $file) }   # (Join-Path fails when the drive is missing)
+    }
+    return $out
+}
+
+function Test-FileInUse([string]$Path) {
+    # True when another program has the file open (a running machine, WSL...). Opening it alone
+    # for reading changes nothing.
+    try { $fs = [System.IO.File]::Open($Path, 'Open', 'Read', 'None'); $fs.Dispose(); return $false } catch { return $true }
+}
+
+function Get-VDiskBlockers {
+    # Programs that must be closed first: VirtualBox itself (its service would fight YSO's), running
+    # machines, Docker Desktop (it would start WSL again at once).
+    $p = @(Get-Process -ErrorAction SilentlyContinue | Select-Object -ExpandProperty ProcessName)
+    return [pscustomobject]@{
+        VBoxOpen   = [bool](@($p | Where-Object { $_ -eq 'VirtualBox' }).Count)
+        VBoxVms    = [bool](@($p | Where-Object { $_ -in @('VirtualBoxVM', 'VBoxHeadless', 'VBoxSDL') }).Count)
+        Docker     = [bool](@($p | Where-Object { $_ -in @('Docker Desktop', 'com.docker.backend') }).Count)
+        WslRunning = [bool](@($p | Where-Object { $_ -in @('vmmemWSL', 'vmmem') }).Count)
+    }
+}
+
+function Get-VirtualDisks {
+    # Every virtual disk found, with Ready = YSO may compact it now, or Why not.
+    $disks = @()
+    foreach ($m in @(Get-VBoxMachines)) {
+        foreach ($d in @($m.Disks)) {
+            $disks += [pscustomobject]@{ Kind = 'VirtualBox'; Name = $m.Name; Path = $d; Machine = $m }
+        }
+    }
+    $lxss = @()
+    try {
+        $lxss = @(Get-ChildItem -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss' -ErrorAction Stop |
+            ForEach-Object { Get-ItemProperty -LiteralPath $_.PSPath })
+    } catch { }
+    foreach ($w in @(ConvertFrom-LxssEntries $lxss)) { $disks += [pscustomobject]@{ Kind = $w.Kind; Name = $w.Name; Path = $w.Path; Machine = $null } }
+    if ($env:LOCALAPPDATA) {
+        foreach ($d in @("$env:LOCALAPPDATA\Docker\wsl\disk\docker_data.vhdx", "$env:LOCALAPPDATA\Docker\wsl\data\ext4.vhdx")) {
+            if (@($disks | Where-Object { $_.Path -eq $d }).Count -eq 0) { $disks += [pscustomobject]@{ Kind = 'Docker'; Name = 'Docker Desktop'; Path = $d; Machine = $null } }
+        }
+    }
+    $block = Get-VDiskBlockers
+    $out = @()
+    foreach ($d in $disks) {
+        if (-not (Test-Path -LiteralPath $d.Path -PathType Leaf)) { continue }
+        $size = (Get-Item -LiteralPath $d.Path -Force).Length
+        $why = Get-VDiskProblem $d $block
+        $head = $(if ($d.Kind -eq 'VirtualBox') { Read-VdiHeader $d.Path } else { $null })
+        $out += [pscustomobject]@{
+            Kind = $d.Kind; Name = $d.Name; Path = $d.Path; Size = [long]$size; Machine = $d.Machine
+            Capacity = $(if ($head) { $head.Capacity } else { 0 }); Ready = (-not $why); Why = $why
+        }
+    }
+    return $out
+}
+
+function Get-VDiskProblem($Disk, $Block) {
+    # Why this disk cannot be compacted right now, in plain words ('' = it can).
+    if ($Disk.Kind -eq 'VirtualBox') {
+        if (-not (Get-VBoxManagePath)) { return (N 'VBoxManage was not found (it comes with VirtualBox)') }
+        if ($Disk.Machine.Saved) { return (N 'in saved state: start it, then shut it down from inside') }
+        if ($Disk.Machine.Snapshots) { return (N 'has snapshots: YSO leaves it alone') }
+        if (Test-FileInUse $Disk.Path) { return (N 'running: shut it down first') }
+        if ($Block.VBoxOpen) { return (N 'close VirtualBox first') }
+        return ''
+    }
+    if ($Block.Docker) { return (N 'quit Docker Desktop first') }
+    return ''   # WSL is stopped by YSO just before (wsl --shutdown)
+}
+
+function Get-VhdxCompactScript([string]$Path) {
+    # diskpart works on every edition of Windows (Optimize-VHD needs Hyper-V).
+    return @(
+        ('select vdisk file="{0}"' -f $Path),
+        'attach vdisk readonly',
+        'compact vdisk',
+        'detach vdisk',
+        'exit'
+    ) -join "`r`n"
+}
+
+function Invoke-VhdxCompact([string]$Path) {
+    $script = Join-Path ([System.IO.Path]::GetTempPath()) ('yso-compact-{0}.txt' -f [guid]::NewGuid().ToString('N'))
+    try {
+        [System.IO.File]::WriteAllText($script, (Get-VhdxCompactScript $Path), [System.Text.Encoding]::ASCII)
+        $p = Start-Process -FilePath 'diskpart.exe' -ArgumentList @('/s', "`"$script`"") -NoNewWindow -Wait -PassThru
+        return [int]$p.ExitCode
+    } finally { Remove-Item -LiteralPath $script -Force -ErrorAction SilentlyContinue }
+}
+
+function Invoke-VdiCompact([string]$Path) {
+    $p = Start-Process -FilePath (Get-VBoxManagePath) -ArgumentList @('modifymedium', 'disk', "`"$Path`"", '--compact') -NoNewWindow -Wait -PassThru
+    return [int]$p.ExitCode
+}
+
+function Stop-Wsl([object[]]$Disks) {
+    # Frees unused blocks inside each distribution (fstrim), then stops WSL so its disks are closed.
+    $wsl = Join-Path $env:WINDIR 'System32\wsl.exe'
+    if (-not (Test-Path -LiteralPath $wsl)) { return $false }
+    foreach ($d in @($Disks | Where-Object { $_.Kind -eq 'WSL' })) {
+        Write-Info (L 'Freeing unused space inside {0} (fstrim)...' $d.Name)
+        try { $null = & $wsl -d $d.Name -u root fstrim -a 2>&1 } catch { }
+    }
+    Write-Info 'Stopping WSL (wsl --shutdown)...'
+    try { $null = & $wsl --shutdown 2>&1 } catch { }
+    $t = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($t.Elapsed.TotalSeconds -lt 30) {
+        if (@($Disks | Where-Object { Test-FileInUse $_.Path }).Count -eq 0) { return $true }
+        Start-Sleep -Milliseconds 500
+    }
+    return $false
+}
+
+function Show-VDiskList([object[]]$Disks) {
+    Write-Host ''
+    foreach ($d in $Disks) {
+        Write-Host ('  ' + (Get-Truncated $d.Name 26).PadRight(28)) -NoNewline
+        Write-Host ((L $d.Kind).PadRight(14)) -NoNewline -ForegroundColor DarkGray
+        Write-Host ((Format-Size $d.Size).PadRight(12)) -NoNewline
+        if ($d.Ready) { Write-Host (L 'ready') -ForegroundColor Green } else { Write-Host (L $d.Why) -ForegroundColor Yellow }
+    }
+    Write-Host ''
+}
+
+function Show-VDiskAdvice([object[]]$Disks) {
+    # What to do inside a VirtualBox machine first: compacting only removes blocks full of zeros,
+    # and deleted files are not zeros until the free space is filled with them.
+    $vbox = @($Disks | Where-Object { $_.Kind -eq 'VirtualBox' })
+    if ($vbox.Count -eq 0) { return }
+    Write-Info 'VirtualBox: for the most space, first fill the free space of the machine with zeros, then shut it down:'
+    if (@($vbox | Where-Object { "$($_.Machine.OsType)" -notmatch 'Windows' }).Count -gt 0) {
+        Write-Host ('      ' + (L 'Linux, in a terminal of the machine:') + ' sudo dd if=/dev/zero of=/var/tmp/zero bs=1M; sudo rm /var/tmp/zero') -ForegroundColor Gray
+    }
+    if (@($vbox | Where-Object { "$($_.Machine.OsType)" -match 'Windows' }).Count -gt 0) {
+        Write-Host ('      ' + (L 'Windows, in the machine:') + ' sdelete -z C:  (Sysinternals)') -ForegroundColor Gray
+    }
+    $grow = @($vbox | Where-Object { $_.Capacity -gt $_.Size } | ForEach-Object { $_.Capacity - $_.Size } | Measure-Object -Sum).Sum
+    if ($grow -gt 0) { Write-Info (L 'While the zeros are written, the disk file grows up to its full size: keep {0} free on the drive of the machine.' (Format-Size $grow)) }
+}
+
+function Read-VDiskChoice([object[]]$Disks) {
+    # The list, then the choice: 'R' = check again, @() = back, or the disks to compact.
+    Show-VDiskList $Disks
+    $ready = @($Disks | Where-Object { $_.Ready })
+    if ($ready.Count -eq 0) {
+        Write-Warn 'No disk can be compacted right now: see the reason next to each one.'
+        Write-Option 'R' 'Check again'
+        Write-Option '0' 'Back'
+        if ((Read-Choice) -eq 'R') { return 'R' }
+        return @()
+    }
+    Show-VDiskAdvice $ready
+    for ($i = 0; $i -lt $ready.Count; $i++) { Write-Option "$($i + 1)" (L 'Compact {0} ({1})' $ready[$i].Name (Format-Size $ready[$i].Size)) }
+    if ($ready.Count -gt 1) { Write-Option 'A' 'Compact all the ready ones' }
+    Write-Option 'R' 'Check again'
+    Write-Option '0' 'Back'
+    $c = Read-Choice
+    if ($c -eq 'R') { return 'R' }
+    if ($c -eq 'A') { return $ready }
+    if ($c -match '^\d+$' -and [int]$c -ge 1 -and [int]$c -le $ready.Count) { return @($ready[[int]$c - 1]) }
+    return @()
+}
+
+function Invoke-VDiskCompact {
+    Write-Section 'VIRTUAL DISKS'
+    Write-Info 'The disk of a virtual machine (VirtualBox, WSL, Docker Desktop) grows when the machine writes, but never shrinks by itself: files deleted inside the machine still take space on Windows. Compacting gives it back. Nothing inside the machine changes.'
+    while ($true) {
+        $disks = @(Get-VirtualDisks)
+        if ($disks.Count -eq 0) { Write-Info 'No virtual machine disks found (VirtualBox, WSL, Docker Desktop).'; return }
+        if ($script:DryRun) { Show-VDiskList $disks; Write-Info 'Analyze-only mode: nothing was changed.'; return }
+        $r = @(Read-VDiskChoice $disks)
+        if ($r.Count -eq 1 -and $r[0] -is [string] -and $r[0] -eq 'R') { Clear-Host; Write-Section 'VIRTUAL DISKS'; continue }
+        $chosen = @($r | Where-Object { $_ -isnot [string] })
+        if ($chosen.Count -eq 0) { return }
+        break
+    }
+    # Last warning before anything is done
+    Write-Host ''
+    Write-Warn 'Before compacting:'
+    if (@($chosen | Where-Object { $_.Kind -eq 'VirtualBox' }).Count) { Write-Warn 'VirtualBox: the machine must stay off while YSO works (fully off, not saved). Do not start VirtualBox until it is done.' }
+    if (@($chosen | Where-Object { $_.Kind -ne 'VirtualBox' }).Count) { Write-Warn 'WSL will be stopped (wsl --shutdown): open Linux windows close, and Docker Desktop must stay closed until it is done.' }
+    Write-Warn 'Nothing inside the machines changes. For a machine you cannot lose, copy its disk file somewhere else first.'
+    Write-Info 'It can take several minutes per disk.'
+    if (-not (Confirm-Action 'Compact now?' $false)) { return }
+    if (@($chosen | Where-Object { $_.Kind -ne 'VirtualBox' }).Count) {
+        if (-not (Stop-Wsl @($chosen | Where-Object { $_.Kind -ne 'VirtualBox' }))) { Write-Warn 'WSL did not stop in time: its disks that are still in use are left alone.' }
+    }
+    $total = 0L; $count = 0
+    foreach ($d in $chosen) {
+        Assert-NotStopped
+        # checked again right before: the machine may have been started (or saved) meanwhile
+        $why = ''
+        if ($d.Kind -eq 'VirtualBox') { $m = @(Get-VBoxMachines | Where-Object { $_.VboxPath -eq $d.Machine.VboxPath }); if ($m.Count -and $m[0].Saved) { $why = N 'in saved state: start it, then shut it down from inside' } }
+        if (-not $why -and (Test-FileInUse $d.Path)) { $why = N 'in use' }
+        if ($why) { Write-Warn (L '{0}: not compacted - {1}.' $d.Name (L $why)); continue }
+        $before = (Get-Item -LiteralPath $d.Path -Force).Length
+        Write-Step (L 'Compacting {0} ({1})...' $d.Name (Format-Size $before))
+        $code = $(if ($d.Kind -eq 'VirtualBox') { Invoke-VdiCompact $d.Path } else { Invoke-VhdxCompact $d.Path })
+        $after = (Get-Item -LiteralPath $d.Path -Force).Length
+        $freed = [math]::Max(0L, $before - $after)
+        if ($code -ne 0) { Write-Warn (L '{0}: the tool stopped with code {1}. Nothing is lost: the disk is used as before.' $d.Name $code) }
+        if ($freed -gt 0) {
+            Write-Ok (L '{0}: {1} -> {2} ({3} freed)' $d.Name (Format-Size $before) (Format-Size $after) (Format-Size $freed))
+            $total += $freed; $count++
+        } elseif ($code -eq 0) {
+            Write-Info (L '{0}: already compact, nothing to give back.' $d.Name)
+        }
+        if ($d.Kind -eq 'VirtualBox' -and $code -eq 0 -and $freed -lt ($before / 20)) { Write-Info 'Little was freed: fill the free space with zeros inside the machine first (see above), then compact again.' }
+    }
+    if ($count -gt 0) { Add-Result -Category 'Virtual disks' -Files $count -Bytes $total -Skipped 0 }
+}
+
+# ==================================================================
 #  UPDATES  (28) - apps with winget, drivers with Windows Update
 #  Manual: you see the list and choose. Automatic: a scheduled task runs
 #  "-AutoUpdate" as you (elevated), installs what is safe and never restarts the PC.
@@ -5064,7 +5360,11 @@ function Invoke-SelfTest {
         if ($m.Count -gt 0) { Result-Broken (L 'missing: {0}' ($m -join ', ')) } else { Result-Ok }
     }
 
-    Write-Section 'SPACE & UPDATES (27-28)'
+    Write-Section 'SPACE & UPDATES (27-29)'
+    Test-Check 'Space' 'Virtual disks (29)' {
+        $d = @(Get-VirtualDisks)
+        Result-Ok (L '{0} virtual disk(s) found' $d.Count)
+    }
     Test-Check 'Space' 'Space finder (27)' {
         $t = [System.Diagnostics.Stopwatch]::StartNew()
         $scan = Get-FolderSizes -Root (Join-Path $env:WINDIR 'Web')
@@ -5336,6 +5636,7 @@ function Invoke-MenuOption {
             '26' { Invoke-SystemRepair }
             '27' { Show-SpaceFinder }
             '28' { Show-UpdatesMenu }
+            '29' { Invoke-VDiskCompact }
             'A'  { Invoke-Analysis }
             'F'  { Invoke-FullMaintenance -Plan $Plan }
             'R'  { Show-RestorePoints }
@@ -5506,7 +5807,8 @@ function Show-Menu {
         (M ''   ''),
         (M '#'  'SPACE & UPDATES'),
         (M '27' 'Space finder (what fills my disk?)'),
-        (M '28' ((L 'Updates: apps & drivers') + " [$updState]"))
+        (M '28' ((L 'Updates: apps & drivers') + " [$updState]")),
+        (M '29' 'Virtual disks (compact VMs, WSL, Docker)')
     )
     $bottom = @(
         (M 'A' 'Analyze (deletes nothing)'),
@@ -6634,7 +6936,7 @@ function Get-GuiToolGroups {
         @{ Title = (N 'OPTIMIZE'); Items = @((M '15' 'Optimize drives (TRIM / defrag)'), (M '16' 'Power plan'), (M '17' 'Startup programs'), (M '18' 'Boot time analyzer')) }
         @{ Title = (N 'DIAGNOSE & REPAIR'); Items = @((M '19' 'System health report'), (M '20' 'Crashes & errors'), (M '21' 'Security check & Defender scan'),
             (M '22' 'What runs automatically? (audit)'), (M '23' 'Driver problems'), (M '24' 'Check drives for errors'), (M '25' 'Memory test'), (M '26' 'Repair Windows files (DISM + SFC)')) }
-        @{ Title = (N 'SPACE & UPDATES'); Items = @((M '27' 'Space finder (what fills my disk?)'), (M '28' 'Updates: apps & drivers')) }
+        @{ Title = (N 'SPACE & UPDATES'); Items = @((M '27' 'Space finder (what fills my disk?)'), (M '28' 'Updates: apps & drivers'), (M '29' 'Virtual disks (compact VMs, WSL, Docker)')) }
         @{ Title = (N 'ONE-CLICK'); Items = @((M 'A' 'Analyze (deletes nothing)'), (M 'F' 'Full maintenance'), (M 'R' 'Restore points'), (M 'S' 'Weekly auto-clean'),
             (M 'H' 'Cleanup history'), (M 'T' 'Self-test (check everything)'), (M 'P' 'Report a problem'), (M 'O' 'Settings / Langue'),
             (M 'L' 'Logs folder')) }
@@ -7746,6 +8048,7 @@ function Get-GuiToolInfo([string]$Key) {
         '26' = @(0xE90F, (N 'Fixes damaged Windows files (DISM and SFC).'))
         '27' = @(0xEB05, (N 'See which folders fill your disk.'))
         '28' = @(0xE896, (N 'Apps and drivers, from one list.'))
+        '29' = @(0xE7F8, (N 'Gives back the space VMs, WSL and Docker no longer use.'))
         'A'  = @(0xE721, (N 'See what can be freed. Deletes nothing.'))
         'F'  = @(0xE74D, (N 'Everything at once, with a restore point first.'))
         'R'  = @(0xE777, (N 'Create one, or see the ones you have.'))
@@ -8064,6 +8367,11 @@ function Initialize-GuiSnapshot([string]$Dir) {
         { Save-GuiPng '13-startup'; $true },
         { if ($script:GuiCurrent) { Send-GuiAnswer '' }; $true },
         { -not $script:GuiCurrent -and $script:GuiJobs.Count -eq 0 },
+        { Start-GuiVDiskSample; $true },
+        { $script:Ui.RunAsk.Visibility -eq 'Visible' -or -not $script:GuiCurrent },
+        { Save-GuiPng '15-virtual-disks'; $true },
+        { if ($script:GuiCurrent) { Send-GuiAnswer '0' }; $true },
+        { -not $script:GuiCurrent -and $script:GuiJobs.Count -eq 0 },
         { Start-GuiOption 'O'; $true },
         { $script:Ui.RunAsk.Visibility -eq 'Visible' -or -not $script:GuiCurrent },
         { Save-GuiPng '14-settings'; $true },
@@ -8100,6 +8408,29 @@ $rec = @(for ($k = 0; $k -lt $items.Count; $k++) { if (Test-RecommendedUpdate $i
 [pscustomobject]@{ Run = [pscustomobject]@{ Status = 'done'; Results = @() }; Lang = $script:Lang }
 '@
     Add-GuiJob -Name 'update sample' -Output -Title $title -Script $sample -OnDone { param($Out, $Err) Complete-GuiRun $(if ($Out.Count -gt 0) { $Out[-1] } else { $null }) $Err }
+    Update-GuiBusy
+}
+
+function Start-GuiVDiskSample {
+    # For -Snapshot only: the virtual disks page with made-up machines. Nothing is read or compacted.
+    $title = L 'Virtual disks (compact VMs, WSL, Docker)'
+    Reset-GuiRun $title
+    Show-GuiPage 'Run'
+    $sample = @'
+$off = [pscustomobject]@{ Name = 'Ubuntu 26.04'; OsType = 'Ubuntu_64'; VboxPath = 'sample'; Saved = $false; Snapshots = $false; Disks = @() }
+$saved = [pscustomobject]@{ Name = 'Ubuntu Server'; OsType = 'Ubuntu_64'; VboxPath = 'sample2'; Saved = $true; Snapshots = $false; Disks = @() }
+$disks = @(
+    [pscustomobject]@{ Kind = 'WSL'; Name = 'Ubuntu'; Path = 'sample'; Size = 29387000000; Machine = $null; Capacity = 0; Ready = $true; Why = '' },
+    [pscustomobject]@{ Kind = 'VirtualBox'; Name = 'Ubuntu 26.04'; Path = 'sample'; Size = 22581000000; Machine = $off; Capacity = 53687091200; Ready = $true; Why = '' },
+    [pscustomobject]@{ Kind = 'Docker'; Name = 'Docker Desktop'; Path = 'sample'; Size = 6571000000; Machine = $null; Capacity = 0; Ready = $false; Why = 'quit Docker Desktop first' },
+    [pscustomobject]@{ Kind = 'VirtualBox'; Name = 'Ubuntu Server'; Path = 'sample'; Size = 6345000000; Machine = $saved; Capacity = 16106127360; Ready = $false; Why = 'in saved state: start it, then shut it down from inside' }
+)
+Write-Section 'VIRTUAL DISKS'
+Write-Info 'The disk of a virtual machine (VirtualBox, WSL, Docker Desktop) grows when the machine writes, but never shrinks by itself: files deleted inside the machine still take space on Windows. Compacting gives it back. Nothing inside the machine changes.'
+$null = Read-VDiskChoice $disks
+[pscustomobject]@{ Run = [pscustomobject]@{ Status = 'done'; Results = @() }; Lang = $script:Lang }
+'@
+    Add-GuiJob -Name 'virtual disks sample' -Output -Title $title -Script $sample -OnDone { param($Out, $Err) Complete-GuiRun $(if ($Out.Count -gt 0) { $Out[-1] } else { $null }) $Err }
     Update-GuiBusy
 }
 
@@ -8670,7 +9001,7 @@ Schedule (every day or every week, day, time) ==> Planning (tous les jours ou to
 Schedule: {0} ==> Planning : {0}
 skipped - the app was open ==> ignorée - l'appli était ouverte
 SPACE & UPDATES ==> ESPACE & MISES À JOUR
-SPACE & UPDATES (27-28) ==> ESPACE & MISES À JOUR (27-28)
+SPACE & UPDATES (27-29) ==> ESPACE & MISES À JOUR (27-29)
 Space finder (27) shows what else fills your disk (downloads, videos, games...). ==> L'explorateur d'espace (27) montre ce qui remplit encore votre disque (téléchargements, vidéos, jeux...).
 the app is open - close it and try again ==> l'appli est ouverte - fermez-la et réessayez
 the disk is full ==> le disque est plein
@@ -9464,6 +9795,44 @@ Nothing is ticked. ==> Rien n'est coché.
 Install the ticked updates ==> Installer les mises à jour cochées
 Install nothing ==> Ne rien installer
 older ==> ancienne
+{0} virtual disk(s) found ==> {0} disque(s) virtuel(s) trouvé(s)
+{0}: {1} -> {2} ({3} freed) ==> {0} : {1} -> {2} ({3} libérés)
+{0}: already compact, nothing to give back. ==> {0} : déjà compact, rien à récupérer.
+{0}: not compacted - {1}. ==> {0} : pas compacté - {1}.
+{0}: the tool stopped with code {1}. Nothing is lost: the disk is used as before. ==> {0} : l'outil s'est arrêté avec le code {1}. Rien n'est perdu : le disque reste utilisable comme avant.
+Before compacting: ==> Avant de compacter :
+close VirtualBox first ==> fermez d'abord VirtualBox
+Compact {0} ({1}) ==> Compacter {0} ({1})
+Compact all the ready ones ==> Compacter tous ceux qui sont prêts
+Compact now? ==> Compacter maintenant ?
+Compacting {0} ({1})... ==> Compactage de {0} ({1})...
+Freeing unused space inside {0} (fstrim)... ==> Libération de l'espace inutilisé dans {0} (fstrim)...
+Gives back the space VMs, WSL and Docker no longer use. ==> Récupère l'espace que les VM, WSL et Docker n'utilisent plus.
+has snapshots: YSO leaves it alone ==> a des instantanés : YSO n'y touche pas
+in saved state: start it, then shut it down from inside ==> en état sauvegardé : démarrez-la, puis éteignez-la depuis l'intérieur
+in use ==> utilisé
+It can take several minutes per disk. ==> Cela peut prendre plusieurs minutes par disque.
+Linux, in a terminal of the machine: ==> Linux, dans un terminal de la machine :
+Little was freed: fill the free space with zeros inside the machine first (see above), then compact again. ==> Peu d'espace libéré : remplissez d'abord l'espace libre de zéros dans la machine (voir plus haut), puis compactez à nouveau.
+No disk can be compacted right now: see the reason next to each one. ==> Aucun disque ne peut être compacté pour l'instant : la raison est indiquée à côté de chacun.
+No virtual machine disks found (VirtualBox, WSL, Docker Desktop). ==> Aucun disque de machine virtuelle trouvé (VirtualBox, WSL, Docker Desktop).
+Nothing inside the machines changes. For a machine you cannot lose, copy its disk file somewhere else first. ==> Rien ne change dans les machines. Pour une machine que vous ne pouvez pas perdre, copiez d'abord son fichier de disque ailleurs.
+quit Docker Desktop first ==> quittez d'abord Docker Desktop
+ready ==> prêt
+running: shut it down first ==> allumée : éteignez-la d'abord
+Stopping WSL (wsl --shutdown)... ==> Arrêt de WSL (wsl --shutdown)...
+The disk of a virtual machine (VirtualBox, WSL, Docker Desktop) grows when the machine writes, but never shrinks by itself: files deleted inside the machine still take space on Windows. Compacting gives it back. Nothing inside the machine changes. ==> Le disque d'une machine virtuelle (VirtualBox, WSL, Docker Desktop) grossit quand la machine écrit, mais ne rétrécit jamais tout seul : les fichiers supprimés dans la machine prennent encore de la place sur Windows. Le compactage la récupère. Rien ne change dans la machine.
+VBoxManage was not found (it comes with VirtualBox) ==> VBoxManage introuvable (il est fourni avec VirtualBox)
+Virtual disks ==> Disques virtuels
+VIRTUAL DISKS ==> DISQUES VIRTUELS
+Virtual disks (29) ==> Disques virtuels (29)
+Virtual disks (compact VMs, WSL, Docker) ==> Disques virtuels (compacter VM, WSL, Docker)
+VirtualBox: for the most space, first fill the free space of the machine with zeros, then shut it down: ==> VirtualBox : pour récupérer le plus d'espace, remplissez d'abord l'espace libre de la machine de zéros, puis éteignez-la :
+VirtualBox: the machine must stay off while YSO works (fully off, not saved). Do not start VirtualBox until it is done. ==> VirtualBox : la machine doit rester éteinte pendant que YSO travaille (complètement éteinte, pas sauvegardée). Ne lancez pas VirtualBox avant la fin.
+While the zeros are written, the disk file grows up to its full size: keep {0} free on the drive of the machine. ==> Pendant l'écriture des zéros, le fichier du disque grossit jusqu'à sa taille complète : gardez {0} de libre sur le disque de la machine.
+Windows, in the machine: ==> Windows, dans la machine :
+WSL did not stop in time: its disks that are still in use are left alone. ==> WSL ne s'est pas arrêté à temps : ses disques encore utilisés sont laissés tels quels.
+WSL will be stopped (wsl --shutdown): open Linux windows close, and Docker Desktop must stay closed until it is done. ==> WSL sera arrêté (wsl --shutdown) : les fenêtres Linux ouvertes se ferment, et Docker Desktop doit rester fermé jusqu'à la fin.
 Nothing is deleted here: you see the file in Explorer, then decide yourself. ==> Rien n'est supprimé ici : vous voyez le fichier dans l'Explorateur, puis vous décidez.
 Biggest files ==> Plus gros fichiers
 Choose a drive, or a folder. ==> Choisissez un disque ou un dossier.
