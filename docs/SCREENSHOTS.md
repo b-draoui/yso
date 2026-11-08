@@ -1,4 +1,4 @@
-# YSO 1.1 screenshots
+# YSO 1.0.1 screenshots
 
 Every screen of YSO, in English and [in French](#français). The pictures are drawn by the automated tests on Windows Server 2025 each time the code changes, so they always show the current version. Lists that need real apps, machines or past changes (the update list, the virtual disks, the apps to uninstall, the list of changes) are filled with sample data, and the space finder scans a small folder.
 

@@ -1,9 +1,9 @@
 # Changelog
 
-## 1.1 - 2026-11-08
+## 1.0.1 - 2026-11-08
 The window reads like an app, not like a terminal. Four new tools: virtual disks, privacy and ads, uninstalling apps with their leftovers, and undoing any change YSO made. An optional icon next to the clock warns you before problems, and YSO is ready for the Microsoft Store.
 
-![All tools in YSO 1.1: every tool with an icon and one sentence that says what it does](https://raw.githubusercontent.com/b-draoui/yso/main/docs/screenshots/tools.png)
+![All tools in YSO 1.0.1: every tool with an icon and one sentence that says what it does](https://raw.githubusercontent.com/b-draoui/yso/main/docs/screenshots/tools.png)
 
 ### New tool: Virtual disks (29)
 - Finds the disks of **VirtualBox** machines (.vdi, read from VirtualBox's own files), of **WSL** distributions and of **Docker Desktop** (.vhdx), with their size.
@@ -76,7 +76,7 @@ The window reads like an app, not like a terminal. Four new tools: virtual disks
 - **System junk** now also cleans old files in the temp folders of Windows services (`C:\Windows\ServiceProfiles\...\Temp`): crash dumps of several GB each were found there on a real PC. Only files older than the log age setting.
 - **Developer & app caches** now include the installers Ollama downloads for its own updates (1.5 GB each), once they are two days old. Ollama downloads one again if it still needs it.
 
-### Also in 1.1 (first sent to 1.0 as corrected builds)
+### Also in 1.0.1 (first sent to 1.0 as corrected builds)
 - **Updates**: one tick box per update, the recommended ones ticked first, "all" or "none" in one click. Names no longer repeat their version ("Ollama version 0.40.10" is "Ollama"), long names no longer push the versions out of their column, "< 3.15.2" reads "older", and the list says that only apps in the winget catalog are checked.
 - **Driver updates** are installed one at a time, so one that fails no longer stops the others, and each failure gives Windows' own reason (before, one update could make all of them fail with 0x80131501).
 - **Firmware updates** (BIOS, UEFI) are listed apart and never installed.
@@ -92,7 +92,7 @@ The window reads like an app, not like a terminal. Four new tools: virtual disks
 - The Microsoft Store package is built, installed and checked on Windows on every change.
 - New checks for the virtual disks (saved state, snapshots, a machine started meanwhile, No to the last warning), for the table columns and colours, for the titles, and for the new tools: every change put back exactly (a value changed twice, a key YSO created, binary values), the privacy settings and their Windows defaults, leftovers that never belong to another app, alerts at most once a week.
 
-**[Every screen of YSO 1.1, in English and French](https://github.com/b-draoui/yso/blob/main/docs/SCREENSHOTS.md)**
+**[Every screen of YSO 1.0.1, in English and French](https://github.com/b-draoui/yso/blob/main/docs/SCREENSHOTS.md)**
 
 ## 1.0 - 2026-10-25
 First public version.

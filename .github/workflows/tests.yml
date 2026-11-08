@@ -189,7 +189,7 @@ jobs:
           STORE_IDENTITY: ${{ vars.STORE_IDENTITY }}
           STORE_PUBLISHER: ${{ vars.STORE_PUBLISHER }}
           STORE_PUBLISHER_NAME: ${{ vars.STORE_PUBLISHER_NAME }}
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging\build-msix.ps1 -Build ${{ github.run_number }}
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging\build-msix.ps1
       - name: Install it, check it, remove it
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging\test-msix.ps1
@@ -243,6 +243,15 @@ jobs:
           if [ -z "$version" ]; then echo "::error::No version found in YSO.ps1"; exit 1; fi
           tag="v$version"
           sha256sum YSO.ps1 > YSO.ps1.sha256
+          # A version number taken back (1.1 renamed 1.0.1): releases above the version in YSO.ps1 go,
+          # so the release of this version is the latest one again.
+          for t in $(gh release list --limit 100 --json tagName --jq '.[].tagName'); do
+            v="${t#v}"
+            if [ "$v" != "$version" ] && [ "$(printf '%s\n%s\n' "$version" "$v" | sort -V | tail -1)" = "$v" ]; then
+              echo "::notice title=Release::$t is above YSO $version in YSO.ps1: removed."
+              gh release delete "$t" --yes --cleanup-tag
+            fi
+          done
           if gh release view "$tag" > /dev/null 2>&1; then
             # Same version: published again only when YSO.ps1 changed (fixes before the next version).
             # Installed copies of this version then offer "the fixes for YSO $version".
@@ -255,5 +264,5 @@ jobs:
           # the notes: the section of CHANGELOG.md for this version
           awk -v v="$version" '/^## /{p=($2==v); next} p' CHANGELOG.md > notes.md
           [ -s notes.md ] || echo "YSO $version" > notes.md
-          gh release create "$tag" YSO.ps1 YSO.ps1.sha256 install.ps1 --title "YSO $version" --notes-file notes.md --target "$GITHUB_SHA"
+          gh release create "$tag" YSO.ps1 YSO.ps1.sha256 install.ps1 --title "YSO $version" --notes-file notes.md --target "$GITHUB_SHA" --latest
           echo "::notice title=Release::YSO $version published ($(cut -c1-16 YSO.ps1.sha256)...)"

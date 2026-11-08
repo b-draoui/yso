@@ -9,17 +9,17 @@
     identity is used, good for a test install only.
 
     The package holds YSO.ps1 as it is, YSO.exe (a small launcher, packaging/launcher) and the
-    YSO mark drawn by YSO itself. Version: <YSO version>.<Build>.0, as the Store asks.
+    YSO mark drawn by YSO itself. Version: the version of YSO with a 0 at the end (1.0.1 -> 1.0.1.0),
+    as the Store asks (the last number is the Store's).
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File packaging\build-msix.ps1 -Build 42
+    powershell -ExecutionPolicy Bypass -File packaging\build-msix.ps1
 #>
 param(
     [string]$OutDir = (Join-Path $PSScriptRoot 'out'),
     [string]$Identity = $env:STORE_IDENTITY,
     [string]$Publisher = $env:STORE_PUBLISHER,
-    [string]$PublisherName = $env:STORE_PUBLISHER_NAME,
-    [ValidateRange(0, 65535)][int]$Build = 0
+    [string]$PublisherName = $env:STORE_PUBLISHER_NAME
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
@@ -27,9 +27,10 @@ $yso = Join-Path $repo 'YSO.ps1'
 if (-not $Identity) { $Identity = 'YSO.Test' }
 if (-not $Publisher) { $Publisher = 'CN=YSO Test' }
 if (-not $PublisherName) { $PublisherName = 'YSO' }
-$m = [regex]::Match((Get-Content -LiteralPath $yso -Raw), "\`$script:Version\s*=\s*'(\d+)\.(\d+)'")
+$m = [regex]::Match((Get-Content -LiteralPath $yso -Raw), "\`$script:Version\s*=\s*'(\d+)\.(\d+)(?:\.(\d+))?'")
 if (-not $m.Success) { throw 'The version of YSO was not found in YSO.ps1.' }
-$version = '{0}.{1}.{2}.0' -f $m.Groups[1].Value, $m.Groups[2].Value, $Build
+$patch = $(if ($m.Groups[3].Success) { $m.Groups[3].Value } else { '0' })
+$version = '{0}.{1}.{2}.0' -f $m.Groups[1].Value, $m.Groups[2].Value, $patch
 
 $stage = Join-Path $OutDir 'package'
 if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }

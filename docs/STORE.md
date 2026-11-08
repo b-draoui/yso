@@ -45,7 +45,7 @@ If certification refuses `allowElevation`, the other way is to keep the Store pa
 
 ## Each new version
 
-Change `$script:Version` in `YSO.ps1` as usual. The package version is `<YSO version>.<run number>.0` (for example `1.1.214.0`), so it always goes up. Download `YSO-msix` from the run of that commit and upload it in a new submission.
+Change `$script:Version` in `YSO.ps1` as usual. The package has the same version as YSO, with a 0 at the end (YSO 1.0.1 is package `1.0.1.0`), as the Store asks. The Store takes a package only if its version is higher than the last one: to send a correction, give YSO a new version number (1.0.2), not a corrected build of the same version. Download `YSO-msix` from the run of that commit and upload it in a new submission.
 
 ## Good to know
 

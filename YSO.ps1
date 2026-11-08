@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    YSO - Your System Optimizer 1.1: a Windows cleaner, health check, updater and maintenance tool.
+    YSO - Your System Optimizer 1.0.1: a Windows cleaner, health check, updater and maintenance tool.
 
 .DESCRIPTION
     One PowerShell script with a window (WPF). English by default; French in Settings.
@@ -188,7 +188,7 @@ function N([string]$Text) { return $Text }   # marks text that is translated lat
 # ==================================================================
 #  Settings & state
 # ==================================================================
-$script:Version       = '1.1'
+$script:Version       = '1.0.1'
 $script:DataDir       = Join-Path $env:ProgramData 'YSO'
 $script:LogDir        = Join-Path $script:DataDir 'Logs'
 $script:SettingsPath  = Join-Path $script:DataDir 'settings.json'
