@@ -71,7 +71,7 @@ Click a program to switch it on or off.
 
 ## Settings
 
-![Settings: the current values, then each setting as a choice: language, weekly auto-clean, age limits, folders to never touch, settings file, reset, new versions](screenshots/settings.png)
+![Settings: the current values, then each setting as a choice: language, weekly auto-clean, age limits, folders to never touch, settings file, reset, new versions, icon next to the clock](screenshots/settings.png)
 
 ## All tools
 Every tool with an icon and one sentence that says what it does.

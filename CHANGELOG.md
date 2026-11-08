@@ -16,13 +16,6 @@ The window reads like an app, not like a terminal. Four new tools: virtual disks
 
 ![The Virtual disks page: each disk with its size and whether it can be compacted now, then the choices](https://raw.githubusercontent.com/b-draoui/yso/main/docs/screenshots/virtual-disks.png)
 
-### New tool: Undo YSO changes (32)
-- **Every setting YSO changes is written down first**, with what it was before: startup programs switched on or off, power plan, hibernation file, DNS servers, privacy settings, app leftovers removed.
-- Undo YSO changes lists them, newest first, in plain words ("Spotify no longer starts with Windows"). Click one to see what it changed, then put it back exactly as it was. A value YSO created goes again, with the empty key it made for it.
-- An undone change is marked as such and is not undone twice. The last 300 changes are kept, in `C:\ProgramData\YSO\changes.json`.
-
-![Undo YSO changes: each change with its date, the tool that made it and what changed, the undone ones marked](https://raw.githubusercontent.com/b-draoui/yso/main/docs/screenshots/undo.png)
-
 ### New tool: Privacy & ads (30)
 - Switch off, with tick boxes: **ads and suggestions** in Windows (Start menu, Settings, File Explorer, notifications), **tips on the lock screen**, **web results (Bing)** in the Start menu search, **ad tracking**, **diagnostic data and activity history**, **Copilot**, **Recall and Click to Do** (Copilot+ PCs, Windows 11 24H2 and later), **AI in Edge, Notepad and Paint**, and **ads and suggestions in Edge**.
 - A sentence under each one says what changes. "Tick the recommended ones" ticks the four that nobody misses (ads, lock screen tips, Bing, ad tracking).
@@ -43,6 +36,13 @@ The window reads like an app, not like a terminal. Four new tools: virtual disks
 
 ![What an app left behind: its folders with their size and its registry key, ticked, with Remove the ticked ones and Keep everything](https://raw.githubusercontent.com/b-draoui/yso/main/docs/screenshots/leftovers.png)
 
+### New tool: Undo YSO changes (32)
+- **Every setting YSO changes is written down first**, with what it was before: startup programs switched on or off, power plan, hibernation file, DNS servers, privacy settings, app leftovers removed.
+- Undo YSO changes lists them, newest first, in plain words ("Spotify no longer starts with Windows"). Click one to see what it changed, then put it back exactly as it was. A value YSO created goes again, with the empty key it made for it.
+- An undone change is marked as such and is not undone twice. The last 300 changes are kept, in `C:\ProgramData\YSO\changes.json`.
+
+![Undo YSO changes: each change with its date, the tool that made it and what changed, the undone ones marked](https://raw.githubusercontent.com/b-draoui/yso/main/docs/screenshots/undo.png)
+
 ### Icon next to the clock (Settings, option 9)
 - Off unless you switch it on. It starts with Windows and checks every 6 hours: **disk almost full** (less than 10 GB or 10 % free), **a drive that fails or wears out**, **a worn battery**. It also says what the weekly cleanup freed.
 - It tells you only when something needs you, **at most once a week** for each thing, in one notification. Click it to open YSO.
@@ -58,7 +58,7 @@ The window reads like an app, not like a terminal. Four new tools: virtual disks
 - Bars instead of `[#####-----]`, and On / Off labels for startup programs.
 - A line you can choose (a folder, a file, a program) is a row you click, instead of a number to type.
 - Keys to type ("[B] back   [Q] done", "S = Windows Settings") are buttons. "Back", "Cancel" and "Done" are plain buttons under the choices.
-- Choices are rows with an arrow instead of numbered badges; settings shown as "[x] Temporary files" have real tick boxes.
+- Choices are rows with an arrow instead of numbered badges; settings shown as "[x] Temporary files" have real tick boxes. A choice can have a sentence under it that says what it does.
 - Nothing has to be typed any more. "Type an answer instead" is still there for those who want it.
 - Menu numbers like "(27)" are taken out of the texts in the window, and the first heading no longer repeats the page title.
 
@@ -66,6 +66,7 @@ The window reads like an app, not like a terminal. Four new tools: virtual disks
 
 ### All tools
 - Each tool has an icon and one sentence that says what it does ("Flush DNS cache: helps when a site will not load after a change"), instead of a number.
+- 32 tools, with a new group: Apps & privacy.
 
 ### Space finder and startup programs
 - Space finder: pick a drive with one click, or any folder with "Choose a folder...". Click a folder to open it, a file to show it in Explorer.
@@ -87,8 +88,9 @@ The window reads like an app, not like a terminal. Four new tools: virtual disks
 - The window: a message it cannot show is saved in errors.log and skipped, so the question after it still arrives.
 
 ### Tests
-- 668 automated checks in 25 groups on Linux, and on every change, Windows Server 2022, Windows Server 2025 and Windows 11 run the self-test, the update check, a real update install, the installation, and draw 15 pages of the window in English and French. Lists that need real machines (updates, virtual disks) are drawn with sample data.
-- New checks for the virtual disks (saved state, snapshots, a machine started meanwhile, No to the last warning), for the table columns and colours, and for the titles.
+- 746 automated checks in 26 groups on Linux, and on every change, Windows Server 2022, Windows Server 2025 and Windows 11 run the self-test, the update check, a real update install, the installation, and draw 19 pages of the window in English and French. Lists that need real machines or past changes (updates, virtual disks, apps to uninstall, the list of changes) are drawn with sample data.
+- The Microsoft Store package is built, installed and checked on Windows on every change.
+- New checks for the virtual disks (saved state, snapshots, a machine started meanwhile, No to the last warning), for the table columns and colours, for the titles, and for the new tools: every change put back exactly (a value changed twice, a key YSO created, binary values), the privacy settings and their Windows defaults, leftovers that never belong to another app, alerts at most once a week.
 
 **[Every screen of YSO 1.1, in English and French](https://github.com/b-draoui/yso/blob/main/docs/SCREENSHOTS.md)**
 
