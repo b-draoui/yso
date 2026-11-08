@@ -59,7 +59,7 @@ $c | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $script:UpdateCheckPath
 [void](Get-YsoUpdateOffer)
 Check ($script:Calls -eq 2) 'after an hour, GitHub is asked again'
 Remove-Item -LiteralPath $script:UpdateCheckPath
-$script:Answer = (New-Release -Tag 'v1.0' | ConvertTo-Json -Depth 5)
+$script:Answer = (New-Release -Tag ('v' + $script:Version) | ConvertTo-Json -Depth 5)
 Check ($null -eq (Get-YsoUpdateOffer)) 'the same version: nothing offered'
 Remove-Item -LiteralPath $script:UpdateCheckPath
 $script:Answer = 'OFFLINE'
@@ -87,10 +87,10 @@ $script:Published = ('a' * 64)
 function Get-YsoWebBytes([string]$Url, [int]$MaxBytes = 5MB) {
     $script:Calls++
     if ($Url.EndsWith('.sha256')) { return , [System.Text.Encoding]::ASCII.GetBytes($script:Published + '  YSO.ps1') }
-    return , [System.Text.Encoding]::UTF8.GetBytes((New-Release -Tag 'v1.0' | ConvertTo-Json -Depth 5))
+    return , [System.Text.Encoding]::UTF8.GetBytes((New-Release -Tag ('v' + $script:Version) | ConvertTo-Json -Depth 5))
 }
 $o = Get-YsoUpdateOffer
-Check ($o -and $o.Version -eq [version]'1.0' -and $o.PSObject.Properties['Build']) 'same version, but the published file differs: its fixes are offered'
+Check ($o -and $o.Version -eq [version]$script:Version -and $o.PSObject.Properties['Build']) 'same version, but the published file differs: its fixes are offered'
 $o = Get-YsoUpdateOffer
 Check ($o -and $o.PSObject.Properties['Build']) 'and kept for the hour like any answer'
 Remove-Item -LiteralPath $script:UpdateCheckPath
