@@ -7149,9 +7149,9 @@ function New-GuiPill([string]$Text, [bool]$On) {
     return $b
 }
 
-function Add-GuiTableRow([object[]]$Runs, [string]$Plain) {
-    # A line of a table, written with spaces for the console: its columns become real columns
-    # (lined up with the rows around it). A numbered line becomes a row you click.
+function Get-GuiTableCells([object[]]$Runs, [string]$Plain) {
+    # A table line of the console, cut into its columns (two spaces or more between them):
+    # Number (0 when the line has none), Rest, Cells = list of @(kind, value, console colour).
     $body = $Plain.TrimEnd()
     $num = 0
     if ($body -match '^\s{1,}(\d{1,3})\s{2,}(\S.*)$') { $num = [int]$Matches[1]; $rest = $Matches[2] } else { $rest = $body.TrimStart() }
@@ -7162,10 +7162,20 @@ function Add-GuiTableRow([object[]]$Runs, [string]$Plain) {
         $color = Get-GuiRunColor $Runs ($restStart + $c.Index)
         if ($text -match '^\[([#\-=\.]{4,})\]\s*(.*)$') {
             $bar = $Matches[1]; $after = $Matches[2]
-            $cells.Add(@('bar', [double](($bar.ToCharArray() | Where-Object { $_ -eq '#' -or $_ -eq '=' }).Count) / $bar.Length, $color))
+            $filled = @($bar.ToCharArray() | Where-Object { $_ -eq '#' -or $_ -eq '=' }).Count
+            $share = [double]$filled / $bar.Length   # (on its own line: a comma in the same list would bind first)
+            $cells.Add(@('bar', $share, $color))
             if ($after) { $cells.Add(@('text', $after, $color)) }
         } else { $cells.Add(@('text', $text, $color)) }
     }
+    return @{ Number = $num; Rest = $rest; Cells = $cells }
+}
+
+function Add-GuiTableRow([object[]]$Runs, [string]$Plain) {
+    # A line of a table, written with spaces for the console: its columns become real columns
+    # (lined up with the rows around it). A numbered line becomes a row you click.
+    $parsed = Get-GuiTableCells $Runs $Plain
+    $num = $parsed.Number; $rest = $parsed.Rest; $cells = $parsed.Cells
     if ($cells.Count -eq 0) { return }
     if (-not $script:GuiTable) {
         $script:GuiTableCount++

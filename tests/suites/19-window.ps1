@@ -253,6 +253,15 @@ Check ($btn.Count -eq 1 -and @($btn[0][1]).Count -eq 2 -and $btn[0][1][1][0] -eq
 Check ($ask.Count -eq 1 -and $ask[0][1] -eq 'choice' -and $ask[0][2] -eq 'Click a folder to open it.' -and $r.Out[-1] -eq 'B') "it asks with a sentence instead of the keys to type, and returns the key as before ($($r.Out[-1]))"
 $r = Invoke-WorkerJob "Write-KeyHint '[B] back   [Q] done'; Read-Choice -KeepCase" -Answers @('D:\Photos')
 Check (@($r.Messages | Where-Object { $_[0] -eq 'text' -and "$($_[1])" -match '\[B\]' }).Count -eq 0 -and $r.Out[-1] -ceq 'D:\Photos') 'the "[B] back" line of the console is not shown in the window; a typed folder keeps its case'
+$runs = @(@('    1  ', 'Green'), @('  190,41 GB  [############--------]  59%  ', ''), @('Users', ''))
+$p = Get-GuiTableCells $runs (-join @($runs | ForEach-Object { $_[0] }))
+$kinds = (@($p.Cells | ForEach-Object { $_[0] }) -join ',')
+Check ($p.Number -eq 1 -and $kinds -eq 'text,bar,text,text' -and $p.Cells[0][1] -eq '190,41 GB' -and [math]::Abs($p.Cells[1][1] - 0.6) -lt 0.001 -and $p.Cells[3][1] -eq 'Users') "a space finder line becomes: size, a bar at 60 %, the share, the folder ($kinds)"
+$runs = @(@('    3  ', 'Green'), @('ON        ', 'Green'), @(' Steam                          ', ''), @('Valve Corporation            ', 'Gray'), @('user      ', 'DarkGray'))
+$p = Get-GuiTableCells $runs (-join @($runs | ForEach-Object { $_[0] }))
+Check ($p.Number -eq 3 -and $p.Cells.Count -eq 4 -and $p.Cells[0][1] -eq 'ON' -and $p.Cells[0][2] -eq 'Green' -and $p.Cells[2][2] -eq 'Gray' -and $p.Cells[3][2] -eq 'DarkGray') 'a startup line keeps On/Off, the name, the publisher and the scope, each with its colour'
+$p = Get-GuiTableCells @(, @('Category                       Files        Size', '')) 'Category                       Files        Size'
+Check ($p.Number -eq 0 -and $p.Cells.Count -eq 3) 'a table header has no number and three columns'
 $wrapped = @([regex]::Matches($srcText, '@\(\$script:Gui(Picks|PickLinks|Options|Line)\)') | ForEach-Object { $_.Value })
 Check ($wrapped.Count -eq 0) "the window's lists are never wrapped in @() or added together (PowerShell fails with 'Argument types do not match') $($wrapped -join ' ')"
 Check ($srcText -match "function Get-GuiPicked \{[^}]*return , \[int\[\]\]") 'the window sends the ticks as one list (an empty or one-item list is not lost on the way)'
