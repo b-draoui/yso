@@ -37,7 +37,8 @@ To uninstall: Settings > Apps > Installed apps > YSO > Uninstall. YSO asks wheth
 | **Startup programs** | Switched on and off the same way as Task Manager, with publisher and boot impact. |
 | **Health report** | Disk wear, battery capacity, Windows Update status, crashes, security, drivers. |
 | **Restore points** | See them, create one, keep only the newest. |
-| **All tools** | 28 tools, including network check, DNS, boot time, disk check, memory test, Windows repair (DISM and SFC), space finder, weekly auto-clean, self-test. |
+| **Virtual disks** | Gives back the space that VirtualBox machines, WSL and Docker Desktop no longer use (their disk files never shrink by themselves). Refuses a machine that is running, saved or has snapshots, and asks before anything. |
+| **All tools** | 29 tools, including network check, DNS, boot time, disk check, memory test, Windows repair (DISM and SFC), space finder, weekly auto-clean, self-test. |
 
 ![The Clean page after Analyze: each part with the space it frees and a tick box, and the total for what is ticked at the bottom](docs/screenshots/clean.png)
 
@@ -46,6 +47,8 @@ Every tool shows what it does while it works, asks its questions with buttons, a
 ![The page of a tool after Analyze: what each step found, then a table of categories, files and sizes](docs/screenshots/details.png)
 
 ![All tools: the tools in groups (clean, network, optimize, diagnose and repair, space and updates), each with an icon and one sentence that says what it does](docs/screenshots/tools.png)
+
+**[Every screen of YSO, in English and French](docs/SCREENSHOTS.md)**
 
 ## Safety
 
@@ -99,7 +102,7 @@ Depuis l'Invite de commandes (cmd) : `powershell -NoProfile -ExecutionPolicy Byp
 
 Windows demande les droits administrateur, puis YSO s'ouvre. Il est ensuite dans le menu Démarrer et sur le Bureau. Passez en français dans **Paramètres > Language / Langue**. Pour le désinstaller : Paramètres > Applications > Applications installées > YSO.
 
-**Ce qu'il fait** : l'état du PC en vert, orange ou rouge ; **Analyse** (ne supprime rien) ; **Nettoyer**, partie par partie, avec la place libérée par chacune ; mises à jour des applis et des pilotes ; programmes au démarrage ; rapport de santé ; points de restauration ; 28 outils en tout.
+**Ce qu'il fait** : l'état du PC en vert, orange ou rouge ; **Analyse** (ne supprime rien) ; **Nettoyer**, partie par partie, avec la place libérée par chacune ; mises à jour des applis et des pilotes ; programmes au démarrage ; rapport de santé ; points de restauration ; compactage des disques de machines virtuelles (VirtualBox, WSL, Docker) ; 29 outils en tout. [Toutes les captures d'écran](docs/SCREENSHOTS.md#français).
 
 **Sécurité** : mots de passe, cookies, historique, favoris, données de sites, Téléchargements et Documents ne sont jamais touchés. Ce qui est irréversible (Corbeille, anciens pilotes, Windows.old) est demandé à part, et un point de restauration est créé avant l'entretien complet.
 

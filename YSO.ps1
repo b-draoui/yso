@@ -6699,7 +6699,7 @@ function Invoke-GuiTick {
                 'ask'   { Show-GuiAsk $m[1] $m[2] $m[3] }
                 default {
                     # this session's log keeps the text too (the console is hidden)
-                    if ($m[0] -eq 'text') { Write-Host $m[1] -NoNewline:([bool]$m[3]) } elseif ($m[0] -ne 'picklist') { Write-Host (@($m | Select-Object -Skip 1) -join ' | ') }
+                    if ($m[0] -eq 'text') { Write-Host $m[1] -NoNewline:([bool]$m[3]) } elseif ($m[0] -ne 'picklist' -and $m[0] -ne 'buttons') { Write-Host (@($m | Select-Object -Skip 1) -join ' | ') }
                     if ($job -and $job.Output) { Add-GuiDocMessage $m }
                 }
             }
@@ -8267,7 +8267,7 @@ function Show-YsoWindow([string]$Snapshot = '') {
     # The second PowerShell, then the health of the PC
     Start-GuiWorker -ScriptPath $PSCommandPath -Shared $script:GuiShared -DryRunMode ([bool]$script:DryRun)
     Start-GuiHealth
-    Start-GuiUpdateCheck
+    if (-not $Snapshot) { Start-GuiUpdateCheck }   # pictures show the window as a user sees it, not the test build's offer
     if ($Snapshot) { Initialize-GuiSnapshot $Snapshot }
 
     $timer = New-Object System.Windows.Threading.DispatcherTimer
@@ -8387,7 +8387,8 @@ function Start-GuiUpdateSample {
     # For -Snapshot only: the update choice with a made-up list. Nothing is searched or installed.
     $title = L 'Updates: apps & drivers'
     Reset-GuiRun $title
-    Show-GuiPage 'Run'
+    $script:GuiRunKey = '28'
+    Show-GuiPage 'Run' '28'
     $sample = @'
 function New-SampleUpdate($Kind, $Name, $From, $To, $Major = $false, $InUse = $false, $Excluded = $false, $Optional = $false) {
     [pscustomobject]@{ Kind = $Kind; Name = $Name; Id = 'Sample.App'; From = $From; To = $To; Class = ''; Optional = $Optional; Excluded = $Excluded; InUse = $InUse; Update = $null; Major = $Major }
@@ -8415,7 +8416,8 @@ function Start-GuiVDiskSample {
     # For -Snapshot only: the virtual disks page with made-up machines. Nothing is read or compacted.
     $title = L 'Virtual disks (compact VMs, WSL, Docker)'
     Reset-GuiRun $title
-    Show-GuiPage 'Run'
+    $script:GuiRunKey = '29'
+    Show-GuiPage 'Run' '29'
     $sample = @'
 $off = [pscustomobject]@{ Name = 'Ubuntu 26.04'; OsType = 'Ubuntu_64'; VboxPath = 'sample'; Saved = $false; Snapshots = $false; Disks = @() }
 $saved = [pscustomobject]@{ Name = 'Ubuntu Server'; OsType = 'Ubuntu_64'; VboxPath = 'sample2'; Saved = $true; Snapshots = $false; Disks = @() }
@@ -9769,7 +9771,7 @@ as good as new (it reports {0} %) ==> comme neuve (elle indique {0} %)
 FIRMWARE (NOT INSTALLED BY YSO) ==> MICROLOGICIELS (NON INSTALLÉS PAR YSO)
 Firmware updates change the BIOS or the built-in software of a device. YSO leaves them to Windows Update (Settings > Windows Update) or to your PC maker's app. ==> Les mises à jour de micrologiciel modifient le BIOS ou le logiciel intégré d'un appareil. YSO les laisse à Windows Update (Paramètres > Windows Update) ou à l'appli du fabricant de votre PC.
 Install all of them (new major versions too) ==> Tout installer (nouvelles versions majeures comprises)
-Install the fixes for YSO {0} ==> Installer les corrections de YSO {0}
+Install the fixes for YSO {0} ==> Installer les correctifs {0}
 Install the recommended ones ==> Installer celles recommandées
 Or type numbers (e.g. 1,3 or 2-4), Enter = nothing ==> Ou tapez des numéros (ex. 1,3 ou 2-4), Entrée = rien
 Reinstall {0}? YSO removes the installed version, then installs {1}. Most apps keep your data, but some forget their settings. ==> Réinstaller {0} ? YSO désinstalle la version installée, puis installe la {1}. La plupart des applis gardent vos données, mais certaines oublient leurs réglages.
