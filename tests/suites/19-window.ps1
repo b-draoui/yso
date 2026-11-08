@@ -236,6 +236,23 @@ Send-GuiAnswer $true
 $sent = $null; [void]$shared.Answers.TryTake([ref]$sent)
 Check ($sent -eq $true) 'other questions still get their answer when there is no tick box at all'
 $script:Ui = $saved.Ui; $script:GuiAskKind = $saved.Kind
+Write-Host "`n===== LESS LIKE A TERMINAL =====" -ForegroundColor White
+$titles = @(
+    @('BIGGEST FILES', 'Biggest files'), @('APP UPDATES (winget)', 'App updates (winget)'), @('SPACE FINDER - C:\', 'Space finder - C:\'),
+    @("MISES À JOUR D'APPLIS (winget)", "Mises à jour d'applis (winget)"), @('PROGRAMS THAT START WITH WINDOWS', 'Programs that start with Windows'),
+    @('NETWORK CHECK (SPEED, DNS, WI-FI)', 'Network check (speed, DNS, Wi-Fi)'), @('DRIVER UPDATES (Windows Update)', 'Driver updates (Windows Update)'),
+    @('Restore points', 'Restore points'), @('ANALYSIS - space you can reclaim (nothing was deleted)', 'Analysis - space you can reclaim (nothing was deleted)'))
+$bad = @($titles | Where-Object { (ConvertTo-GuiTitle $_[0]) -cne $_[1] } | ForEach-Object { '{0} -> {1}' -f $_[0], (ConvertTo-GuiTitle $_[0]) })
+Check ($bad.Count -eq 0) "titles in capitals read as normal titles in the window ($($bad -join ' ; '))"
+Check ((Remove-GuiMenuRefs 'Space finder (27) shows what fills your disk.') -eq 'Space finder shows what fills your disk.' -and (Remove-GuiMenuRefs 'Freed 2 GB (15 files)') -eq 'Freed 2 GB (15 files)' -and (Remove-GuiMenuRefs 'Deep clean (8)') -eq 'Deep clean') 'menu numbers like "(27)" are dropped from texts in the window, other brackets stay'
+Check ((Get-GuiRunColor @(@('  1  ', 'Green'), @('190 GB  ', ''), @('Users', 'Gray')) 13) -eq 'Gray' -and (Get-GuiRunColor @(@('  1  ', 'Green'), @('190 GB', '')) 2) -eq 'Green') 'each column of a table keeps the colour it had in the console'
+$r = Invoke-WorkerJob "Read-Choice 'Number, or Enter to go back' -Buttons @(@('B', 'Back'), @('', 'Done')) -Hint 'Click a folder to open it.'" -Answers @('b')
+$btn = @($r.Messages | Where-Object { $_[0] -eq 'buttons' })
+$ask = @($r.Messages | Where-Object { $_[0] -eq 'ask' })
+Check ($btn.Count -eq 1 -and @($btn[0][1]).Count -eq 2 -and $btn[0][1][1][0] -eq '' -and $btn[0][1][1][1] -eq 'Done') 'a question with keys shows buttons in the window (Enter becomes a "Done" button)'
+Check ($ask.Count -eq 1 -and $ask[0][1] -eq 'choice' -and $ask[0][2] -eq 'Click a folder to open it.' -and $r.Out[-1] -eq 'B') "it asks with a sentence instead of the keys to type, and returns the key as before ($($r.Out[-1]))"
+$r = Invoke-WorkerJob "Write-KeyHint '[B] back   [Q] done'; Read-Choice -KeepCase" -Answers @('D:\Photos')
+Check (@($r.Messages | Where-Object { $_[0] -eq 'text' -and "$($_[1])" -match '\[B\]' }).Count -eq 0 -and $r.Out[-1] -ceq 'D:\Photos') 'the "[B] back" line of the console is not shown in the window; a typed folder keeps its case'
 $wrapped = @([regex]::Matches($srcText, '@\(\$script:Gui(Picks|PickLinks|Options|Line)\)') | ForEach-Object { $_.Value })
 Check ($wrapped.Count -eq 0) "the window's lists are never wrapped in @() or added together (PowerShell fails with 'Argument types do not match') $($wrapped -join ' ')"
 Check ($srcText -match "function Get-GuiPicked \{[^}]*return , \[int\[\]\]") 'the window sends the ticks as one list (an empty or one-item list is not lost on the way)'

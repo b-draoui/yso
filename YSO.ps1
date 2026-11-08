@@ -180,7 +180,7 @@ function N([string]$Text) { return $Text }   # marks text that is translated lat
 # ==================================================================
 #  Settings & state
 # ==================================================================
-$script:Version       = '1.0'
+$script:Version       = '1.1'
 $script:DataDir       = Join-Path $env:ProgramData 'YSO'
 $script:LogDir        = Join-Path $script:DataDir 'Logs'
 $script:SettingsPath  = Join-Path $script:DataDir 'settings.json'
@@ -384,8 +384,17 @@ function Write-Option([string]$Key, [string]$Text) {
     Write-Host (L $Text)
 }
 
-function Read-Choice([string]$Prompt = (N 'Choose')) {
-    return "$(Read-Host ('  ' + (L $Prompt)))".Trim().ToUpper()
+function Read-Choice([string]$Prompt = (N 'Choose'), [object[]]$Buttons = @(), [string]$Hint = '', [switch]$KeepCase) {
+    # The console asks with $Prompt. In the window, $Buttons (key, label) become buttons and $Hint
+    # replaces the prompt ("Click a folder to open it."): nobody has to type a key there.
+    $a = "$(Read-Host ('  ' + (L $Prompt)))".Trim()
+    if ($KeepCase) { return $a }
+    return $a.ToUpper()
+}
+
+function Write-KeyHint([string]$Text) {
+    # "[B] back   [Q] done": keys to type in the console. The window shows buttons instead (Read-Choice).
+    Write-Host ('  ' + (L $Text)) -ForegroundColor DarkGray
 }
 
 function Test-Unattended {
@@ -2105,7 +2114,7 @@ function Show-StartupApps {
         Write-Info (L '{0} start with Windows, {1} switched off.' $on ($entries.Count - $on))
         Write-Info 'Switching one off only stops it starting by itself: it stays installed, and you can switch it back on here, in Task Manager or in Settings.'
         Write-Info 'Apps from the Microsoft Store manage their own startup: S opens Windows Settings.'
-        $c = Read-Choice 'Number = switch on/off, S = Windows Settings, Enter = back'
+        $c = Read-Choice 'Number = switch on/off, S = Windows Settings, Enter = back' -Buttons @(@('S', 'Open the Windows startup settings'), @('', 'Back')) -Hint 'Click a program to switch it on or off.'
         if (-not $c) { return }
         if ($c -eq 'S') {
             if ($script:Build -ge 17134) { Start-Process 'ms-settings:startupapps' } else { Start-Process taskmgr.exe }
@@ -2926,8 +2935,8 @@ function Show-BigFiles($Scan) {
         Write-Host (Get-ShortPath (ConvertFrom-LongPath $f.FullName) 76) -ForegroundColor Gray
     }
     Write-Host ''
-    Write-Info 'Nothing is deleted here. Type a number to show that file in Explorer, then decide yourself.'
-    $c = Read-Choice 'Number, or Enter to go back'
+    Write-Info 'Nothing is deleted here: you see the file in Explorer, then decide yourself.'
+    $c = Read-Choice 'Number, or Enter to go back' -Buttons @(, @('', 'Back')) -Hint 'Click a file to show it in Explorer.'
     if ($c -match '^\d+$' -and [int]$c -ge 1 -and [int]$c -le $top.Count) {
         Start-Process explorer.exe -ArgumentList ('/select,"{0}"' -f (ConvertFrom-LongPath $top[[int]$c - 1].FullName))
     }
@@ -2936,11 +2945,11 @@ function Show-BigFiles($Scan) {
 function Show-SpaceFinder {
     Write-Section 'SPACE FINDER'
     foreach ($v in @(Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveType -eq 'Fixed' -and $_.DriveLetter } | Sort-Object DriveLetter)) {
-        Write-Kv (L 'Drive {0}:' $v.DriveLetter) (L '{0} used of {1}' (Format-Size ($v.Size - $v.SizeRemaining)) (Format-Size $v.Size))
+        Write-Option "$($v.DriveLetter)" ((L 'Drive {0}:' $v.DriveLetter) + '  ' + (L '{0} used of {1}' (Format-Size ($v.Size - $v.SizeRemaining)) (Format-Size $v.Size)))
     }
     $default = "$env:SystemDrive".TrimEnd(':')
     if (-not $default) { $default = 'C' }
-    $answer = [Environment]::ExpandEnvironmentVariables("$(Read-Host ('  ' + (L 'Drive letter or folder to scan [{0}]' $default)))".Trim().Trim('"'))
+    $answer = [Environment]::ExpandEnvironmentVariables((Read-Choice (L 'Drive letter or folder to scan [{0}]' $default) -Buttons @(, @('<folder>', 'Choose a folder...')) -Hint 'Choose a drive, or a folder.' -KeepCase).Trim('"'))
     if (-not $answer) { $answer = $default }
     $root = if ($answer -match '^[A-Za-z]:?\\?$') { $answer.Substring(0, 1).ToUpper() + ':\' } else { $answer }
     if (-not (Test-Path -LiteralPath $root -PathType Container)) { Write-Warn (L 'Folder not found: {0}' $root); return }
@@ -2973,8 +2982,8 @@ function Show-SpaceFinder {
             Write-Host (L '(files directly in this folder)') -ForegroundColor DarkGray
         }
         Write-Host ''
-        Write-Host ('  ' + (L '[number] open folder   [B] back   [F] biggest files   [E] show in Explorer   [Q] done')) -ForegroundColor DarkGray
-        $c = Read-Choice
+        Write-KeyHint '[number] open folder   [B] back   [F] biggest files   [E] show in Explorer   [Q] done'
+        $c = Read-Choice -Buttons @(@('B', 'Back'), @('F', 'Biggest files'), @('E', 'Show in Explorer'), @('Q', 'Done')) -Hint 'Click a folder to open it.'
         if ($c -eq 'Q') { break }
         elseif ($c -eq 'B') { if ($back.Count -gt 0) { $cur = $back.Pop() } }
         elseif ($c -eq 'E') { Start-Process explorer.exe -ArgumentList "`"$(ConvertFrom-LongPath $cur)`"" }
@@ -4143,7 +4152,7 @@ function Show-UpdatesMenu {
                         $mark = if ($u[$names[$i]]) { '[x]' } else { '[ ]' }
                         Write-Option "$($i + 1)" ('{0} {1}' -f $mark, (L $keys[$names[$i]]))
                     }
-                    $c = Read-Choice 'Number to switch on/off, Enter when done'
+                    $c = Read-Choice 'Number to switch on/off, Enter when done' -Buttons @(, @('', 'Done')) -Hint 'Click a line to switch it on or off.'
                     if (-not $c) { break }
                     if ($c -match '^\d+$' -and [int]$c -ge 1 -and [int]$c -le $names.Count) { $k = $names[[int]$c - 1]; $u[$k] = -not $u[$k] }
                 }
@@ -4568,7 +4577,7 @@ function Show-Settings {
                         $mark = if ($script:Settings.AutoClean[$keys[$i]]) { '[x]' } else { '[ ]' }
                         Write-Option "$($i + 1)" ('{0} {1}' -f $mark, (L $script:AutoCleanNames[$keys[$i]]))
                     }
-                    $c = Read-Choice 'Number to switch on/off, Enter when done'
+                    $c = Read-Choice 'Number to switch on/off, Enter when done' -Buttons @(, @('', 'Done')) -Hint 'Click a line to switch it on or off.'
                     if (-not $c) { break }
                     if ($c -match '^\d+$' -and [int]$c -ge 1 -and [int]$c -le $keys.Count) {
                         $k = $keys[[int]$c - 1]
@@ -4598,7 +4607,7 @@ function Show-Settings {
                 $ex = @($script:Settings.ExcludeFolders)
                 if ($ex.Count -eq 0) { Write-Info 'The list is empty.'; Start-Sleep -Seconds 2; break }
                 for ($i = 0; $i -lt $ex.Count; $i++) { Write-Option "$($i + 1)" $ex[$i] }
-                $c = Read-Choice 'Number to remove, Enter to cancel'
+                $c = Read-Choice 'Number to remove, Enter to cancel' -Buttons @(, @('', 'Cancel')) -Hint 'Click the folder to remove.'
                 if ($c -match '^\d+$' -and [int]$c -ge 1 -and [int]$c -le $ex.Count) {
                     $drop = $ex[[int]$c - 1]
                     $script:Settings.ExcludeFolders = [string[]]@($ex | Where-Object { $_ -ne $drop })
@@ -5720,6 +5729,7 @@ function Get-YsoXaml {
       <Setter Property="Foreground" Value="{StaticResource Text}"/>
       <Setter Property="Cursor" Value="Hand"/>
       <Setter Property="Width" Value="338"/>
+      <Setter Property="MinHeight" Value="74"/>
       <Setter Property="Margin" Value="0,0,12,12"/>
       <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
       <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
@@ -5758,6 +5768,28 @@ function Get-YsoXaml {
               <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource Accent}"/></Trigger>
               <Trigger Property="IsPressed" Value="True"><Setter TargetName="Bd" Property="Opacity" Value="0.85"/></Trigger>
               <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5"/><Setter Property="Cursor" Value="Arrow"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="RowBtn" TargetType="Button">
+      <Setter Property="Foreground" Value="{StaticResource Text}"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+      <Setter Property="Margin" Value="0,0,0,3"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bd" Background="{StaticResource Card}" BorderBrush="{StaticResource Card}" BorderThickness="1" CornerRadius="4" Padding="10,7">
+              <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Bd" Property="Background" Value="{StaticResource Hover}"/><Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource AccentLine}"/></Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource Accent}"/></Trigger>
+              <Trigger Property="IsPressed" Value="True"><Setter TargetName="Bd" Property="Opacity" Value="0.85"/></Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter Property="Cursor" Value="Arrow"/><Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource Card}"/></Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>
@@ -6111,7 +6143,7 @@ function Get-YsoXaml {
             </Border>
             <Border Grid.Row="3" Margin="0,16,0,0" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,1">
               <ScrollViewer x:Name="RunScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
-                <StackPanel x:Name="RunDoc" Margin="0,8,14,12"/>
+                <StackPanel x:Name="RunDoc" Margin="0,8,14,12" Grid.IsSharedSizeScope="True"/>
               </ScrollViewer>
             </Border>
             <Border x:Name="RunAsk" Grid.Row="4" Visibility="Collapsed" Margin="0,12,0,0" Padding="16,12" CornerRadius="4" Background="{StaticResource Card2}" BorderBrush="{StaticResource Accent}" BorderThickness="1">
@@ -6123,6 +6155,7 @@ function Get-YsoXaml {
                 <StackPanel VerticalAlignment="Center">
                   <TextBlock x:Name="RunAskText" TextWrapping="Wrap" FontWeight="SemiBold"/>
                   <TextBox x:Name="RunAskBox" Margin="0,8,0,0" FontSize="13" AutomationProperties.Name="[[Your answer]]"/>
+                  <Button x:Name="RunAskType" Style="{StaticResource Link}" Content="[[Type an answer instead]]" HorizontalAlignment="Left" Margin="-6,4,0,-4" Visibility="Collapsed"/>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom" Margin="14,0,0,0">
                   <Button x:Name="RunAskNo" Content="[[No]]" Margin="0,0,8,0"/>
@@ -6245,6 +6278,16 @@ function Enable-GuiAdapters($Shared) {
     function global:Write-Bad([string]$Text) { $script:GuiShared.Queue.Enqueue([object[]]@('line', 'bad', (L $Text))) }
     function global:Write-Info([string]$Text) { $script:GuiShared.Queue.Enqueue([object[]]@('line', 'info', (L $Text))) }
     function global:Write-Option([string]$Key, [string]$Text) { $script:GuiShared.Queue.Enqueue([object[]]@('option', $Key, (L $Text))) }
+    function global:Write-KeyHint([string]$Text) { }   # the window has buttons for these keys
+    function global:Read-Choice([string]$Prompt = (N 'Choose'), [object[]]$Buttons = @(), [string]$Hint = '', [switch]$KeepCase) {
+        if (@($Buttons).Count -gt 0) {
+            $list = @(foreach ($b in @($Buttons)) { , [object[]]@("$($b[0])", (L "$($b[1])")) })
+            $script:GuiShared.Queue.Enqueue([object[]]@('buttons', [object[]]$list))
+        }
+        $a = "$(Request-GuiAnswer 'choice' $(if ($Hint) { L $Hint } else { '' }))".Trim()
+        if ($KeepCase) { return $a }
+        return $a.ToUpper()
+    }
     function global:Show-HealthDashboard([object[]]$Items) {
         foreach ($i in $Items) { $script:GuiShared.Queue.Enqueue([object[]]@('health', "$($i.Level)", (L $i.Name), "$($i.Text)", "$($i.Action)")) }
     }
@@ -7012,6 +7055,8 @@ function Clear-GuiOutput {
     $script:GuiPicks = New-Object System.Collections.Generic.List[object]
     $script:GuiPickLinks = New-Object System.Collections.Generic.List[object]
     $script:GuiPickRecommended = @()
+    $script:GuiTable = $null
+    $script:GuiTableCount = 0
 }
 
 function Add-GuiBlock($Element) {
@@ -7031,28 +7076,168 @@ function Add-GuiSpacer {
     Add-GuiBlock $b
 }
 
+function ConvertTo-GuiTitle([string]$Text) {
+    # Titles written in capitals for the console ("BIGGEST FILES") read like a terminal in the window:
+    # "Biggest files". Acronyms and names (DNS, Windows...), paths (C:\) and words already in
+    # lower case ("(winget)") stay as they are.
+    $t = "$Text".Trim()
+    $outside = $t -replace '\([^)]*\)', ''
+    if ($outside -notmatch '\p{L}') { return $t }
+    $allCaps = -not ($outside -cmatch '\p{Ll}')
+    $keep = @{ 'DNS' = 'DNS'; 'GPU' = 'GPU'; 'CPU' = 'CPU'; 'RAM' = 'RAM'; 'SSD' = 'SSD'; 'HDD' = 'HDD'; 'TRIM' = 'TRIM'; 'BIOS' = 'BIOS'
+               'UEFI' = 'UEFI'; 'PC' = 'PC'; 'YSO' = 'YSO'; 'USB' = 'USB'; 'IP' = 'IP'; 'WSL' = 'WSL'; 'SFC' = 'SFC'; 'DISM' = 'DISM'
+               'VPN' = 'VPN'; 'ID' = 'ID'; 'TPM' = 'TPM'; 'NVIDIA' = 'NVIDIA'; 'AMD' = 'AMD'; 'WI-FI' = 'Wi-Fi'; 'SMART' = 'SMART'
+               'OK' = 'OK'; 'WINDOWS' = 'Windows'; 'MICROSOFT' = 'Microsoft'; 'DEFENDER' = 'Defender'; 'INTEL' = 'Intel'
+               'STEAM' = 'Steam'; 'CHROME' = 'Chrome'; 'EDGE' = 'Edge'; 'FIREFOX' = 'Firefox'; 'WINGET' = 'winget'; 'MSI' = 'MSI' }
+    $words = foreach ($w in ($t -split ' ')) {
+        $core = $w.Trim('(', ')', ',', ':', '.', ';', '!', '?')
+        if ($w -cmatch '\p{Ll}' -or $w -match '[\d\\:/]') { $w }
+        elseif ($core -and $keep.ContainsKey($core.ToUpperInvariant())) { $w.Replace($core, $keep[$core.ToUpperInvariant()]) }
+        elseif ($allCaps -or ($w -replace '[^\p{L}]', '').Length -ge 2) { $w.ToLowerInvariant() }
+        else { $w }
+    }
+    $r = ($words -join ' ')
+    $i = 0
+    while ($i -lt $r.Length -and -not [char]::IsLetter($r[$i])) { $i++ }
+    if ($i -lt $r.Length) { $r = $r.Substring(0, $i) + [char]::ToUpperInvariant($r[$i]) + $r.Substring($i + 1) }
+    return $r
+}
+
+function Remove-GuiMenuRefs([string]$Text) {
+    # "Space finder (27) shows..." points at a number of the console menu; the window has no numbers.
+    return ($Text -replace '\s\((\d{1,2}|[A-Z])\)(?=[\s.,;:!?]|$)', '')
+}
+
+function Get-GuiRunColor([object[]]$Runs, [int]$Index) {
+    # The console colour of the piece of text that holds character $Index of the line.
+    $pos = 0
+    foreach ($r in $Runs) {
+        $len = ([string]$r[0]).Length
+        if ($Index -lt $pos + $len) { return [string]$r[1] }
+        $pos += $len
+    }
+    return ''
+}
+
+function New-GuiBar([double]$Share) {
+    # A real bar instead of [#####-----].
+    $track = New-Object System.Windows.Controls.Border
+    $track.Width = 120; $track.Height = 6
+    $track.CornerRadius = 3
+    $track.Background = Get-GuiBrush 'Line'
+    $track.VerticalAlignment = 'Center'
+    $fill = New-Object System.Windows.Controls.Border
+    $fill.Width = [math]::Max(0, [math]::Min(120, 120 * $Share))
+    $fill.HorizontalAlignment = 'Left'
+    $fill.CornerRadius = 3
+    $fill.Background = Get-GuiBrush 'Accent'
+    $track.Child = $fill
+    return $track
+}
+
+function New-GuiPill([string]$Text, [bool]$On) {
+    # ON / OFF of a list: a small label, filled when on.
+    $b = New-Object System.Windows.Controls.Border
+    $b.CornerRadius = 3
+    $b.Padding = New-GuiThickness '8,1'
+    $b.BorderThickness = New-GuiThickness '1'
+    $b.BorderBrush = Get-GuiBrush $(if ($On) { 'AccentLine' } else { 'Line' })
+    $b.Background = Get-GuiBrush $(if ($On) { 'AccentSoft' } else { 'Card' })
+    $b.HorizontalAlignment = 'Left'
+    $b.VerticalAlignment = 'Center'
+    $b.Child = (New-GuiText (ConvertTo-GuiTitle $Text) 12 $(if ($On) { 'Accent' } else { 'Text3' }) 'SemiBold')
+    return $b
+}
+
+function Add-GuiTableRow([object[]]$Runs, [string]$Plain) {
+    # A line of a table, written with spaces for the console: its columns become real columns
+    # (lined up with the rows around it). A numbered line becomes a row you click.
+    $body = $Plain.TrimEnd()
+    $num = 0
+    if ($body -match '^\s{1,}(\d{1,3})\s{2,}(\S.*)$') { $num = [int]$Matches[1]; $rest = $Matches[2] } else { $rest = $body.TrimStart() }
+    $restStart = $body.Length - $rest.Length
+    $cells = New-Object System.Collections.Generic.List[object]
+    foreach ($c in [regex]::Matches($rest, '\S+(?: \S+)*')) {
+        $text = $c.Value
+        $color = Get-GuiRunColor $Runs ($restStart + $c.Index)
+        if ($text -match '^\[([#\-=\.]{4,})\]\s*(.*)$') {
+            $bar = $Matches[1]; $after = $Matches[2]
+            $cells.Add(@('bar', [double](($bar.ToCharArray() | Where-Object { $_ -eq '#' -or $_ -eq '=' }).Count) / $bar.Length, $color))
+            if ($after) { $cells.Add(@('text', $after, $color)) }
+        } else { $cells.Add(@('text', $text, $color)) }
+    }
+    if ($cells.Count -eq 0) { return }
+    if (-not $script:GuiTable) {
+        $script:GuiTableCount++
+        $script:GuiTable = @{ Id = $script:GuiTableCount; Rows = 0 }
+    }
+    $t = $script:GuiTable
+    $t.Rows++
+    $header = ($t.Rows -eq 1 -and $num -eq 0 -and $cells.Count -gt 1 -and -not ($rest -match '\d'))
+    $g = New-Object System.Windows.Controls.Grid
+    for ($k = 0; $k -lt $cells.Count; $k++) {
+        $col = New-Object System.Windows.Controls.ColumnDefinition
+        $col.Width = [System.Windows.GridLength]::Auto
+        $col.SharedSizeGroup = ('T{0}C{1}' -f $t.Id, $k)
+        $g.ColumnDefinitions.Add($col)
+    }
+    $g.ColumnDefinitions.Add((New-GuiColumn '*'))
+    $onWord = L 'ON'; $offWord = L 'OFF'
+    for ($k = 0; $k -lt $cells.Count; $k++) {
+        $c = $cells[$k]
+        $last = ($k -eq $cells.Count - 1)
+        if ($c[0] -eq 'bar') { $el = New-GuiBar $c[1] }
+        elseif ($c[1] -ceq $onWord -or $c[1] -ceq $offWord) { $el = New-GuiPill $c[1] ($c[1] -ceq $onWord) }
+        else {
+            $brush = $(if ($header) { 'Text3' } elseif ($c[2] -and $c[2] -ne 'Gray' -and $c[2] -ne 'White') { $c[2] } elseif ($c[2] -eq 'Gray') { 'Text2' } else { 'Text' })
+            $el = New-GuiText ([string]$c[1]) $(if ($header) { 12 } else { 13 }) $brush
+            $el.TextTrimming = 'CharacterEllipsis'
+            if ($c[1] -match '^[<>+\-]?\s*\d[\d\s.,:]*\s*(%|[KMGT]?B|[KMGT]?o|s|ms|h)?$') { $el.TextAlignment = 'Right'; $el.HorizontalAlignment = 'Stretch' }
+            $el.VerticalAlignment = 'Center'
+        }
+        $el.Margin = New-GuiThickness $(if ($last) { '0' } else { '0,0,22,0' })
+        [System.Windows.Controls.Grid]::SetColumn($el, $k)
+        if ($last) { [System.Windows.Controls.Grid]::SetColumnSpan($el, 2) }
+        $g.Children.Add($el) | Out-Null
+    }
+    if ($num -gt 0) {
+        $b = New-Object System.Windows.Controls.Button
+        $b.Style = $script:GuiWindow.FindResource('RowBtn')
+        $b.Tag = "$num"
+        $b.Content = $g
+        [System.Windows.Automation.AutomationProperties]::SetName($b, ((@($cells | Where-Object { $_[0] -eq 'text' } | ForEach-Object { $_[1] })) -join ', '))
+        $b.Add_Click({ param($s, $e) Invoke-GuiSafe 'row' { if (Test-GuiChoiceOpen) { Send-GuiAnswer "$($s.Tag)" } } })
+        $script:GuiOptions.Add($b)
+        Add-GuiBlock $b
+    } else {
+        $g.Margin = New-GuiThickness $(if ($header) { '11,8,11,3' } else { '11,4,11,4' })
+        Add-GuiBlock $g
+    }
+}
+
 function Complete-GuiRawLine {
-    # Text written in pieces (Write-Host -NoNewline) becomes one line. Columns lined up with spaces
-    # (tables) keep a fixed-width font so they stay lined up; everything else uses the window's font.
+    # Text written in pieces (Write-Host -NoNewline) becomes one line. Lines lined up with spaces
+    # (tables) become rows with real columns; a line of dashes becomes a thin rule; the rest is text.
     $runs = @($script:GuiLine.ToArray())
     $script:GuiLine.Clear()
     $plain = (@($runs | ForEach-Object { $_[0] }) -join '')
     [void]$script:GuiDocText.AppendLine($plain.TrimEnd())
-    if (-not $plain.Trim()) { Add-GuiSpacer; return }
-    $aligned = ($plain.Trim() -match '\S {3,}\S' -or $plain -match '^\s{2,}\d+\s{2}\S')
-    $indent = $plain.Length - $plain.TrimStart().Length
-    $cut = $(if ($aligned) { [math]::Min(2, $indent) } else { $indent })
+    if (-not $plain.Trim()) { $script:GuiTable = $null; Add-GuiSpacer; return }
+    if ($plain -match '^\s*[-=_]{6,}\s*$') {
+        $rule = New-Object System.Windows.Controls.Border
+        $rule.Height = 1
+        $rule.Background = Get-GuiBrush 'Line'
+        $rule.Margin = New-GuiThickness '11,3,11,3'
+        Add-GuiBlock $rule
+        return
+    }
+    if ($plain.Trim() -match '\S {3,}\S' -or $plain -match '^\s{2,}\d{1,3}\s{2,}\S') { Add-GuiTableRow $runs $plain; return }
+    $script:GuiTable = $null
     $tb = New-Object System.Windows.Controls.TextBlock
     $tb.Margin = New-GuiThickness '0,1,0,1'
-    if ($aligned) {
-        $tb.FontFamily = New-Object System.Windows.Media.FontFamily 'Consolas'
-        $tb.FontSize = 12.5
-        $tb.TextWrapping = 'NoWrap'
-        $tb.TextTrimming = 'CharacterEllipsis'
-    } else {
-        $tb.FontSize = 13
-        $tb.TextWrapping = 'Wrap'
-    }
+    $tb.FontSize = 13
+    $tb.TextWrapping = 'Wrap'
+    $cut = $plain.Length - $plain.TrimStart().Length
     foreach ($r in $runs) {
         $t = [string]$r[0]
         if ($cut -gt 0) { $n = [math]::Min($cut, $t.Length - $t.TrimStart().Length); $t = $t.Substring($n); $cut -= $n }
@@ -7064,9 +7249,45 @@ function Complete-GuiRawLine {
     Add-GuiBlock $tb
 }
 
+function Test-GuiChoiceOpen {
+    # A question that a click on a choice, a row or a button answers.
+    return (($script:GuiAskKind -eq 'text' -or $script:GuiAskKind -eq 'choice') -and (Test-GuiAsking))
+}
+
+function Select-GuiFolder {
+    Add-Type -AssemblyName System.Windows.Forms
+    $d = New-Object System.Windows.Forms.FolderBrowserDialog
+    $d.Description = L 'Choose the folder to scan.'
+    $d.ShowNewFolderButton = $false
+    try { if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { return $d.SelectedPath } } finally { $d.Dispose() }
+    return $null
+}
+
+function Add-GuiButtons([object[]]$List) {
+    # Buttons of the question that follows (Read-Choice): Back, Done, Show in Explorer...
+    $wrap = New-Object System.Windows.Controls.WrapPanel
+    $wrap.Margin = New-GuiThickness '0,10,0,0'
+    foreach ($it in $List) {
+        [void]$script:GuiDocText.AppendLine(('  [{0}] {1}' -f $(if ($it[0]) { $it[0] } else { 'Enter' }), $it[1]))
+        $b = New-Object System.Windows.Controls.Button
+        $b.Content = [string]$it[1]
+        $b.Tag = [string]$it[0]
+        $b.Margin = New-GuiThickness '0,0,8,8'
+        $b.Add_Click({ param($s, $e) Invoke-GuiSafe 'button' {
+            if (-not (Test-GuiChoiceOpen)) { return }
+            if ("$($s.Tag)" -eq '<folder>') { $f = Select-GuiFolder; if ($f) { Send-GuiAnswer $f } }
+            else { Send-GuiAnswer "$($s.Tag)" }
+        } })
+        $script:GuiOptions.Add($b)
+        [void]$wrap.Children.Add($b)
+    }
+    Add-GuiBlock $wrap
+}
+
 function Add-GuiDocMessage($m) {
     # One message of the running option: text, section, kv, line, option, health.
     if ($m[0] -ne 'text' -and $script:GuiLine.Count -gt 0) { Complete-GuiRawLine }
+    if ($m[0] -ne 'text') { $script:GuiTable = $null }
     switch ($m[0]) {
         'text' {
             $script:GuiLine.Add(@([string]$m[1], [string]$m[2]))
@@ -7074,7 +7295,8 @@ function Add-GuiDocMessage($m) {
         }
         'section' {
             [void]$script:GuiDocText.AppendLine('').AppendLine([string]$m[1])
-            Add-GuiBlock (New-GuiText ([string]$m[1]) 12 'Text2' 'SemiBold' -Margin '0,16,0,6')
+            $first = ($script:Ui.RunDoc.Children.Count -eq 0)
+            Add-GuiBlock (New-GuiText (ConvertTo-GuiTitle (Remove-GuiMenuRefs ([string]$m[1]))) 15 'Text' 'SemiBold' -Wrap -Margin $(if ($first) { '0,4,0,8' } else { '0,20,0,8' }))
         }
         'kv' {
             [void]$script:GuiDocText.AppendLine(('{0}: {1}' -f ([string]$m[1]).TrimEnd(':', ' '), $m[2]))
@@ -7089,7 +7311,7 @@ function Add-GuiDocMessage($m) {
             Add-GuiBlock $g
         }
         'line' {
-            $text = ([string]$m[2]).Trim()
+            $text = (Remove-GuiMenuRefs ([string]$m[2])).Trim()
             [void]$script:GuiDocText.AppendLine($text)
             if (-not $text) { Add-GuiSpacer; return }
             switch ([string]$m[1]) {
@@ -7112,29 +7334,49 @@ function Add-GuiDocMessage($m) {
         }
         'option' {
             [void]$script:GuiDocText.AppendLine(('  {0}  {1}' -f $m[1], $m[2]))
-            $b = New-Object System.Windows.Controls.Button
-            $b.Style = $script:GuiWindow.FindResource('OptionBtn')
+            $label = Remove-GuiMenuRefs ([string]$m[2])
+            if (@((L 'Back'), (L 'Cancel'), (L 'Done')) -contains $label) {
+                # "Back" is not one of the choices: a plain button under them
+                $b = New-Object System.Windows.Controls.Button
+                $b.Content = $label
+                $b.HorizontalAlignment = 'Left'
+                $b.Margin = New-GuiThickness '0,6,0,0'
+            } else {
+                $b = New-Object System.Windows.Controls.Button
+                $b.Style = $script:GuiWindow.FindResource('OptionBtn')
+                $g = New-Object System.Windows.Controls.Grid
+                $g.ColumnDefinitions.Add((New-GuiColumn 'Auto')); $g.ColumnDefinitions.Add((New-GuiColumn '*')); $g.ColumnDefinitions.Add((New-GuiColumn 'Auto'))
+                if ($label -match '^\[(x| )\]\s+(.*)$') {
+                    # "[x] Temporary files": a tick box, not brackets
+                    $on = ($Matches[1] -eq 'x')
+                    $label = $Matches[2]
+                    $box = New-Object System.Windows.Controls.Border
+                    $box.Width = 18; $box.Height = 18
+                    $box.CornerRadius = 3
+                    $box.BorderThickness = New-GuiThickness '1'
+                    $box.BorderBrush = Get-GuiBrush $(if ($on) { 'Accent' } else { 'Text3' })
+                    $box.Background = Get-GuiBrush $(if ($on) { 'Accent' } else { 'Card' })
+                    $box.Margin = New-GuiThickness '2,0,4,0'
+                    if ($on) { $tick = New-GuiIcon ([string][char]0xE73E) 11 'OnAccent'; $tick.HorizontalAlignment = 'Center'; $tick.VerticalAlignment = 'Center'; $box.Child = $tick }
+                    $g.Children.Add($box) | Out-Null
+                }
+                $t = New-GuiText $label 13 'Text' -Wrap -Margin '8,0,8,0'
+                $t.VerticalAlignment = 'Center'
+                [System.Windows.Controls.Grid]::SetColumn($t, 1)
+                $g.Children.Add($t) | Out-Null
+                $chev = New-GuiIcon ([string][char]0xE76C) 11 'Text3'
+                $chev.VerticalAlignment = 'Center'
+                [System.Windows.Controls.Grid]::SetColumn($chev, 2)
+                $g.Children.Add($chev) | Out-Null
+                $b.Content = $g
+                [System.Windows.Automation.AutomationProperties]::SetName($b, $label)
+            }
             $b.Tag = [string]$m[1]
-            $g = New-Object System.Windows.Controls.Grid
-            $g.ColumnDefinitions.Add((New-GuiColumn 'Auto')); $g.ColumnDefinitions.Add((New-GuiColumn '*'))
-            $badge = New-Object System.Windows.Controls.Border
-            $badge.Background = Get-GuiBrush 'AccentSoft'
-            $badge.CornerRadius = 3
-            $badge.MinWidth = 30; $badge.Height = 24
-            $badge.Padding = New-GuiThickness '6,0'
-            $k = New-GuiText ([string]$m[1]) 12.5 'Accent' 'Bold'
-            $k.HorizontalAlignment = 'Center'; $k.VerticalAlignment = 'Center'
-            $badge.Child = $k
-            $g.Children.Add($badge) | Out-Null
-            $t = New-GuiText ([string]$m[2]) 13 'Text' -Wrap -Margin '12,0,8,0'
-            $t.VerticalAlignment = 'Center'
-            [System.Windows.Controls.Grid]::SetColumn($t, 1)
-            $g.Children.Add($t) | Out-Null
-            $b.Content = $g
-            $b.Add_Click({ param($s, $e) Invoke-GuiSafe 'choice' { if ($script:GuiAskKind -eq 'text' -and (Test-GuiAsking)) { Send-GuiAnswer "$($s.Tag)" } } })
+            $b.Add_Click({ param($s, $e) Invoke-GuiSafe 'choice' { if (Test-GuiChoiceOpen) { Send-GuiAnswer "$($s.Tag)" } } })
             $script:GuiOptions.Add($b)
             Add-GuiBlock $b
         }
+        'buttons' { Add-GuiButtons @($m[1]) }
         'picklist' { Add-GuiPickList @($m[1]) }
         'health' {
             [void]$script:GuiDocText.AppendLine(('{0}: {1}' -f ([string]$m[2]).TrimEnd(':', ' '), $m[3]))
@@ -7267,6 +7509,7 @@ function Show-GuiAsk([string]$Kind, [string]$Prompt, $Default) {
     $ui.RunAsk.Visibility = 'Visible'
     $ui.RunAskBox.Visibility = $(if ($Kind -eq 'text') { 'Visible' } else { 'Collapsed' })
     $ui.RunAskOk.Visibility = $(if ($Kind -eq 'text' -or $Kind -eq 'pick') { 'Visible' } else { 'Collapsed' })
+    $ui.RunAskType.Visibility = $(if ($Kind -eq 'choice') { 'Visible' } else { 'Collapsed' })
     $ui.RunAskYes.Visibility = $(if ($Kind -eq 'yesno') { 'Visible' } else { 'Collapsed' })
     $ui.RunAskNo.Visibility = $(if ($Kind -eq 'yesno' -or $Kind -eq 'pick') { 'Visible' } else { 'Collapsed' })
     $ui.RunAskOk.Content = $(if ($Kind -eq 'pick') { L 'Install the ticked updates' } else { L 'OK' })
@@ -7277,6 +7520,7 @@ function Show-GuiAsk([string]$Kind, [string]$Prompt, $Default) {
     if ($Kind -eq 'continue') { $text = (L 'Read the result above, then continue.') }
     if ($Kind -eq 'text' -and $script:GuiOptions.Count -gt 0) { $text = (L 'Choose an option above, or type it here.') }
     if ($Kind -eq 'text' -and -not $text) { $text = (L 'Your answer') }
+    if ($Kind -eq 'choice' -and -not $text) { $text = (L 'Choose an option above.') }
     $ui.RunAskText.Text = $text
     $ui.RunProgress.Visibility = 'Collapsed'
     $ui.RunState.Text = (L 'Your answer is needed below.')
@@ -7291,6 +7535,12 @@ function Show-GuiAsk([string]$Kind, [string]$Prompt, $Default) {
     } elseif ($Kind -eq 'text') {
         $ui.RunAskBox.Text = ''
         [void]$ui.RunAskBox.Focus()
+    } elseif ($Kind -eq 'choice') {
+        # the choices above answer it; typing stays possible ("Type an answer instead")
+        $ui.RunAskBox.Text = ''
+        $first = $null
+        foreach ($o in $script:GuiOptions) { if ($o.IsEnabled) { $first = $o; break } }
+        if ($first) { [void]$first.Focus() } else { [void]$ui.RunAskType.Focus() }
     } elseif ($Kind -eq 'pick') {
         # the updates above become tick boxes you can use; the recommended ones are ticked
         $ui.RunAskNo.Style = $script:GuiWindow.FindResource([System.Windows.Controls.Button])
@@ -7312,7 +7562,7 @@ function Send-GuiAnswer($Value) {
     foreach ($b in $script:GuiOptions) { $b.IsEnabled = $false }   # those choices were for this question
     $script:GuiOptions.Clear()
     Set-GuiPicksEnabled $false
-    if ($script:GuiAskKind -eq 'text' -and "$Value") { Add-GuiDocMessage ([object[]]@('line', 'info', (L 'Your answer: {0}' "$Value"))); Update-GuiOutputView }
+    if (($script:GuiAskKind -eq 'text' -or ($script:GuiAskKind -eq 'choice' -and $script:Ui.RunAskBox.Visibility -eq 'Visible')) -and "$Value") { Add-GuiDocMessage ([object[]]@('line', 'info', (L 'Your answer: {0}' "$Value"))); Update-GuiOutputView }
     $script:GuiShared.Answers.Add($Value)
 }
 
@@ -7435,12 +7685,59 @@ function Start-YsoAgain {
 }
 
 # --- All tools ---
+function Get-GuiToolInfo([string]$Key) {
+    # Icon (Segoe MDL2 Assets) and one plain sentence for each tool of the All tools page.
+    $info = @{
+        '1'  = @(0xE74D, (N 'Leftover files of apps and of Windows.'))
+        '2'  = @(0xE774, (N 'Copies of web pages, rebuilt as you browse. Logins stay.'))
+        '3'  = @(0xE8A5, (N 'Error reports, crash dumps and old logs.'))
+        '4'  = @(0xE895, (N 'Update files Windows no longer needs.'))
+        '5'  = @(0xE74D, (N 'Empty it for good.'))
+        '6'  = @(0xE7F4, (N 'Graphics caches, rebuilt by games and apps.'))
+        '7'  = @(0xE943, (N 'Caches of npm, pip, VS Code, Discord, Spotify...'))
+        '8'  = @(0xE90F, (N 'Windows Disk Cleanup. Frees a lot, takes a while.'))
+        '9'  = @(0xE8B7, (N 'Removes Windows.old after a big Windows update.'))
+        '10' = @(0xE708, (N 'Makes the hibernation file smaller, or removes it.'))
+        '11' = @(0xE701, (N 'Speed, DNS and Wi-Fi signal.'))
+        '12' = @(0xE774, (N 'Pick a faster or safer DNS.'))
+        '13' = @(0xE72C, (N 'Helps when a site will not load after a change.'))
+        '14' = @(0xE895, (N 'Last resort when the internet does not work.'))
+        '15' = @(0xEDA2, (N 'TRIM for SSDs, defrag for hard drives.'))
+        '16' = @(0xE945, (N 'Balanced, high performance or power saver.'))
+        '17' = @(0xE7E8, (N 'Choose what starts with Windows.'))
+        '18' = @(0xE916, (N 'See what slows down startup.'))
+        '19' = @(0xE9D9, (N 'Everything about this PC in one report.'))
+        '20' = @(0xE7BA, (N 'Recent crashes and what caused them.'))
+        '21' = @(0xEA18, (N 'Antivirus, firewall and a Defender scan.'))
+        '22' = @(0xE71D, (N 'Tasks and services that start by themselves.'))
+        '23' = @(0xE772, (N 'Devices with a missing or broken driver.'))
+        '24' = @(0xEDA2, (N 'Looks for errors on your drives.'))
+        '25' = @(0xE950, (N 'Checks the memory (RAM) at the next restart.'))
+        '26' = @(0xE90F, (N 'Fixes damaged Windows files (DISM and SFC).'))
+        '27' = @(0xEB05, (N 'See which folders fill your disk.'))
+        '28' = @(0xE896, (N 'Apps and drivers, from one list.'))
+        'A'  = @(0xE721, (N 'See what can be freed. Deletes nothing.'))
+        'F'  = @(0xE74D, (N 'Everything at once, with a restore point first.'))
+        'R'  = @(0xE777, (N 'Create one, or see the ones you have.'))
+        'S'  = @(0xE787, (N 'Cleans by itself once a week.'))
+        'H'  = @(0xE81C, (N 'What each cleanup freed.'))
+        'T'  = @(0xE73E, (N 'Checks that every part of YSO works on this PC.'))
+        'P'  = @(0xE897, (N 'Makes a report to send to the developer.'))
+        'O'  = @(0xE713, (N 'Language, age limits, folders to never touch.'))
+        'L'  = @(0xE8B7, (N 'Opens the folder of YSO''s logs.'))
+    }
+    if ($info.ContainsKey($Key)) { return , $info[$Key] }
+    return , @(0xE76C, '')
+}
+
 function Initialize-GuiTools {
     $panel = $script:Ui.ToolsPanel
     foreach ($grp in (Get-GuiToolGroups)) {
-        $panel.Children.Add((New-GuiText (L $grp.Title) 12 'Text3' 'SemiBold' -Margin '2,18,0,10')) | Out-Null
+        $panel.Children.Add((New-GuiText (ConvertTo-GuiTitle (L $grp.Title)) 15 'Text' 'SemiBold' -Margin '2,22,0,10')) | Out-Null
         $wrap = New-Object System.Windows.Controls.WrapPanel
         foreach ($it in $grp.Items) {
+            $info = Get-GuiToolInfo $it[0]
+            $name = Remove-GuiMenuRefs (L $it[1])
             $b = New-Object System.Windows.Controls.Button
             $b.Style = $script:GuiWindow.FindResource('ToolBtn')
             $b.Tag = $it[0]
@@ -7448,19 +7745,22 @@ function Initialize-GuiTools {
             $g.ColumnDefinitions.Add((New-GuiColumn 'Auto')); $g.ColumnDefinitions.Add((New-GuiColumn '*'))
             $badge = New-Object System.Windows.Controls.Border
             $badge.Background = Get-GuiBrush 'AccentSoft'
-            $badge.CornerRadius = 3
-            $badge.MinWidth = 34; $badge.Height = 28
-            $badge.Padding = New-GuiThickness '6,0'
-            $k = New-GuiText $it[0] 12.5 'Accent' 'Bold'
-            $k.HorizontalAlignment = 'Center'; $k.VerticalAlignment = 'Center'
-            $badge.Child = $k
+            $badge.CornerRadius = 4
+            $badge.Width = 34; $badge.Height = 34
+            $badge.VerticalAlignment = 'Top'
+            $icon = New-GuiIcon ([string][char]$info[0]) 16 'Accent'
+            $icon.HorizontalAlignment = 'Center'; $icon.VerticalAlignment = 'Center'
+            $badge.Child = $icon
             $g.Children.Add($badge) | Out-Null
-            $t = New-GuiText (L $it[1]) 13 'Text' -Margin '12,0,0,0'
-            $t.VerticalAlignment = 'Center'
-            [System.Windows.Controls.Grid]::SetColumn($t, 1)
-            $g.Children.Add($t) | Out-Null
+            $texts = New-Object System.Windows.Controls.StackPanel
+            $texts.Margin = New-GuiThickness '12,0,0,0'
+            $texts.VerticalAlignment = 'Center'
+            $texts.Children.Add((New-GuiText $name 13.5 'Text' 'SemiBold' -Wrap)) | Out-Null
+            if ($info[1]) { $texts.Children.Add((New-GuiText (L $info[1]) 12 'Text2' -Wrap -Margin '0,2,0,0')) | Out-Null }
+            [System.Windows.Controls.Grid]::SetColumn($texts, 1)
+            $g.Children.Add($texts) | Out-Null
             $b.Content = $g
-            $b.ToolTip = L $it[1]
+            [System.Windows.Automation.AutomationProperties]::SetName($b, $name)
             $b.Add_Click({ param($s, $e) Invoke-GuiSafe 'tool' { Invoke-GuiAction "$($s.Tag)" } })
             $wrap.Children.Add($b) | Out-Null
         }
@@ -7547,7 +7847,7 @@ function Show-YsoWindow([string]$Snapshot = '') {
                         'PageClean', 'CleanWarn', 'CleanWarnText', 'CleanList', 'CleanOptions', 'CleanTotal', 'CleanTotalLabel', 'CleanBar',
                         'CleanStatus', 'CleanDetails', 'CleanAnalyze', 'CleanRun',
                         'PageRun', 'RunTitle', 'RunState', 'RunProgress', 'RunStep', 'RunBar0', 'RunStatus', 'RunBar1', 'RunResult',
-                        'RunResultIcon', 'RunResultBig', 'RunResultText', 'RunScroll', 'RunDoc', 'RunCopy', 'RunAsk', 'RunAskText', 'RunAskBox', 'RunAskNo', 'RunAskYes',
+                        'RunResultIcon', 'RunResultBig', 'RunResultText', 'RunScroll', 'RunDoc', 'RunCopy', 'RunAsk', 'RunAskText', 'RunAskBox', 'RunAskType', 'RunAskNo', 'RunAskYes',
                         'RunAskOk', 'RunAskContinue', 'RunHint', 'RunStop', 'RunBack',
                         'PageTools', 'ToolsPanel', 'Overlay', 'DlgTitle', 'DlgText', 'DlgNo', 'DlgYes')) {
         $ui[$name] = $window.FindName($name)
@@ -7603,6 +7903,12 @@ function Show-YsoWindow([string]$Snapshot = '') {
     $ui.RunAskNo.Add_Click({ if ($script:GuiAskKind -eq 'pick') { Send-GuiAnswer ([int[]]@()) } else { Send-GuiAnswer $false } })
     $ui.RunAskContinue.Add_Click({ Send-GuiAnswer '' })
     $ui.RunAskOk.Add_Click({ if ($script:GuiAskKind -eq 'pick') { Send-GuiAnswer (Get-GuiPicked) } else { Send-GuiAnswer $script:Ui.RunAskBox.Text } })
+    $ui.RunAskType.Add_Click({
+        $script:Ui.RunAskType.Visibility = 'Collapsed'
+        $script:Ui.RunAskBox.Visibility = 'Visible'
+        $script:Ui.RunAskOk.Visibility = 'Visible'
+        [void]$script:Ui.RunAskBox.Focus()
+    })
     $ui.RunCopy.Add_Click({ Invoke-GuiSafe 'copy' { Copy-GuiOutput } })
     $ui.RunAskBox.Add_KeyDown({ param($s, $e) if ($e.Key -eq 'Return') { Send-GuiAnswer $script:Ui.RunAskBox.Text; $e.Handled = $true } })
 
@@ -7709,6 +8015,29 @@ function Initialize-GuiSnapshot([string]$Dir) {
         { $script:Ui.RunAsk.Visibility -eq 'Visible' -or -not $script:GuiCurrent },
         { Save-GuiPng '9-update-choice'; $true },
         { if ($script:GuiCurrent) { Send-GuiAnswer ([int[]]@()) }; $true },
+        { -not $script:GuiCurrent -and $script:GuiJobs.Count -eq 0 },
+        { Start-GuiOption '27'; $true },
+        { $script:Ui.RunAsk.Visibility -eq 'Visible' -or -not $script:GuiCurrent },
+        { Save-GuiPng '10-space-drives'; $true },
+        { if ($script:GuiCurrent) { Send-GuiAnswer (Split-Path -Parent $script:SelfPath) }; $true },
+        { $script:Ui.RunAsk.Visibility -eq 'Visible' -or -not $script:GuiCurrent },
+        { Save-GuiPng '11-space-finder'; $true },
+        { if ($script:GuiCurrent) { Send-GuiAnswer 'F' }; $true },
+        { $script:Ui.RunAsk.Visibility -eq 'Visible' -or -not $script:GuiCurrent },
+        { Save-GuiPng '12-biggest-files'; $true },
+        { if ($script:GuiCurrent) { Send-GuiAnswer '' }; $true },
+        { $script:Ui.RunAsk.Visibility -eq 'Visible' -or -not $script:GuiCurrent },
+        { if ($script:GuiCurrent) { Send-GuiAnswer 'Q' }; $true },
+        { -not $script:GuiCurrent -and $script:GuiJobs.Count -eq 0 },
+        { Start-GuiOption '17'; $true },
+        { $script:Ui.RunAsk.Visibility -eq 'Visible' -or -not $script:GuiCurrent },
+        { Save-GuiPng '13-startup'; $true },
+        { if ($script:GuiCurrent) { Send-GuiAnswer '' }; $true },
+        { -not $script:GuiCurrent -and $script:GuiJobs.Count -eq 0 },
+        { Start-GuiOption 'O'; $true },
+        { $script:Ui.RunAsk.Visibility -eq 'Visible' -or -not $script:GuiCurrent },
+        { Save-GuiPng '14-settings'; $true },
+        { if ($script:GuiCurrent) { Send-GuiAnswer '0' }; $true },
         { -not $script:GuiCurrent -and $script:GuiJobs.Count -eq 0 },
         { Show-GuiPage 'Home'; Start-GuiClean -Everything; $true },
         { Save-GuiPng '8-dialog'; Close-GuiDialog $false; $true },
@@ -8604,7 +8933,6 @@ not signed ==> non signé
 Not signed does not mean malware - many small or open-source tools are unsigned. ==> Non signé ne veut pas dire malveillant - beaucoup de petits outils et de logiciels libres ne sont pas signés.
 not supported (legacy BIOS) ==> non pris en charge (BIOS ancien)
 not working properly ==> ne fonctionne pas correctement
-Nothing is deleted here. Type a number to show that file in Explorer, then decide yourself. ==> Rien n'est supprimé ici. Tapez un numéro pour afficher le fichier dans l'Explorateur, puis décidez vous-même.
 Number to remove, Enter to cancel ==> Numéro à retirer, Entrée pour annuler
 Number to switch on/off, Enter when done ==> Numéro à activer/désactiver, Entrée pour terminer
 Number, or Enter to go back ==> Numéro, ou Entrée pour revenir
@@ -9106,6 +9434,57 @@ Nothing is ticked. ==> Rien n'est coché.
 Install the ticked updates ==> Installer les mises à jour cochées
 Install nothing ==> Ne rien installer
 older ==> ancienne
+Nothing is deleted here: you see the file in Explorer, then decide yourself. ==> Rien n'est supprimé ici : vous voyez le fichier dans l'Explorateur, puis vous décidez.
+Biggest files ==> Plus gros fichiers
+Choose a drive, or a folder. ==> Choisissez un disque ou un dossier.
+Choose a folder... ==> Choisir un dossier...
+Choose the folder to scan. ==> Choisissez le dossier à analyser.
+Choose an option above. ==> Choisissez une option ci-dessus.
+Click a file to show it in Explorer. ==> Cliquez sur un fichier pour le voir dans l'Explorateur.
+Click a folder to open it. ==> Cliquez sur un dossier pour l'ouvrir.
+Click a line to switch it on or off. ==> Cliquez sur une ligne pour l'activer ou la désactiver.
+Click a program to switch it on or off. ==> Cliquez sur un programme pour l'activer ou le désactiver.
+Click the folder to remove. ==> Cliquez sur le dossier à retirer.
+Done ==> Terminé
+Open the Windows startup settings ==> Ouvrir les paramètres de démarrage de Windows
+Show in Explorer ==> Voir dans l'Explorateur
+Type an answer instead ==> Taper une réponse
+Leftover files of apps and of Windows. ==> Fichiers laissés par les applis et par Windows.
+Copies of web pages, rebuilt as you browse. Logins stay. ==> Copies de pages web, refaites en naviguant. Les connexions restent.
+Error reports, crash dumps and old logs. ==> Rapports d'erreurs, vidages après plantage et anciens journaux.
+Update files Windows no longer needs. ==> Fichiers de mises à jour dont Windows n'a plus besoin.
+Empty it for good. ==> La vider pour de bon.
+Graphics caches, rebuilt by games and apps. ==> Caches graphiques, refaits par les jeux et les applis.
+Caches of npm, pip, VS Code, Discord, Spotify... ==> Caches de npm, pip, VS Code, Discord, Spotify...
+Windows Disk Cleanup. Frees a lot, takes a while. ==> Le nettoyage de disque de Windows. Libère beaucoup, prend du temps.
+Removes Windows.old after a big Windows update. ==> Supprime Windows.old après une grosse mise à jour de Windows.
+Makes the hibernation file smaller, or removes it. ==> Réduit le fichier de mise en veille prolongée, ou le supprime.
+Speed, DNS and Wi-Fi signal. ==> Vitesse, DNS et signal Wi-Fi.
+Pick a faster or safer DNS. ==> Choisir un DNS plus rapide ou plus sûr.
+Helps when a site will not load after a change. ==> Aide quand un site ne charge plus après un changement.
+Last resort when the internet does not work. ==> En dernier recours, quand internet ne marche pas.
+TRIM for SSDs, defrag for hard drives. ==> TRIM pour les SSD, défragmentation pour les disques durs.
+Balanced, high performance or power saver. ==> Équilibré, performances élevées ou économie d'énergie.
+Choose what starts with Windows. ==> Choisir ce qui démarre avec Windows.
+See what slows down startup. ==> Voir ce qui ralentit le démarrage.
+Everything about this PC in one report. ==> Tout sur ce PC dans un seul rapport.
+Recent crashes and what caused them. ==> Les plantages récents et leur cause.
+Antivirus, firewall and a Defender scan. ==> Antivirus, pare-feu et analyse Defender.
+Tasks and services that start by themselves. ==> Tâches et services qui démarrent tout seuls.
+Devices with a missing or broken driver. ==> Appareils dont le pilote manque ou ne marche pas.
+Looks for errors on your drives. ==> Cherche des erreurs sur vos disques.
+Checks the memory (RAM) at the next restart. ==> Vérifie la mémoire (RAM) au prochain redémarrage.
+Fixes damaged Windows files (DISM and SFC). ==> Répare les fichiers Windows abîmés (DISM et SFC).
+See which folders fill your disk. ==> Voir quels dossiers remplissent votre disque.
+Apps and drivers, from one list. ==> Applis et pilotes, depuis une seule liste.
+Everything at once, with a restore point first. ==> Tout d'un coup, avec un point de restauration avant.
+Create one, or see the ones you have. ==> En créer un, ou voir ceux que vous avez.
+Cleans by itself once a week. ==> Nettoie tout seul une fois par semaine.
+What each cleanup freed. ==> Ce que chaque nettoyage a libéré.
+Checks that every part of YSO works on this PC. ==> Vérifie que chaque partie de YSO marche sur ce PC.
+Makes a report to send to the developer. ==> Prépare un rapport à envoyer au développeur.
+Language, age limits, folders to never touch. ==> Langue, limites d'âge, dossiers à ne jamais toucher.
+Opens the folder of YSO's logs. ==> Ouvre le dossier des journaux de YSO.
 Only apps in the winget catalog are checked. The others update from the app itself or from their website. ==> Seules les applis du catalogue winget sont vérifiées. Les autres se mettent à jour depuis l'appli elle-même ou depuis leur site.
 Copied. ==> Copié.
 Copy the text ==> Copier le texte

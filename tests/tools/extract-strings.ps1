@@ -1,7 +1,7 @@
 param([string]$Path, [string]$OutFile)
 $tokens = $null; $errs = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$tokens, [ref]$errs)
-$firstArg  = @('L','N','Write-Step','Write-Ok','Write-Warn','Write-Bad','Write-Info','Write-Section','Write-Kv','Read-Choice','Confirm-Action','Confirm-Box','Write-PingResult')
+$firstArg  = @('L','N','Write-Step','Write-Ok','Write-Warn','Write-Bad','Write-Info','Write-Section','Write-Kv','Read-Choice','Confirm-Action','Confirm-Box','Write-PingResult','Write-KeyHint')
 $secondArg = @('Write-Option','M','Add-Check','Test-Check')
 $keys = [System.Collections.Generic.List[string]]::new()
 $dynamic = [System.Collections.Generic.List[string]]::new()
@@ -23,6 +23,16 @@ foreach ($c in $ast.FindAll({ $args[0] -is [System.Management.Automation.Languag
     if ($firstArg -contains $name -and $pos.Count -ge 1) { $targets += $pos[0] }
     if ($secondArg -contains $name -and $pos.Count -ge 2) { $targets += $pos[1] }
     if (@('Invoke-Purge','Add-Result') -contains $name -and $named['Category']) { $targets += $named['Category'] }
+    if ($name -eq 'Read-Choice') {
+        # -Hint 'Click a folder to open it.' and the labels of -Buttons @(@('B', 'Back'), ...)
+        if ($named['Hint']) { $targets += $named['Hint'] }
+        if ($named['Buttons']) {
+            foreach ($arr in $named['Buttons'].FindAll({ $args[0] -is [System.Management.Automation.Language.ArrayLiteralAst] }, $true)) {
+                $els2 = @($arr.Elements)
+                if ($els2.Count -eq 2 -and $els2[0] -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $targets += $els2[1] }
+            }
+        }
+    }
     foreach ($t in $targets) {
         if ($t -is [System.Management.Automation.Language.StringConstantExpressionAst]) { if ($t.Value -and $t.Value -ne '#') { $keys.Add($t.Value) } }
         elseif ($t -is [System.Management.Automation.Language.ExpandableStringExpressionAst]) { $dynamic.Add("line $($t.Extent.StartLineNumber): $name $($t.Extent.Text)") }

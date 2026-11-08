@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1 - 2026-11-08
+The window reads like an app, not like a terminal.
+
+- **Every tool page was redrawn.** Titles are normal titles instead of capitals. Tables are real columns instead of a typewriter font, with bars instead of `[#####-----]` and On / Off labels. A line you can choose (a folder, a file, a startup program) is a row you click. Keys to type ("[B] back   [Q] done") are buttons. Typing an answer is still possible ("Type an answer instead") but never needed.
+- **All tools**: each tool has an icon and one sentence that says what it does, instead of a number.
+- **Space finder**: pick a drive with one click, or a folder with "Choose a folder...".
+- **Clean**: old files in the temp folders of Windows services (crash dumps of several GB were found there), and the installers Ollama downloads for its own updates.
+
 ## 1.0 - 2026-10-25
 First public version.
 
@@ -27,3 +35,4 @@ Fixes after the first tests on real PCs (same version, corrected build):
 - Update names no longer repeat their version ("Ollama version 0.40.10" is now "Ollama"), long names no longer push the versions out of their column, and "< 3.15.2" (winget could not read the installed version) now reads "older".
 - The list says that only apps in the winget catalog are checked: the others update from the app itself.
 - Installed copies of 1.0 offer these fixes with their Update button.
+- Window: a message it cannot show is saved in errors.log and skipped, so the question after it still arrives.

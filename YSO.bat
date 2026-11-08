@@ -1,6 +1,6 @@
 @echo off
 :: =================================================================
-::  YSO - Your System Optimizer 1.0 - launcher
+::  YSO - Your System Optimizer 1.1 - launcher
 ::  Double-click this file to open YSO without installing it
 ::  (YSO.ps1 must be in the same folder). YSO asks for administrator
 ::  rights. To install it instead, see install.ps1.
