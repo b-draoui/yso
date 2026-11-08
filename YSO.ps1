@@ -7325,7 +7325,9 @@ function Add-GuiDocMessage($m) {
         'section' {
             [void]$script:GuiDocText.AppendLine('').AppendLine([string]$m[1])
             $first = ($script:Ui.RunDoc.Children.Count -eq 0)
-            Add-GuiBlock (New-GuiText (ConvertTo-GuiTitle (Remove-GuiMenuRefs ([string]$m[1]))) 15 'Text' 'SemiBold' -Wrap -Margin $(if ($first) { '0,4,0,8' } else { '0,20,0,8' }))
+            $title = ConvertTo-GuiTitle (Remove-GuiMenuRefs ([string]$m[1]))
+            if ($first -and $title -eq ([string]$script:Ui.RunTitle.Text).Trim()) { return }   # the page title already says it
+            Add-GuiBlock (New-GuiText $title 15 'Text' 'SemiBold' -Wrap -Margin $(if ($first) { '0,4,0,8' } else { '0,20,0,8' }))
         }
         'kv' {
             [void]$script:GuiDocText.AppendLine(('{0}: {1}' -f ([string]$m[1]).TrimEnd(':', ' '), $m[2]))

@@ -45,7 +45,7 @@ Every tool shows what it does while it works, asks its questions with buttons, a
 
 ![The page of a tool after Analyze: what each step found, then a table of categories, files and sizes](docs/screenshots/details.png)
 
-![All tools: the 28 tools in groups (clean, network, optimize, diagnose and repair, space and updates)](docs/screenshots/tools.png)
+![All tools: the tools in groups (clean, network, optimize, diagnose and repair, space and updates), each with an icon and one sentence that says what it does](docs/screenshots/tools.png)
 
 ## Safety
 
