@@ -38,7 +38,11 @@ To uninstall: Settings > Apps > Installed apps > YSO > Uninstall. YSO asks wheth
 | **Health report** | Disk wear, battery capacity, Windows Update status, crashes, security, drivers. |
 | **Restore points** | See them, create one, keep only the newest. |
 | **Virtual disks** | Gives back the space that VirtualBox machines, WSL and Docker Desktop no longer use (their disk files never shrink by themselves). Refuses a machine that is running, saved or has snapshots, and asks before anything. |
-| **All tools** | 29 tools, including network check, DNS, boot time, disk check, memory test, Windows repair (DISM and SFC), space finder, weekly auto-clean, self-test. |
+| **Privacy & ads** | Tick boxes to switch off ads and suggestions in Windows and Edge, lock screen tips, Bing in the Start menu search, ad tracking, diagnostic data, Copilot, Recall, and the AI buttons of Edge, Notepad and Paint. |
+| **Uninstall apps** | Each app with its size and when it was last used. Runs the app's own uninstaller, then shows what it left behind (folders, registry keys) and removes what you tick, to the Recycle Bin. Never another app's folders. |
+| **Undo YSO changes** | Every setting YSO changes is written down first, with what it was before. Pick one and it is back as it was. |
+| **Icon next to the clock** | Optional (Settings). Tells you when the disk is almost full, a drive or the battery wears out, at most once a week for each. |
+| **All tools** | 32 tools, including network check, DNS, boot time, disk check, memory test, Windows repair (DISM and SFC), space finder, weekly auto-clean, self-test. |
 
 ![The Clean page after Analyze: each part with the space it frees and a tick box, and the total for what is ticked at the bottom](docs/screenshots/clean.png)
 
@@ -46,7 +50,7 @@ Every tool shows what it does while it works, asks its questions with buttons, a
 
 ![The page of a tool after Analyze: what each step found, then a table of categories, files and sizes](docs/screenshots/details.png)
 
-![All tools: the tools in groups (clean, network, optimize, diagnose and repair, space and updates), each with an icon and one sentence that says what it does](docs/screenshots/tools.png)
+![All tools: the tools in groups (clean, network, optimize, apps and privacy, diagnose and repair, space and updates), each with an icon and one sentence that says what it does](docs/screenshots/tools.png)
 
 **[Every screen of YSO, in English and French](docs/SCREENSHOTS.md)**
 
@@ -57,6 +61,7 @@ Every tool shows what it does while it works, asks its questions with buttons, a
 - **Asked separately** for anything that cannot be undone: Recycle Bin, old driver versions, Windows.old, old restore points, network reset.
 - **A restore point** before the full maintenance and before drivers are updated.
 - Files in use are skipped, recent temporary files are kept, folder links are never followed, system folders are refused, and you can list folders YSO must never touch.
+- **Every setting YSO changes can be put back** (Undo YSO changes): startup programs, power plan, hibernation, DNS, privacy settings, app leftovers.
 - Every session is written to `C:\ProgramData\YSO\Logs`.
 - Not included on purpose: registry cleaners, "RAM boosters", turning off services in bulk, removing Windows components.
 
@@ -102,7 +107,7 @@ Depuis l'Invite de commandes (cmd) : `powershell -NoProfile -ExecutionPolicy Byp
 
 Windows demande les droits administrateur, puis YSO s'ouvre. Il est ensuite dans le menu Démarrer et sur le Bureau. Passez en français dans **Paramètres > Language / Langue**. Pour le désinstaller : Paramètres > Applications > Applications installées > YSO.
 
-**Ce qu'il fait** : l'état du PC en vert, orange ou rouge ; **Analyse** (ne supprime rien) ; **Nettoyer**, partie par partie, avec la place libérée par chacune ; mises à jour des applis et des pilotes ; programmes au démarrage ; rapport de santé ; points de restauration ; compactage des disques de machines virtuelles (VirtualBox, WSL, Docker) ; 29 outils en tout. [Toutes les captures d'écran](docs/SCREENSHOTS.md#français).
+**Ce qu'il fait** : l'état du PC en vert, orange ou rouge ; **Analyse** (ne supprime rien) ; **Nettoyer**, partie par partie, avec la place libérée par chacune ; mises à jour des applis et des pilotes ; programmes au démarrage ; rapport de santé ; points de restauration ; compactage des disques de machines virtuelles (VirtualBox, WSL, Docker) ; vie privée et publicités (Windows, Edge, Copilot) ; désinstallation des applications avec leurs restes ; annulation de toute modification faite par YSO ; une icône facultative à côté de l'horloge qui prévient quand le disque est presque plein ; 32 outils en tout. [Toutes les captures d'écran](docs/SCREENSHOTS.md#français).
 
 **Sécurité** : mots de passe, cookies, historique, favoris, données de sites, Téléchargements et Documents ne sont jamais touchés. Ce qui est irréversible (Corbeille, anciens pilotes, Windows.old) est demandé à part, et un point de restauration est créé avant l'entretien complet.
 

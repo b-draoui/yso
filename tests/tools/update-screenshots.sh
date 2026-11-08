@@ -24,6 +24,10 @@ for lang in en fr; do
 13-startup startup
 14-settings settings
 15-virtual-disks virtual-disks
+16-privacy privacy
+17-uninstall uninstall
+18-leftovers leftovers
+19-undo undo
 MAP
 done
 git log -1 --format='pictures from %s' origin/ci-pictures

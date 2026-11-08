@@ -8606,7 +8606,9 @@ function Add-GuiDocMessage($m) {
             [void]$script:GuiDocText.AppendLine('').AppendLine([string]$m[1])
             $first = ($script:Ui.RunDoc.Children.Count -eq 0)
             $title = ConvertTo-GuiTitle (Remove-GuiMenuRefs ([string]$m[1]))
-            if ($first -and $title -eq ([string]$script:Ui.RunTitle.Text).Trim()) { return }   # the page title already says it
+            $page = ([string]$script:Ui.RunTitle.Text).Trim()
+            # the page title already says it ("Virtual disks" under "Virtual disks (compact VMs, WSL, Docker)")
+            if ($first -and ($title -eq $page -or $title -eq ($page -replace '\s*\([^)]*\)$', ''))) { return }
             Add-GuiBlock (New-GuiText $title 15 'Text' 'SemiBold' -Wrap -Margin $(if ($first) { '0,4,0,8' } else { '0,20,0,8' }))
         }
         'kv' {
@@ -8675,7 +8677,8 @@ function Add-GuiDocMessage($m) {
                 $t.VerticalAlignment = 'Center'
                 $note = $(if ($m.Count -gt 3) { [string]$m[3] } else { '' })
                 if ($note) {
-                    # a second line under the choice
+                    # a second line under the choice; such choices all take the full width, so they line up
+                    $b.HorizontalAlignment = 'Stretch'
                     [void]$script:GuiDocText.AppendLine('        ' + $note)
                     $sp = New-Object System.Windows.Controls.StackPanel
                     $sp.VerticalAlignment = 'Center'
@@ -9365,6 +9368,7 @@ function Initialize-GuiSnapshot([string]$Dir) {
         { -not $script:GuiCurrent -and $script:GuiJobs.Count -eq 0 },
         { Start-GuiOption '30'; $true },
         { $script:Ui.RunAsk.Visibility -eq 'Visible' -or -not $script:GuiCurrent },
+        { $script:Ui.RunScroll.ScrollToTop(); $true },
         { Save-GuiPng '16-privacy'; $true },
         { if ($script:GuiCurrent) { Send-GuiAnswer '' }; $true },
         { -not $script:GuiCurrent -and $script:GuiJobs.Count -eq 0 },
@@ -11321,7 +11325,7 @@ Press Enter to continue ==> Appuyez sur Entrée pour continuer
 Press Enter to go back to the list ==> Appuyez sur Entrée pour revenir à la liste
 Press Enter when the uninstaller has finished ==> Appuyez sur Entrée quand la désinstallation est terminée
 Privacy & ads ==> Vie privée et publicités
-PRIVACY & ADS ==> VIE PRIVÉE ET PUBLICITÉS
+PRIVACY & ADS ==> VIE PRIVÉE, PUBLICITÉS
 Privacy & ads (30) ==> Vie privée et publicités (30)
 Privacy & ads (Windows, Edge, Copilot) ==> Vie privée, publicités (Windows, Edge, Copilot)
 Publisher ==> Éditeur

@@ -1,7 +1,7 @@
 # Changelog
 
 ## 1.1 - 2026-11-08
-The window reads like an app, not like a terminal, and a new tool gives back the space taken by virtual machines.
+The window reads like an app, not like a terminal. Four new tools: virtual disks, privacy and ads, uninstalling apps with their leftovers, and undoing any change YSO made. An optional icon next to the clock warns you before problems, and YSO is ready for the Microsoft Store.
 
 ![All tools in YSO 1.1: every tool with an icon and one sentence that says what it does](https://raw.githubusercontent.com/b-draoui/yso/main/docs/screenshots/tools.png)
 
@@ -15,6 +15,42 @@ The window reads like an app, not like a terminal, and a new tool gives back the
 - The space freed is shown, kept in the cleanup history and counted like any cleanup. Analyze-only mode lists the disks and changes nothing.
 
 ![The Virtual disks page: each disk with its size and whether it can be compacted now, then the choices](https://raw.githubusercontent.com/b-draoui/yso/main/docs/screenshots/virtual-disks.png)
+
+### New tool: Undo YSO changes (32)
+- **Every setting YSO changes is written down first**, with what it was before: startup programs switched on or off, power plan, hibernation file, DNS servers, privacy settings, app leftovers removed.
+- Undo YSO changes lists them, newest first, in plain words ("Spotify no longer starts with Windows"). Click one to see what it changed, then put it back exactly as it was. A value YSO created goes again, with the empty key it made for it.
+- An undone change is marked as such and is not undone twice. The last 300 changes are kept, in `C:\ProgramData\YSO\changes.json`.
+
+![Undo YSO changes: each change with its date, the tool that made it and what changed, the undone ones marked](https://raw.githubusercontent.com/b-draoui/yso/main/docs/screenshots/undo.png)
+
+### New tool: Privacy & ads (30)
+- Switch off, with tick boxes: **ads and suggestions** in Windows (Start menu, Settings, File Explorer, notifications), **tips on the lock screen**, **web results (Bing)** in the Start menu search, **ad tracking**, **diagnostic data and activity history**, **Copilot**, **Recall and Click to Do** (Copilot+ PCs, Windows 11 24H2 and later), **AI in Edge, Notepad and Paint**, and **ads and suggestions in Edge**.
+- A sentence under each one says what changes. "Tick the recommended ones" ticks the four that nobody misses (ads, lock screen tips, Bing, ad tracking).
+- Before applying, YSO lists what it will switch off or back on, and says when Windows or Edge will show "managed by your organization" (that is how these settings work). Unticking puts back the Windows default.
+- The same settings as Win11Debloat, checked one by one. Nothing about Defender, Windows Update or the Store. Every change is written down: Undo YSO changes puts it back.
+
+![Privacy & ads: each feature with a tick box and a sentence that says what changes, then Apply, Tick the recommended ones and Cancel](https://raw.githubusercontent.com/b-draoui/yso/main/docs/screenshots/privacy.png)
+
+### New tool: Uninstall apps (31)
+- Every desktop app with its publisher, size and **when it was last used** (from Windows' own Prefetch files). Sort by name, biggest first or least used first, or type part of a name to find it.
+- YSO starts **the app's own uninstaller** (Windows Installer apps with `msiexec /x`, never a forced removal), and waits for it, also when it hands over to a copy of itself.
+- Then it looks for **what the app left behind**: its folders in AppData, ProgramData and Program Files (also inside the publisher's folder, like `AppData\Mozilla\Firefox`), and its registry keys.
+- It never offers the folder of another installed app, a name another app also uses (two versions of Python: nothing is offered), a top folder, a system or profile folder. Folders of 1 GB or more start unticked, and a warning says a folder can hold your own data (game saves, a mail profile).
+- What you tick goes to the **Recycle Bin**; registry keys are **saved to a .reg file** first. Undo YSO changes puts both back.
+- Runtimes and drivers (Visual C++, .NET, WebView2...) get a warning: other apps need them, and the question answers No by default.
+
+![Uninstall apps: each app with its publisher, size and when it was last used, and buttons to sort](https://raw.githubusercontent.com/b-draoui/yso/main/docs/screenshots/uninstall.png)
+
+![What an app left behind: its folders with their size and its registry key, ticked, with Remove the ticked ones and Keep everything](https://raw.githubusercontent.com/b-draoui/yso/main/docs/screenshots/leftovers.png)
+
+### Icon next to the clock (Settings, option 9)
+- Off unless you switch it on. It starts with Windows and checks every 6 hours: **disk almost full** (less than 10 GB or 10 % free), **a drive that fails or wears out**, **a worn battery**. It also says what the weekly cleanup freed.
+- It tells you only when something needs you, **at most once a week** for each thing, in one notification. Click it to open YSO.
+- Right-click: Open YSO, Check my PC now, Remove this icon. Uninstalling YSO removes it too.
+
+### Ready for the Microsoft Store
+- The package is built and tested on every change: a small launcher (`YSO.exe`), the manifest, the icons drawn from the YSO mark, `YSO.msix`, then a test install on Windows. See [docs/STORE.md](https://github.com/b-draoui/yso/blob/main/docs/STORE.md) for the steps that need a Partner Center account.
+- Installed from the Store, YSO lets the Store update it: no update offer of its own, no install of its own.
 
 ### Every tool page redrawn
 - Titles are normal titles instead of capitals ("Biggest files", not "BIGGEST FILES").

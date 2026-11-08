@@ -1,6 +1,6 @@
 # YSO 1.1 screenshots
 
-Every screen of YSO, in English and [in French](#français). The pictures are drawn by the automated tests on Windows Server 2025 each time the code changes, so they always show the current version. Lists that need real apps or machines (the update list, the virtual disks) are filled with sample data, and the space finder scans a small folder.
+Every screen of YSO, in English and [in French](#français). The pictures are drawn by the automated tests on Windows Server 2025 each time the code changes, so they always show the current version. Lists that need real apps, machines or past changes (the update list, the virtual disks, the apps to uninstall, the list of changes) are filled with sample data, and the space finder scans a small folder.
 
 [Back to the README](../README.md)
 
@@ -39,6 +39,23 @@ Gives back the space that VirtualBox machines, WSL and Docker Desktop no longer 
 
 ![The virtual disks page: each disk with its kind, its size and whether it can be compacted now, what to do inside a VirtualBox machine first, and the choices](screenshots/virtual-disks.png)
 
+## Privacy & ads
+Tick what you do not want, then Apply. A sentence under each line says what changes.
+
+![Privacy & ads: each feature with a tick box and a sentence that says what changes, then Apply, Tick the recommended ones and Cancel](screenshots/privacy.png)
+
+## Uninstall apps
+Each app with its size and when it was last used. YSO runs the app's own uninstaller, then shows what it left behind.
+
+![Uninstall apps: each app with its publisher, size and when it was last used, and buttons to sort the list](screenshots/uninstall.png)
+
+![What an app left behind: its folders with their size and its registry key, ticked, with Remove the ticked ones and Keep everything](screenshots/leftovers.png)
+
+## Undo YSO changes
+Every setting YSO changes is written down first. Click one to put it back as it was.
+
+![Undo YSO changes: each change with its date, the tool that made it and what changed; an undone one is marked](screenshots/undo.png)
+
 ## Startup programs
 Click a program to switch it on or off.
 
@@ -65,7 +82,7 @@ Every tool with an icon and one sentence that says what it does.
 
 ## Français
 
-Tous les écrans de YSO en français. Les images sont faites par les tests automatiques sur Windows Server 2025 à chaque changement du code. Les listes qui demandent de vraies applis ou de vraies machines (mises à jour, disques virtuels) contiennent des exemples.
+Tous les écrans de YSO en français. Les images sont faites par les tests automatiques sur Windows Server 2025 à chaque changement du code. Les listes qui demandent de vraies applis, de vraies machines ou des modifications passées (mises à jour, disques virtuels, applications à désinstaller, liste des modifications) contiennent des exemples.
 
 **Accueil** : l'état du PC, et pour chaque carte le bouton qui aide.
 
@@ -94,6 +111,20 @@ Tous les écrans de YSO en français. Les images sont faites par les tests autom
 **Disques virtuels** : récupère l'espace que les machines VirtualBox, WSL et Docker Desktop n'utilisent plus.
 
 ![La page des disques virtuels : chaque disque, sa taille et s'il peut être compacté maintenant](screenshots/fr/virtual-disks.png)
+
+**Vie privée et publicités** : cocher ce que vous ne voulez pas, puis Appliquer. Une phrase sous chaque ligne dit ce qui change.
+
+![Vie privée et publicités : chaque fonction avec une case à cocher et une phrase](screenshots/fr/privacy.png)
+
+**Désinstaller des applications** : chaque application avec sa taille et sa dernière utilisation, puis ce qu'elle a laissé.
+
+![Désinstaller des applications : la liste avec éditeur, taille et dernière utilisation](screenshots/fr/uninstall.png)
+
+![Ce qu'une application a laissé : ses dossiers et sa clé du registre, cochés](screenshots/fr/leftovers.png)
+
+**Annuler les modifications de YSO** : chaque réglage modifié par YSO est noté ; un clic le remet comme avant.
+
+![Annuler les modifications de YSO : chaque modification avec sa date, l'outil et ce qui a changé](screenshots/fr/undo.png)
 
 **Programmes au démarrage** : cliquer sur un programme pour l'activer ou le désactiver.
 

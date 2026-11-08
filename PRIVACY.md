@@ -19,6 +19,8 @@ In `C:\ProgramData\YSO`, readable by the users of the PC and changeable by admin
 | `Logs\` | What YSO showed during each session, which can include file paths and your Windows user name | The 30 newest sessions |
 | `errors.log`, `Reports\` | Details of errors and self-test results, to fix problems | `errors.log` is renamed once it reaches 1 MB |
 | `yso-version-check.json` | The last answer of GitHub about new versions of YSO | Replaced at each check |
+| `changes.json`, `Backups\` | Each setting YSO changed and what it was before, for Undo YSO changes (32); registry keys of uninstalled apps, saved before they were removed | The 300 newest changes |
+| `tray-alerts.json` | When the icon next to the clock last showed each alert (only if you switched it on) | Replaced at each alert |
 
 ## Network connections made by YSO
 
@@ -56,7 +58,7 @@ Open an [issue on GitHub](https://github.com/b-draoui/yso/issues). For security 
 YSO est un programme gratuit et open source qui fonctionne uniquement sur votre PC. Il est maintenu par [b-draoui](https://github.com/b-draoui) à titre personnel, pas par une entreprise.
 
 - **Ce que nous recevons** : rien. Pas de compte, pas de télémétrie, pas de statistiques, pas de publicité, pas de cookies.
-- **Ce que YSO garde sur votre PC**, dans `C:\ProgramData\YSO` (lisible par les utilisateurs du PC, modifiable seulement par les administrateurs) : les réglages, l'historique des nettoyages et des mises à jour, les journaux des 30 dernières sessions (qui peuvent contenir des chemins de fichiers et votre nom d'utilisateur Windows), les erreurs et les résultats de l'autotest.
+- **Ce que YSO garde sur votre PC**, dans `C:\ProgramData\YSO` (lisible par les utilisateurs du PC, modifiable seulement par les administrateurs) : les réglages, l'historique des nettoyages et des mises à jour, la liste des réglages modifiés par YSO avec leur valeur d'avant (pour pouvoir les annuler), les journaux des 30 dernières sessions (qui peuvent contenir des chemins de fichiers et votre nom d'utilisateur Windows), les erreurs et les résultats de l'autotest.
 - **Connexions réseau** : vérification des nouvelles versions de YSO sur GitHub à l'ouverture de la fenêtre, au plus une fois par heure (désactivable dans les Paramètres) ; téléchargement de la mise à jour quand vous cliquez sur **Mettre à jour** ; winget et Windows Update pour l'option 28 ; test réseau (option 11) vers votre box, 1.1.1.1 et 8.8.8.8 ; installation depuis GitHub. Chaque service contacté voit votre adresse IP, comme n'importe quel site web.
 - **Signaler un problème (P)** crée un zip sur votre Bureau, sans noms d'utilisateur, nom du PC, adresses IP privées ni nom du Wi-Fi. Rien n'est envoyé automatiquement.
 - **Supprimer vos données** : désinstallez YSO et répondez **Non** quand il propose de garder l'historique et les réglages, ou supprimez le dossier `C:\ProgramData\YSO`. Nous n'en avons aucune copie.
