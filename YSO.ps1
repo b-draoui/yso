@@ -2102,10 +2102,10 @@ function Show-StartupApps {
             $i++
             Write-Host ('  {0,3}  ' -f $i) -NoNewline -ForegroundColor Green
             if ($e.Enabled) { Write-Host ('{0,-10}' -f (L 'ON')) -NoNewline -ForegroundColor Green } else { Write-Host ('{0,-10}' -f (L 'OFF')) -NoNewline -ForegroundColor DarkGray }
-            Write-Host (' ' + (Get-Truncated $e.Name 30).PadRight(31)) -NoNewline
+            Write-Host (' ' + (Get-Truncated $e.Name 30).PadRight(32)) -NoNewline
             $pub = if ($e.Publisher) { $e.Publisher } else { L '(not signed)' }
-            Write-Host ((Get-Truncated $pub 28).PadRight(29)) -NoNewline -ForegroundColor $(if ($e.Publisher) { 'Gray' } else { 'Yellow' })
-            Write-Host ((L $e.Scope).PadRight(10)) -NoNewline -ForegroundColor DarkGray
+            Write-Host ((Get-Truncated $pub 28).PadRight(30)) -NoNewline -ForegroundColor $(if ($e.Publisher) { 'Gray' } else { 'Yellow' })
+            Write-Host ((L $e.Scope).PadRight(14)) -NoNewline -ForegroundColor DarkGray
             $leaf = if ($e.Exe) { @("$($e.Exe)" -split '[\\/]')[-1].ToLowerInvariant() } else { '' }
             if ($leaf -and $slow.ContainsKey($leaf)) { Write-Host (L '+{0:N1} s at boot' $slow[$leaf]) -ForegroundColor Yellow } else { Write-Host '' }
         }
@@ -2113,7 +2113,7 @@ function Show-StartupApps {
         Write-Host ''
         Write-Info (L '{0} start with Windows, {1} switched off.' $on ($entries.Count - $on))
         Write-Info 'Switching one off only stops it starting by itself: it stays installed, and you can switch it back on here, in Task Manager or in Settings.'
-        Write-Info 'Apps from the Microsoft Store manage their own startup: S opens Windows Settings.'
+        Write-Info 'Apps from the Microsoft Store manage their own startup, in Windows Settings.'
         $c = Read-Choice 'Number = switch on/off, S = Windows Settings, Enter = back' -Buttons @(@('S', 'Open the Windows startup settings'), @('', 'Back')) -Hint 'Click a program to switch it on or off.'
         if (-not $c) { return }
         if ($c -eq 'S') {
@@ -7156,17 +7156,33 @@ function Get-GuiTableCells([object[]]$Runs, [string]$Plain) {
     $num = 0
     if ($body -match '^\s{1,}(\d{1,3})\s{2,}(\S.*)$') { $num = [int]$Matches[1]; $rest = $Matches[2] } else { $rest = $body.TrimStart() }
     $restStart = $body.Length - $rest.Length
+    # where each piece the console wrote starts: a new piece after a space is a new column, even
+    # when a long name left only one space before it
+    $starts = New-Object System.Collections.Generic.List[int]
+    $pos = 0
+    foreach ($r in $Runs) { $pos += ([string]$r[0]).Length; $starts.Add($pos) }
     $cells = New-Object System.Collections.Generic.List[object]
     foreach ($c in [regex]::Matches($rest, '\S+(?: \S+)*')) {
-        $text = $c.Value
-        $color = Get-GuiRunColor $Runs ($restStart + $c.Index)
-        if ($text -match '^\[([#\-=\.]{4,})\]\s*(.*)$') {
-            $bar = $Matches[1]; $after = $Matches[2]
-            $filled = @($bar.ToCharArray() | Where-Object { $_ -eq '#' -or $_ -eq '=' }).Count
-            $share = [double]$filled / $bar.Length   # (on its own line: a comma in the same list would bind first)
-            $cells.Add(@('bar', $share, $color))
-            if ($after) { $cells.Add(@('text', $after, $color)) }
-        } else { $cells.Add(@('text', $text, $color)) }
+        $abs = $restStart + $c.Index
+        $cuts = New-Object System.Collections.Generic.List[int]
+        $cuts.Add(0)
+        foreach ($b in $starts) {
+            $rel = $b - $abs
+            if ($rel -gt 0 -and $rel -lt $c.Length -and $body[$b - 1] -eq ' ') { $cuts.Add($rel) }
+        }
+        $cuts.Add($c.Length)
+        for ($k = 0; $k -lt $cuts.Count - 1; $k++) {
+            $text = $c.Value.Substring($cuts[$k], $cuts[$k + 1] - $cuts[$k]).Trim()
+            if (-not $text) { continue }
+            $color = Get-GuiRunColor $Runs ($abs + $cuts[$k])
+            if ($text -match '^\[([#\-=\.]{4,})\]\s*(.*)$') {
+                $bar = $Matches[1]; $after = $Matches[2]
+                $filled = @($bar.ToCharArray() | Where-Object { $_ -eq '#' -or $_ -eq '=' }).Count
+                $share = [double]$filled / $bar.Length   # (on its own line: a comma in the same list would bind first)
+                $cells.Add(@('bar', $share, $color))
+                if ($after) { $cells.Add(@('text', $after, $color)) }
+            } else { $cells.Add(@('text', $text, $color)) }
+        }
     }
     return @{ Number = $num; Rest = $rest; Cells = $cells }
 }
@@ -7195,6 +7211,7 @@ function Add-GuiTableRow([object[]]$Runs, [string]$Plain) {
     $onWord = L 'ON'; $offWord = L 'OFF'
     for ($k = 0; $k -lt $cells.Count; $k++) {
         $c = $cells[$k]
+        $numeric = $false
         $last = ($k -eq $cells.Count - 1)
         if ($c[0] -eq 'bar') { $el = New-GuiBar $c[1] }
         elseif ($c[1] -ceq $onWord -or $c[1] -ceq $offWord) { $el = New-GuiPill $c[1] ($c[1] -ceq $onWord) }
@@ -7202,12 +7219,14 @@ function Add-GuiTableRow([object[]]$Runs, [string]$Plain) {
             $brush = $(if ($header) { 'Text3' } elseif ($c[2] -and $c[2] -ne 'Gray' -and $c[2] -ne 'White') { $c[2] } elseif ($c[2] -eq 'Gray') { 'Text2' } else { 'Text' })
             $el = New-GuiText ([string]$c[1]) $(if ($header) { 12 } else { 13 }) $brush
             $el.TextTrimming = 'CharacterEllipsis'
-            if ($c[1] -match '^[<>+\-]?\s*\d[\d\s.,:]*\s*(%|[KMGT]?B|[KMGT]?o|s|ms|h)?$') { $el.TextAlignment = 'Right'; $el.HorizontalAlignment = 'Stretch' }
+            $numeric = ($c[1] -match '^[<>+\-]?\s*\d[\d\s.,:]*\s*(%|[KMGT]?B|[KMGT]?o|s|ms|h)?$')
+            if ($numeric) { $el.TextAlignment = 'Right'; $el.HorizontalAlignment = 'Stretch' }
             $el.VerticalAlignment = 'Center'
         }
         $el.Margin = New-GuiThickness $(if ($last) { '0' } else { '0,0,22,0' })
         [System.Windows.Controls.Grid]::SetColumn($el, $k)
-        if ($last) { [System.Windows.Controls.Grid]::SetColumnSpan($el, 2) }
+        # the last text may use the rest of the width; a number stays in its column, under its title
+        if ($last -and -not ($c[0] -eq 'text' -and $numeric)) { [System.Windows.Controls.Grid]::SetColumnSpan($el, 2) }
         $g.Children.Add($el) | Out-Null
     }
     if ($num -gt 0) {
@@ -7547,10 +7566,9 @@ function Show-GuiAsk([string]$Kind, [string]$Prompt, $Default) {
         [void]$ui.RunAskBox.Focus()
     } elseif ($Kind -eq 'choice') {
         # the choices above answer it; typing stays possible ("Type an answer instead")
+        # (no choice gets the focus: its green border would look chosen already; Tab reaches them)
         $ui.RunAskBox.Text = ''
-        $first = $null
-        foreach ($o in $script:GuiOptions) { if ($o.IsEnabled) { $first = $o; break } }
-        if ($first) { [void]$first.Focus() } else { [void]$ui.RunAskType.Focus() }
+        [void]$script:GuiWindow.Focus()
     } elseif ($Kind -eq 'pick') {
         # the updates above become tick boxes you can use; the recommended ones are ticked
         $ui.RunAskNo.Style = $script:GuiWindow.FindResource([System.Windows.Controls.Button])
@@ -8460,7 +8478,7 @@ App updates ==> Mises à jour d'applis
 APP UPDATES (winget) ==> MISES À JOUR D'APPLIS (winget)
 apps ==> applis
 Apps (winget) ==> Applis (winget)
-Apps from the Microsoft Store manage their own startup: S opens Windows Settings. ==> Les applis du Microsoft Store gèrent leur propre démarrage : S ouvre les Paramètres Windows.
+Apps from the Microsoft Store manage their own startup, in Windows Settings. ==> Les applis du Microsoft Store gèrent leur propre démarrage, dans les Paramètres Windows.
 Apps never updated automatically ==> Applis jamais mises à jour automatiquement
 AT A GLANCE ==> EN UN COUP D'ŒIL
 AUTO ==> AUTO

@@ -260,6 +260,9 @@ Check ($p.Number -eq 1 -and $kinds -eq 'text,bar,text,text' -and $p.Cells[0][1] 
 $runs = @(@('    3  ', 'Green'), @('ON        ', 'Green'), @(' Steam                          ', ''), @('Valve Corporation            ', 'Gray'), @('user      ', 'DarkGray'))
 $p = Get-GuiTableCells $runs (-join @($runs | ForEach-Object { $_[0] }))
 Check ($p.Number -eq 3 -and $p.Cells.Count -eq 4 -and $p.Cells[0][1] -eq 'ON' -and $p.Cells[0][2] -eq 'Green' -and $p.Cells[2][2] -eq 'Gray' -and $p.Cells[3][2] -eq 'DarkGray') 'a startup line keeps On/Off, the name, the publisher and the scope, each with its colour'
+$runs = @(@('    3  ', 'Green'), @('ON        ', 'Green'), @(' Service Fabric Local Cluste... ', ''), @('Microsoft Corporation        ', 'Gray'), @('everyone  ', 'DarkGray'))
+$p = Get-GuiTableCells $runs (-join @($runs | ForEach-Object { $_[0] }))
+Check ($p.Cells.Count -eq 4 -and $p.Cells[1][1] -eq 'Service Fabric Local Cluste...' -and $p.Cells[2][1] -eq 'Microsoft Corporation') "a long name with one space before the next column stays apart from it ($(@($p.Cells | ForEach-Object { $_[1] }) -join ' | '))"
 $p = Get-GuiTableCells @(, @('Category                       Files        Size', '')) 'Category                       Files        Size'
 Check ($p.Number -eq 0 -and $p.Cells.Count -eq 3) 'a table header has no number and three columns'
 $wrapped = @([regex]::Matches($srcText, '@\(\$script:Gui(Picks|PickLinks|Options|Line)\)') | ForEach-Object { $_.Value })
