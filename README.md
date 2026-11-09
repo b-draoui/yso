@@ -52,6 +52,8 @@ Every tool shows what it does while it works, asks its questions with buttons, a
 
 ![All tools: the tools in groups (clean, network, optimize, apps and privacy, diagnose and repair, space and updates), each with an icon and one sentence that says what it does](docs/screenshots/tools.png)
 
+**[User guide: what each tool does, what it changes, and how to undo it](docs/GUIDE.md)** (the same guide is in YSO, under Help)
+
 **[Every screen of YSO, in English and French](docs/SCREENSHOTS.md)**
 
 ## Safety
@@ -107,7 +109,7 @@ Depuis l'Invite de commandes (cmd) : `powershell -NoProfile -ExecutionPolicy Byp
 
 Windows demande les droits administrateur, puis YSO s'ouvre. Il est ensuite dans le menu Démarrer et sur le Bureau. Passez en français dans **Paramètres > Language / Langue**. Pour le désinstaller : Paramètres > Applications > Applications installées > YSO.
 
-**Ce qu'il fait** : l'état du PC en vert, orange ou rouge ; **Analyse** (ne supprime rien) ; **Nettoyer**, partie par partie, avec la place libérée par chacune ; mises à jour des applis et des pilotes ; programmes au démarrage ; rapport de santé ; points de restauration ; compactage des disques de machines virtuelles (VirtualBox, WSL, Docker) ; vie privée et publicités (Windows, Edge, Copilot) ; désinstallation des applications avec leurs restes ; annulation de toute modification faite par YSO ; une icône facultative à côté de l'horloge qui prévient quand le disque est presque plein ; 32 outils en tout. [Toutes les captures d'écran](docs/SCREENSHOTS.md#français).
+**Ce qu'il fait** : l'état du PC en vert, orange ou rouge ; **Analyse** (ne supprime rien) ; **Nettoyer**, partie par partie, avec la place libérée par chacune ; mises à jour des applis et des pilotes ; programmes au démarrage ; rapport de santé ; points de restauration ; compactage des disques de machines virtuelles (VirtualBox, WSL, Docker) ; vie privée et publicités (Windows, Edge, Copilot) ; désinstallation des applications avec leurs restes ; annulation de toute modification faite par YSO ; une icône facultative à côté de l'horloge qui prévient quand le disque est presque plein ; 32 outils en tout. [Le guide complet : ce que fait chaque outil, ce qu'il change et comment l'annuler](docs/GUIDE.fr.md) (aussi dans YSO, rubrique Aide). [Toutes les captures d'écran](docs/SCREENSHOTS.md#français).
 
 **Sécurité** : mots de passe, cookies, historique, favoris, données de sites, Téléchargements et Documents ne sont jamais touchés. Ce qui est irréversible (Corbeille, anciens pilotes, Windows.old) est demandé à part, et un point de restauration est créé avant l'entretien complet.
 

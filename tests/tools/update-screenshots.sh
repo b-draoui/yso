@@ -28,6 +28,7 @@ for lang in en fr; do
 17-uninstall uninstall
 18-leftovers leftovers
 19-undo undo
+20-help help
 MAP
 done
 git log -1 --format='pictures from %s' origin/ci-pictures

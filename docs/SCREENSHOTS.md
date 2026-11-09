@@ -56,6 +56,11 @@ Every setting YSO changes is written down first. Click one to put it back as it 
 
 ![Undo YSO changes: each change with its date, the tool that made it and what changed; an undone one is marked](screenshots/undo.png)
 
+## Help
+Each tool explained: what it does, what it changes, how to undo it, and step by step when needed. The same texts as the [user guide](GUIDE.md).
+
+![Help: the tools in groups, the card of Virtual disks opened with what it does, what changes, how to undo it and the steps](screenshots/help.png)
+
 ## Startup programs
 Click a program to switch it on or off.
 
@@ -125,6 +130,10 @@ Tous les écrans de YSO en français. Les images sont faites par les tests autom
 **Annuler les modifications de YSO** : chaque réglage modifié par YSO est noté ; un clic le remet comme avant.
 
 ![Annuler les modifications de YSO : chaque modification avec sa date, l'outil et ce qui a changé](screenshots/fr/undo.png)
+
+**Aide** : chaque outil expliqué, ce qu'il fait, ce qu'il change et comment l'annuler. Les mêmes textes que le [guide](GUIDE.fr.md).
+
+![Aide : la carte des disques virtuels ouverte](screenshots/fr/help.png)
 
 **Programmes au démarrage** : cliquer sur un programme pour l'activer ou le désactiver.
 

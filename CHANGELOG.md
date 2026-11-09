@@ -43,6 +43,14 @@ The window reads like an app, not like a terminal. Four new tools: virtual disks
 
 ![Undo YSO changes: each change with its date, the tool that made it and what changed, the undone ones marked](https://raw.githubusercontent.com/b-draoui/yso/main/docs/screenshots/undo.png)
 
+### Help: every tool explained
+- A new **Help** page in the window: each tool has a card that opens to say what it does, what it changes, how to undo it, and step by step for the tools that need it (virtual disks, privacy, uninstalling, updates). A search box finds a tool by any word, and "Open this tool" starts it.
+- Each tool page has a **How this tool works** link that opens its card.
+- In the console menu: **G**, the same guide.
+- On GitHub: [docs/GUIDE.md](https://github.com/b-draoui/yso/blob/main/docs/GUIDE.md) and [docs/GUIDE.fr.md](https://github.com/b-draoui/yso/blob/main/docs/GUIDE.fr.md), made from the same texts, so they never differ from the app.
+
+![Help: the tools in groups, the card of Virtual disks opened with what it does, what changes, how to undo it and the steps](https://raw.githubusercontent.com/b-draoui/yso/main/docs/screenshots/help.png)
+
 ### Icon next to the clock (Settings, option 9)
 - Off unless you switch it on. It starts with Windows and checks every 6 hours: **disk almost full** (less than 10 GB or 10 % free), **a drive that fails or wears out**, **a worn battery**. It also says what the weekly cleanup freed.
 - It tells you only when something needs you, **at most once a week** for each thing, in one notification. Click it to open YSO.

@@ -231,7 +231,7 @@ $script:StopSignal    = $null    # set by the window: a shared table whose 'Stop
 $script:LastRun       = $null    # what the last option did (status, results, free space): read by the window
 $script:GuiFailure    = ''       # why the window could not open (shown before the console menu opens instead)
 # Every key of the menu that runs an option (Invoke-MenuOption); M, L and Q only change the menu itself.
-$script:MenuKeys      = @(@(1..32 | ForEach-Object { "$_" }) + @('A', 'F', 'R', 'S', 'H', 'T', 'P', 'O'))
+$script:MenuKeys      = @(@(1..32 | ForEach-Object { "$_" }) + @('A', 'F', 'R', 'S', 'H', 'T', 'P', 'O', 'G'))
 $script:HealthCache   = $null
 $script:DetectedApps  = @()
 $script:DryRun        = [bool]$DryRun
@@ -4231,6 +4231,188 @@ function Show-Uninstaller([object[]]$Sample = $null) {
 }
 
 # ==================================================================
+#  GUIDE  (G in the console, Help in the window) - what each tool does, what it changes and
+#  how to undo it. docs/GUIDE.md and docs/GUIDE.fr.md are made from the same texts:
+#  pwsh tests/tools/build-guide.ps1 (a test checks they are up to date).
+# ==================================================================
+function New-HelpTopic([string]$Key, [string]$Title, [string]$What, [string]$Changes, [string]$Undo, [string[]]$Steps = @()) {
+    # $Title '' = the tool's name in the menu. Texts in English, translated when shown.
+    return [pscustomobject]@{ Key = $Key; Title = $Title; What = $What; Changes = $Changes; Undo = $Undo; Steps = [string[]]@($Steps) }
+}
+
+function Get-HelpTopics {
+    return @(
+        (New-HelpTopic 'start' 'How YSO works' 'YSO looks after Windows: it frees space, checks the health of the PC, installs updates and fixes common problems. The home page shows the state of the PC in green, orange or red, and each card has the button that helps. Every tool says what it does while it works, asks its questions with buttons, and can be stopped.' 'YSO needs administrator rights (one Windows prompt), because it cleans system folders and changes Windows settings. It asks before it changes anything, except the cleanups you start yourself.' 'Settings YSO changes can be put back with Undo YSO changes (32). The files it deletes are temporary files and caches: Windows and your apps make them again when they need them.' @('Click Analyze: YSO measures what can be freed, and deletes nothing.', 'On the Clean page, untick what you want to keep, then click Clean selected.', 'Once a month, run Full maintenance, or switch on Weekly auto-clean.'))
+        (New-HelpTopic 'safety' 'What YSO never touches' 'YSO never deletes your passwords, cookies, browsing history, bookmarks, site data, messages, Downloads, Documents, browser extensions or game files. Files in use are skipped, recent temporary files are kept (24 hours by default), folder links are never followed, and system folders are refused.' 'What cannot be undone is always asked separately: emptying the Recycle Bin, old driver versions, Windows.old, old restore points, a network reset. Full maintenance and driver updates create a restore point first.' 'In Settings (O) you can list folders YSO must never touch. Started with -DryRun, YSO is in analyze-only mode: it shows everything and changes nothing. Each session is written to C:\ProgramData\YSO\Logs.')
+        (New-HelpTopic 'clean' 'The Clean page' 'The Clean page lists every part YSO can clean, with a sentence on what it is. Analyze shows how much each part frees. Tick what you want, then click Clean selected.' 'The ticked parts are cleaned one after the other, with a progress bar and what each one freed. The Recycle Bin and old driver versions are cleaned only if you tick them.' 'Deleted temporary files and caches do not go to the Recycle Bin: Windows and your apps make them again when they need them.')
+        (New-HelpTopic '1' '' 'Deletes the temporary files of every user of the PC and of Windows. Apps leave them behind after installs, updates and crashes.' 'Only files older than 24 hours (you can change it in Settings), and never a file that is in use.' 'Not needed: apps make new temporary files when they need them.')
+        (New-HelpTopic '2' '' 'Deletes the copies of web pages, images and scripts that Chrome, Edge, Brave, Vivaldi, Opera and Firefox keep, in every profile. Pages load from the internet again the first time.' 'Passwords, cookies, history, bookmarks, open tabs and extensions are not touched. If a browser is open, YSO offers to close it for a complete clean; its tabs come back when you open it again.' 'Not needed: the browser fills its cache again as you browse.')
+        (New-HelpTopic '3' '' 'Deletes error reports, crash dumps (also those in the temporary folders of Windows services, sometimes several GB), logs older than 14 days and the thumbnail cache.' 'Recent logs and dumps are kept, so a recent crash can still be looked at. The Prefetch folder is never touched: emptying it would make Windows slower.' 'Not needed. Thumbnails are made again when you open a folder.')
+        (New-HelpTopic '4' '' 'Deletes update files Windows has already installed, and the Delivery Optimization cache (updates shared with other PCs).' 'If updates are waiting for a restart, or Windows Update is busy, the cache is kept: restart, then run it again.' 'Not needed: Windows downloads again what it still needs.')
+        (New-HelpTopic '5' '' 'Empties the Recycle Bin of every drive.' 'YSO always asks first, and shows how much it holds.' 'Cannot be undone: files emptied from the Recycle Bin are gone.')
+        (New-HelpTopic '6' '' 'Deletes the compiled shaders that NVIDIA, AMD, Intel and DirectX keep. Most useful after a driver update, or when a game shows graphics glitches.' 'Games make them again on their next launch, so the first load may stutter briefly.' 'Not needed: they come back by themselves.')
+        (New-HelpTopic '7' '' 'Deletes the caches and old logs of npm, pip, VS Code, Discord, Teams, Spotify, Steam and every app built on Chromium.' 'Projects, installed packages, settings, logins and game files are not touched. For VS Code, the saved data of projects not opened for 60 days goes too (it comes back if you open them again).' 'Not needed: apps rebuild their caches.')
+        (New-HelpTopic '8' '' 'Runs Windows Disk Cleanup with every safe option, then cleans the component store (old versions of Windows files kept after updates). Frees a lot, and takes 10 to 30 minutes.' 'Downloads, the Recycle Bin and Windows.old are never included. Old driver versions are removed only if you say yes. Part of the cleanup finishes at the next restart.' 'Afterwards, updates installed before it can no longer be uninstalled, and removed driver versions cannot come back.')
+        (New-HelpTopic '9' '' 'Windows.old holds the previous version of Windows after a big update, so you can go back to it for 10 days. It often takes 15 to 30 GB.' 'YSO shows its size and whether going back is still possible, then asks.' 'Cannot be undone: once it is removed, you can no longer go back to the previous version of Windows.')
+        (New-HelpTopic '10' '' 'hiberfil.sys can take several GB. Windows uses it for Hibernate and Fast Startup. Reduced keeps Fast Startup and halves it, Off removes it, Full is the Windows default.' 'On a laptop, Hibernate saves your work when the battery runs out: keep Reduced or Full there.' 'Undo YSO changes (32) puts the previous setting back, or choose Full here.')
+        (New-HelpTopic '11' '' 'Measures the link to your router, the time it takes to reach the internet, the speed of several DNS servers and the Wi-Fi signal, and says where a problem comes from.' 'Nothing is changed.' 'Nothing to undo.')
+        (New-HelpTopic '12' '' 'DNS turns site names into addresses. Your provider''s DNS can be slow; Cloudflare, Google or Quad9 are often faster, and some block dangerous sites. Network check (11) shows which one is fastest for you.' 'YSO saves your current DNS settings first, then sets the new ones on every connected adapter.' 'Option 4 on the same screen puts your previous settings back, and so does Undo YSO changes (32).')
+        (New-HelpTopic '13' '' 'Empties the list of site addresses Windows remembers. Helps when a site moved, or will not load after a change of DNS or of network.' 'Nothing else changes: sites are looked up again.' 'Nothing to undo.')
+        (New-HelpTopic '14' '' 'Resets Winsock and the TCP/IP settings of Windows. A last resort when the internet does not work and nothing else helped.' 'It erases IP and DNS settings typed by hand, can disturb VPN or proxy software until it is set up again, and needs a restart. Your network settings are saved to a file in the logs folder first.' 'Cannot be undone automatically: the saved file lists your previous settings, so you can type them again.')
+        (New-HelpTopic '15' '' 'Asks Windows to optimize each drive: TRIM for SSDs (it tells the drive which blocks are free) and defragmentation for hard drives.' 'The same as Windows'' own Optimize Drives tool. Safe for SSDs: Windows never defragments them.' 'Nothing to undo.')
+        (New-HelpTopic '16' '' 'Chooses between Ultimate Performance, High Performance and Balanced. Performance plans keep the processor ready, for a slightly faster PC.' 'On a laptop they mean more heat, more fan noise and less battery: Balanced is better there.' 'Undo YSO changes (32), or choose Balanced here.')
+        (New-HelpTopic '17' '' 'Lists the programs that start with Windows, with their publisher and how much they slow down startup. Click one to switch it on or off.' 'It works like Task Manager: the program stays installed and only stops starting by itself. Microsoft Store apps manage their own startup, in Windows Settings.' 'Click it again, or use Undo YSO changes (32).')
+        (New-HelpTopic '18' '' 'Reads how long the last startups took, from Windows'' own records, and which apps, drivers and services slowed them down.' 'Nothing is changed. Only full startups are measured: Restart, or Shut down when Fast Startup is off.' 'Nothing to undo.')
+        (New-HelpTopic '30' '' 'Switches off, with tick boxes: ads and suggestions in Windows, tips on the lock screen, web results (Bing) in the Start menu search, ad tracking, diagnostic data and activity history, Copilot, Recall and Click to Do, the AI features of Edge, Notepad and Paint, and ads in Edge.' 'These are the settings Windows and Edge offer for it. Some are policies: Windows or Edge then shows "managed by your organization", which is normal. Some changes show after you sign out. Defender, Windows Update and the Store are never touched.' 'Untick a line and Apply to get the Windows default back, or use Undo YSO changes (32) for the exact previous state.' @('Tick what you do not want, or click Tick the recommended ones.', 'Click Apply, read the list of changes, and confirm.', 'Sign out and back in, or let YSO restart File Explorer when it offers to.'))
+        (New-HelpTopic '31' '' 'Lists your desktop apps with their size and when they were last used. YSO starts the app''s own uninstaller, then looks for what it left behind: folders and registry keys named like it.' 'YSO never offers the folder of another installed app, a system folder, or a name another app also uses. Folders of 1 GB or more start unticked: a folder can hold your own data, like game saves or a mail profile. Runtimes and drivers get a warning.' 'The app can be installed again. Removed folders go to the Recycle Bin and registry keys are saved to a file first: Undo YSO changes (32) puts them back.' @('Find the app: sort by size or by last use, or type part of its name.', 'Click it, read what YSO shows about it, and confirm.', 'Follow the window of its uninstaller to the end.', 'Among the leftovers, untick what you want to keep, then click Remove the ticked ones.'))
+        (New-HelpTopic '32' '' 'Every setting YSO changes is written down first, with what it was before: startup programs, power plan, hibernation file, DNS, privacy settings and app leftovers. This list shows them, newest first.' 'Click one to see what it changed, then confirm: it is back exactly as it was. Cleaned files are not in this list: they are caches that come back by themselves.' 'An undone change is marked as such. The last 300 changes are kept.')
+        (New-HelpTopic '19' '' 'Everything about the PC in one report: Windows and hardware, disk space and wear, battery capacity, Windows Update, recent crashes, security and drivers. For each problem, an arrow shows the tool that helps.' 'Nothing is changed. It can make Windows'' detailed battery report, which opens in your browser.' 'Nothing to undo.')
+        (New-HelpTopic '20' '' 'Shows the recent blue screens, app crashes and serious errors from Windows'' logs, and what caused them when Windows knows.' 'Nothing is changed. A few errors are normal on every PC: look for the ones that repeat, or happen when you have a problem.' 'Nothing to undo.')
+        (New-HelpTopic '21' '' 'Checks the antivirus, the firewall and Windows Update. With Microsoft Defender, it can update the virus definitions and run a quick scan (5 to 15 minutes).' 'Only Defender''s own update and scan: no setting is changed.' 'Nothing to undo.')
+        (New-HelpTopic '22' '' 'Lists the scheduled tasks and services that do not come from Microsoft, and whether their program is signed. Takes 10 to 60 seconds.' 'Nothing is changed. Not signed does not mean malware. To remove something, uninstall the program it belongs to.' 'Nothing to undo.')
+        (New-HelpTopic '23' '' 'Lists the devices with a missing or broken driver, then helps: Device Manager, optional driver updates in Windows Update, or a new scan of the hardware.' 'Nothing is changed unless you choose one of these actions.' 'Nothing to undo.')
+        (New-HelpTopic '24' '' 'Scans each drive for file-system errors, while you keep working.' 'If errors are found, YSO asks before repairing: other drives are repaired at once, the Windows drive at the next restart, before Windows loads.' 'A repair cannot be undone, but it only fixes the records of the file system.')
+        (New-HelpTopic '25' '' 'Starts Windows Memory Diagnostic, which checks the RAM for faults, a common cause of blue screens and random crashes. It runs after a restart, before Windows loads, and takes 10 to 30 minutes.' 'Save your work first. The result shows as a notification when Windows starts again, and here next time.' 'Nothing to undo.')
+        (New-HelpTopic '26' '' 'Runs DISM, which repairs Windows'' store of system files (it needs internet), then SFC, which repairs the system files from that store. Takes 15 to 45 minutes.' 'Only Windows'' own files are repaired, with Windows'' own tools.' 'Nothing to undo: the repaired files are the original ones.')
+        (New-HelpTopic '27' '' 'Shows which folders fill a drive, biggest first. Click a folder to open it, Back to go up, Biggest files to see the largest files, Show in Explorer to open it there.' 'Nothing is changed or deleted: it only shows. Delete what you do not need yourself, in File Explorer.' 'Nothing to undo.')
+        (New-HelpTopic '28' '' 'Finds app updates (with winget) and driver updates (with Windows Update), and shows them in one list where you tick what to install. YSO can also check on a schedule and tell you, or install safe updates by itself.' 'A restore point is made before drivers are installed. In automatic mode, big new versions (7.x to 8.x), optional drivers and the apps you exclude are left for you. Only apps in the winget catalog are checked.' 'An app can be uninstalled, then its previous version installed from its website. A driver can be rolled back in Device Manager, or with the restore point.' @('Click Check for updates now.', 'Tick what to install, then click Install the ticked updates.', 'If you want, choose Notify me or Automatic, and when it runs.'))
+        (New-HelpTopic '29' '' 'The disk of a virtual machine is one big file on your PC (.vdi for VirtualBox, .vhdx for WSL and Docker Desktop). It grows when the machine writes, but never shrinks, even when you delete files inside it. Compacting removes the empty space from the file: the file gets smaller, and nothing inside the machine changes.' 'YSO refuses a machine that is running, in saved state or with snapshots, and wants VirtualBox and Docker Desktop closed. The file is rewritten in place: a power cut or a crash during compaction can damage it.' 'Compacting cannot be undone, and does not need to be. Copy a disk you cannot lose before, so you can put it back if something goes wrong.' @('VirtualBox: compacting only removes empty blocks, and deleted files are not empty until the free space is filled with zeros. Inside the machine, run sdelete -z C: (Windows) or the dd command YSO shows (Linux), then shut the machine down from inside.', 'WSL and Docker: nothing to do inside. YSO frees the unused blocks and stops WSL by itself.', 'Copy the disk file of the machine somewhere else, an external drive for example: that is your backup.', 'Keep the PC plugged in. Open Virtual disks, check that the disk says it can be compacted, and confirm.', 'Start the machine to check that it works. Then you can delete the copy.'))
+        (New-HelpTopic 'A' '' 'Measures how much each part of the cleaning would free. Deletes nothing.' 'Nothing is changed. Deep clean (8) usually frees more on top of it, but cannot be measured in advance.' 'Nothing to undo.')
+        (New-HelpTopic 'F' '' 'Everything at once: a restore point, then temporary files, browser caches, offline copies of sites, system junk, developer and app caches, GPU caches, the Windows Update cache, DNS, deep clean, and drive optimization. The Recycle Bin and updates only if you choose them.' 'All the questions are asked at the start, then you can walk away. If Windows is waiting for a restart, restart first: some parts can only be cleaned after it.' 'The restore point (R) takes Windows and its settings back to before; your documents are not touched by it.')
+        (New-HelpTopic 'R' '' 'A restore point takes Windows, its settings and your programs back to an earlier state. Your documents are not touched. Here you see yours, create one, keep only the newest, or open System Protection.' 'Deleting old restore points is asked separately, and cannot be undone.' 'To go back to a restore point: System Protection, then System Restore.')
+        (New-HelpTopic 'S' '' 'Cleans by itself every Sunday at 3:00 (or at the next startup if the PC was off), silently, and only when plugged in. You choose what it cleans in Settings.' 'It never closes your apps and never empties the Recycle Bin. It runs as a scheduled task, from C:\Program Files\YSO.' 'Turn it off here, at any time.')
+        (New-HelpTopic 'H' '' 'Shows what each cleanup freed, with its date, its parts and its total.' 'Nothing is changed.' 'Nothing to undo.')
+        (New-HelpTopic 'T' '' 'Checks that each part of YSO works on this PC, one line per check. A BROKEN line says what does not work, and why.' 'Nothing is changed.' 'Nothing to undo.')
+        (New-HelpTopic 'P' '' 'Makes one zip file on your Desktop with the self-test, the error log and recent logs, to send to the developer (a GitHub issue, an email...).' 'User names, the PC name, private IP addresses and the Wi-Fi name are removed from it. Nothing is sent by itself: open it and check it before you send it.' 'Delete the zip when you no longer need it.')
+        (New-HelpTopic 'O' '' 'Language, how old temporary files and logs must be before YSO deletes them, what weekly auto-clean cleans, folders YSO must never touch, new versions of YSO, and the icon next to the clock.' 'Saved in C:\ProgramData\YSO\settings.json. Reset to defaults puts everything back as after installing.' 'Change it back here, or use Reset to defaults.')
+        (New-HelpTopic 'L' '' 'Opens the folder where YSO writes what it did in each session, and its errors.' 'Nothing is changed.' 'Nothing to undo.')
+        (New-HelpTopic 'tray' 'Icon next to the clock' 'Optional, in Settings (option 9). Every 6 hours it checks free space, the drives and the battery, and tells you when something needs you, at most once a week for each thing. It also tells you what the weekly cleanup freed. Right-click it to open YSO or to check now.' 'It starts with Windows (a scheduled task) and only reads. Uninstalling YSO removes it.' 'Right-click it, then Remove this icon, or use option 9 in Settings.')
+        (New-HelpTopic 'versions' 'New versions of YSO' 'When a new version is published, an Update button appears in YSO. It downloads the new version from GitHub, checks its SHA-256 checksum and that PowerShell can read it, then replaces YSO. Your settings and history stay.' 'YSO asks GitHub at most once an hour, when its window opens; you can turn it off in Settings. Installed from the Microsoft Store, YSO is updated by the Store instead.' 'To go back to an earlier version, download it from the Releases page of YSO on GitHub.')
+        (New-HelpTopic 'uninstall' 'Uninstall YSO' 'Settings > Apps > Installed apps > YSO > Uninstall. YSO asks whether to keep its history and settings.' 'Its weekly cleanup, automatic updates and the icon next to the clock stop too.' 'Install it again with the same line as the first time.')
+    )
+}
+
+function Get-HelpGroups {
+    # The guide in the order of All tools, with a group before (getting started) and one after (YSO itself).
+    $byKey = @{}
+    foreach ($t in (Get-HelpTopics)) { $byKey[$t.Key] = $t }
+    $groups = New-Object System.Collections.Generic.List[object]
+    $groups.Add([pscustomobject]@{ Title = (N 'GETTING STARTED'); Topics = @($byKey['start'], $byKey['safety'], $byKey['clean']) })
+    foreach ($g in (Get-GuiToolGroups)) {
+        $list = @(foreach ($it in $g.Items) {
+            if (-not $byKey.ContainsKey($it[0])) { continue }
+            $t = $byKey[$it[0]]
+            if (-not $t.Title) { $t.Title = $it[1] }
+            $t
+        })
+        $groups.Add([pscustomobject]@{ Title = $g.Title; Topics = $list })
+    }
+    $groups.Add([pscustomobject]@{ Title = (N 'YSO ITSELF'); Topics = @($byKey['tray'], $byKey['versions'], $byKey['uninstall']) })
+    return $groups.ToArray()
+}
+
+function Test-HelpTopic([string]$Key) {
+    return [bool](@(Get-HelpTopics | Where-Object { $_.Key -eq $Key }).Count)
+}
+
+function Get-HelpTitle($Topic) {
+    # "Temporary files", "Analyze (deletes nothing)"... with the key of the menu in front for tools.
+    $title = L $Topic.Title
+    if ($script:MenuKeys -contains $Topic.Key -or $Topic.Key -eq 'L') { return ('{0}. {1}' -f $Topic.Key, $title) }
+    return $title
+}
+
+function Show-HelpTopic($Topic) {
+    Write-Step (Get-HelpTitle $Topic)
+    foreach ($part in @(@((N 'What it does'), $Topic.What), @((N 'What changes'), $Topic.Changes), @((N 'To undo it'), $Topic.Undo))) {
+        Write-Host ''
+        Write-Host ('  ' + (L $part[0])) -ForegroundColor White
+        Write-Info $part[1]
+    }
+    if ($Topic.Steps.Count -gt 0) {
+        Write-Host ''
+        Write-Host ('  ' + (L 'Step by step')) -ForegroundColor White
+        $i = 0
+        foreach ($s in $Topic.Steps) { $i++; Write-Info ('{0}. {1}' -f $i, (L $s)) }
+    }
+}
+
+function Show-Guide {
+    # G: the guide in the console, one topic at a time.
+    $groups = @(Get-HelpGroups)
+    $all = @($groups | ForEach-Object { $_.Topics })
+    while ($true) {
+        Clear-Host
+        Write-Section 'GUIDE'
+        Write-Info 'What each tool does, what it changes, and how to undo it.'
+        $n = 0
+        foreach ($g in $groups) {
+            Write-Host ''
+            Write-Host ('  ' + (L $g.Title)) -ForegroundColor White
+            foreach ($t in $g.Topics) { $n++; Write-Option "$n" (Get-HelpTitle $t) }
+        }
+        Write-Host ''
+        $c = Read-Choice 'Number = read it, Enter = back'
+        if (-not $c) { return }
+        if ($c -match '^\d+$' -and [int]$c -ge 1 -and [int]$c -le $all.Count) {
+            Clear-Host
+            Show-HelpTopic $all[[int]$c - 1]
+            Write-Host ''
+            [void](Read-Choice 'Press Enter to go back to the guide')
+        }
+    }
+}
+
+function ConvertTo-GuideMarkdown([string]$Language) {
+    # docs/GUIDE.md (en) and docs/GUIDE.fr.md (fr): the same texts as the Help page of the window.
+    $keep = $script:Lang
+    $script:Lang = $Language
+    try {
+        $groups = @(Get-HelpGroups)
+        $out = New-Object System.Text.StringBuilder
+        $slug = { param($t) (("$t".ToLowerInvariant() -replace '[^\p{L}\p{N} -]', '') -replace ' ', '-') }
+        [void]$out.AppendLine('# ' + (L 'YSO guide'))
+        [void]$out.AppendLine()
+        [void]$out.AppendLine((L 'What each tool does, what it changes, and how to undo it.') + ' ' + (L 'The same guide is in YSO: Help, in the window, or G in the console menu.'))
+        [void]$out.AppendLine()
+        if ($Language -eq 'fr') { [void]$out.AppendLine('**[English version](GUIDE.md)**') } else { [void]$out.AppendLine('**[Version française](GUIDE.fr.md)**') }
+        [void]$out.AppendLine()
+        [void]$out.AppendLine('## ' + (L 'Contents'))
+        [void]$out.AppendLine()
+        foreach ($g in $groups) {
+            $gt = ConvertTo-GuiTitle (L $g.Title)
+            [void]$out.AppendLine(('- [{0}](#{1})' -f $gt, (& $slug $gt)))
+            foreach ($t in $g.Topics) {
+                $tt = Get-HelpTitle $t
+                [void]$out.AppendLine(('  - [{0}](#{1})' -f $tt, (& $slug $tt)))
+            }
+        }
+        foreach ($g in $groups) {
+            [void]$out.AppendLine()
+            [void]$out.AppendLine('## ' + (ConvertTo-GuiTitle (L $g.Title)))
+            foreach ($t in $g.Topics) {
+                [void]$out.AppendLine()
+                [void]$out.AppendLine('### ' + (Get-HelpTitle $t))
+                [void]$out.AppendLine()
+                [void]$out.AppendLine((L $t.What))
+                [void]$out.AppendLine()
+                [void]$out.AppendLine(('**{0}.** {1}' -f (L 'What changes'), (L $t.Changes)))
+                [void]$out.AppendLine()
+                [void]$out.AppendLine(('**{0}.** {1}' -f (L 'To undo it'), (L $t.Undo)))
+                if ($t.Steps.Count -gt 0) {
+                    [void]$out.AppendLine()
+                    [void]$out.AppendLine(('**{0}:**' -f (L 'Step by step')))
+                    [void]$out.AppendLine()
+                    $i = 0
+                    foreach ($s in $t.Steps) { $i++; [void]$out.AppendLine(('{0}. {1}' -f $i, (L $s))) }
+                }
+            }
+        }
+        return $out.ToString().Replace("`r`n", "`n")
+    } finally { $script:Lang = $keep }
+}
+
+# ==================================================================
 #  UPDATES  (28) - apps with winget, drivers with Windows Update
 #  Manual: you see the list and choose. Automatic: a scheduled task runs
 #  "-AutoUpdate" as you (elevated), installs what is safe and never restarts the PC.
@@ -6617,6 +6799,7 @@ function Invoke-MenuOption {
             'T'  { Invoke-SelfTest }
             'P'  { New-ProblemReport }
             'O'  { Show-Settings }
+            'G'  { Show-Guide }
             default { $status = 'unknown' }
         }
     } catch {
@@ -6700,7 +6883,7 @@ function Show-SimpleMenu {
     }
     Write-Host ''
     Write-MenuGrid -Cells @((M 'M' 'All options'), (M 'T' 'Self-test'), (M 'O' 'Settings / Langue'),
-                            (M 'P' 'Report a problem'), (M 'H' 'Cleanup history'), (M 'Q' 'Quit')) -Columns 2 -CellWidth 38
+                            (M 'P' 'Report a problem'), (M 'H' 'Cleanup history'), (M 'G' 'Guide: what each tool does'), (M 'Q' 'Quit')) -Columns 2 -CellWidth 38
     Write-Host "  $bar" -ForegroundColor DarkGreen
 }
 
@@ -6796,6 +6979,7 @@ function Show-Menu {
         (M 'T' 'Self-test (check everything)'),
         (M 'P' 'Report a problem'),
         (M 'O' 'Settings / Langue'),
+        (M 'G' 'Guide: what each tool does'),
         (M 'L' 'Logs folder'),
         (M 'M' 'Simple menu'),
         (M 'Q' 'Quit')
@@ -7247,6 +7431,9 @@ function Get-YsoXaml {
                 <TextBlock x:Name="UpdateText" TextTrimming="CharacterEllipsis"/>
               </StackPanel>
             </Button>
+            <RadioButton x:Name="NavHelp" Style="{StaticResource Nav}">
+              <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE897;" Style="{StaticResource Icon}" FontSize="16" Width="30" HorizontalAlignment="Left"/><TextBlock Text="[[Help]]"/></StackPanel>
+            </RadioButton>
             <RadioButton x:Name="NavSettings" Style="{StaticResource Nav}">
               <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE713;" Style="{StaticResource Icon}" FontSize="16" Width="30" HorizontalAlignment="Left"/><TextBlock Text="[[Settings]]"/></StackPanel>
             </RadioButton>
@@ -7403,6 +7590,7 @@ function Get-YsoXaml {
             <StackPanel>
               <TextBlock x:Name="RunTitle" Style="{StaticResource H1}" TextTrimming="CharacterEllipsis"/>
               <TextBlock x:Name="RunState" Style="{StaticResource Sub}"/>
+              <Button x:Name="RunHelp" Style="{StaticResource Link}" Content="[[How this tool works]]" HorizontalAlignment="Left" Margin="-6,4,0,-4" Visibility="Collapsed"/>
             </StackPanel>
             <StackPanel x:Name="RunProgress" Grid.Row="1" Margin="0,16,0,0">
               <TextBlock x:Name="RunStep" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
@@ -7462,6 +7650,15 @@ function Get-YsoXaml {
               <TextBlock Text="[[All tools]]" Style="{StaticResource H1}"/>
               <TextBlock Text="[[Every option of YSO. Each one explains what it does and asks before changing anything.]]" Style="{StaticResource Sub}"/>
               <StackPanel x:Name="ToolsPanel" Margin="0,12,0,0"/>
+            </StackPanel>
+          </ScrollViewer>
+          <ScrollViewer x:Name="PageHelp" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Margin="40,6,40,34" MaxWidth="900" HorizontalAlignment="Left">
+              <TextBlock Text="[[Help]]" Style="{StaticResource H1}"/>
+              <TextBlock Text="[[What each tool does, what it changes, and how to undo it. Click a line to read it.]]" Style="{StaticResource Sub}" TextWrapping="Wrap"/>
+              <TextBlock Text="[[Search the guide]]" Margin="0,18,0,6" FontSize="12" Foreground="{StaticResource Text3}"/>
+              <TextBox x:Name="HelpSearch" Width="420" HorizontalAlignment="Left" FontSize="13" AutomationProperties.Name="[[Search the guide]]"/>
+              <StackPanel x:Name="HelpPanel" Margin="0,4,0,0"/>
             </StackPanel>
           </ScrollViewer>
         </Grid>
@@ -7917,7 +8114,7 @@ function Get-GuiToolGroups {
         @{ Title = (N 'SPACE & UPDATES'); Items = @((M '27' 'Space finder (what fills my disk?)'), (M '28' 'Updates: apps & drivers'), (M '29' 'Virtual disks (compact VMs, WSL, Docker)')) }
         @{ Title = (N 'ONE-CLICK'); Items = @((M 'A' 'Analyze (deletes nothing)'), (M 'F' 'Full maintenance'), (M 'R' 'Restore points'), (M 'S' 'Weekly auto-clean'),
             (M 'H' 'Cleanup history'), (M 'T' 'Self-test (check everything)'), (M 'P' 'Report a problem'), (M 'O' 'Settings / Langue'),
-            (M 'L' 'Logs folder')) }
+            (M 'G' 'Guide: what each tool does'), (M 'L' 'Logs folder')) }
     )
 }
 
@@ -7928,16 +8125,18 @@ function Get-GuiOptionTitle([string]$Key) {
 
 function Show-GuiPage([string]$Name, [string]$Key = '') {
     # $Key: the option shown on the Run page, so the menu on the left shows where you are.
-    foreach ($p in @('Home', 'Clean', 'Run', 'Tools')) {
+    foreach ($p in @('Home', 'Clean', 'Run', 'Tools', 'Help')) {
         $script:Ui["Page$p"].Visibility = $(if ($p -eq $Name) { 'Visible' } else { 'Collapsed' })
     }
     $script:GuiPage = $Name
-    $nav = @{ Home = 'NavHome'; Clean = 'NavClean'; Tools = 'NavTools' }
+    $nav = @{ Home = 'NavHome'; Clean = 'NavClean'; Tools = 'NavTools'; Help = 'NavHelp' }
     $byKey = @{ '28' = 'NavUpdates'; '17' = 'NavStartup'; '19' = 'NavHealth'; 'R' = 'NavRestore'; 'H' = 'NavHistory'; 'O' = 'NavSettings'; 'A' = 'NavClean'; 'F' = 'NavClean' }
     if ($Name -eq 'Run') {
         if (-not $Key) { $Key = $script:GuiRunKey }
         $item = $(if ($byKey.ContainsKey($Key)) { $byKey[$Key] } else { 'NavTools' })
         $script:Ui[$item].IsChecked = $true
+        # "How this tool works": the tool's card of the Help page
+        $script:Ui.RunHelp.Visibility = $(if ($script:GuiHelp -and $script:GuiHelp.ContainsKey("$Key")) { 'Visible' } else { 'Collapsed' })
     } elseif ($nav.ContainsKey($Name)) { $script:Ui[$nav[$Name]].IsChecked = $true }
     Update-GuiBusy
 }
@@ -8046,6 +8245,7 @@ function Invoke-GuiAction([string]$Key) {
         'A' { Show-GuiPage 'Clean'; Start-GuiAnalysis }
         'F' { Show-GuiPage 'Clean' }
         'L' { Start-Process explorer.exe -ArgumentList "`"$($script:LogDir)`"" }
+        'G' { Show-GuiPage 'Help' }
         default { Start-GuiOption $Key }
     }
 }
@@ -9058,6 +9258,14 @@ function Get-GuiToolInfo([string]$Key) {
         'P'  = @(0xE897, (N 'Makes a report to send to the developer.'))
         'O'  = @(0xE713, (N 'Language, age limits, folders to never touch.'))
         'L'  = @(0xE8B7, (N 'Opens the folder of YSO''s logs.'))
+        'G'  = @(0xE897, (N 'Every tool explained, step by step.'))
+        # topics of the guide (Help page) that are not tools
+        'start'     = @(0xE80F, (N 'The home page, Analyze and Clean.'))
+        'safety'    = @(0xEA18, (N 'Passwords, documents, games: what stays.'))
+        'clean'     = @(0xE74D, (N 'Tick what to clean, see what it frees.'))
+        'tray'      = @(0xE946, (N 'Alerts when the disk is almost full.'))
+        'versions'  = @(0xE896, (N 'The Update button, and what it checks.'))
+        'uninstall' = @(0xE738, (N 'Removes YSO from the PC.'))
     }
     if ($info.ContainsKey($Key)) { return , $info[$Key] }
     return , @(0xE76C, '')
@@ -9099,6 +9307,138 @@ function Initialize-GuiTools {
         }
         $panel.Children.Add($wrap) | Out-Null
     }
+}
+
+# --- Help page: the guide, one card per tool; a click opens it ---
+function Initialize-GuiHelp {
+    $panel = $script:Ui.HelpPanel
+    $script:GuiHelp = @{}
+    $script:GuiHelpGroups = New-Object System.Collections.ArrayList
+    foreach ($grp in (Get-HelpGroups)) {
+        $head = New-GuiText (ConvertTo-GuiTitle (L $grp.Title)) 15 'Text' 'SemiBold' -Margin '2,22,0,10'
+        $panel.Children.Add($head) | Out-Null
+        $cards = New-Object System.Collections.ArrayList
+        foreach ($t in $grp.Topics) {
+            $card = New-GuiHelpCard $t
+            $panel.Children.Add($card.Root) | Out-Null
+            [void]$cards.Add($card)
+            $script:GuiHelp[$t.Key] = $card
+        }
+        [void]$script:GuiHelpGroups.Add(@{ Head = $head; Cards = $cards })
+    }
+    $script:GuiHelpNone = New-GuiText (L 'Nothing found. Try another word.') 13 'Text3' -Margin '2,18,0,0'
+    $script:GuiHelpNone.Visibility = 'Collapsed'
+    $panel.Children.Add($script:GuiHelpNone) | Out-Null
+}
+
+function Add-GuiHelpPart($Panel, [string]$Label, [string]$Text) {
+    $Panel.Children.Add((New-GuiText (L $Label) 12 'Text3' 'SemiBold' -Margin '0,10,0,2')) | Out-Null
+    $Panel.Children.Add((New-GuiText (L $Text) 13 'Text2' -Wrap)) | Out-Null
+}
+
+function New-GuiHelpCard($Topic) {
+    $info = Get-GuiToolInfo $Topic.Key
+    $title = Remove-GuiMenuRefs (L $Topic.Title)
+    $short = $(if ($info[1]) { L $info[1] } else { '' })
+    $root = New-Object System.Windows.Controls.StackPanel
+    $root.Margin = New-GuiThickness '0,0,0,4'
+    $b = New-Object System.Windows.Controls.Button
+    $b.Style = $script:GuiWindow.FindResource('RowBtn')
+    $b.Tag = $Topic.Key
+    $g = New-Object System.Windows.Controls.Grid
+    $g.ColumnDefinitions.Add((New-GuiColumn 'Auto')); $g.ColumnDefinitions.Add((New-GuiColumn '*')); $g.ColumnDefinitions.Add((New-GuiColumn 'Auto'))
+    $badge = New-Object System.Windows.Controls.Border
+    $badge.Background = Get-GuiBrush 'AccentSoft'
+    $badge.CornerRadius = 4
+    $badge.Width = 30; $badge.Height = 30
+    $icon = New-GuiIcon ([string][char]$info[0]) 14 'Accent'
+    $icon.HorizontalAlignment = 'Center'; $icon.VerticalAlignment = 'Center'
+    $badge.Child = $icon
+    $g.Children.Add($badge) | Out-Null
+    $texts = New-Object System.Windows.Controls.StackPanel
+    $texts.Margin = New-GuiThickness '12,0,8,0'
+    $texts.VerticalAlignment = 'Center'
+    $texts.Children.Add((New-GuiText $title 13.5 'Text' 'SemiBold' -Wrap)) | Out-Null
+    if ($short) { $texts.Children.Add((New-GuiText $short 12 'Text2' -Wrap -Margin '0,1,0,0')) | Out-Null }
+    [System.Windows.Controls.Grid]::SetColumn($texts, 1)
+    $g.Children.Add($texts) | Out-Null
+    $chev = New-GuiIcon ([string][char]0xE70D) 11 'Text3'
+    $chev.VerticalAlignment = 'Center'
+    [System.Windows.Controls.Grid]::SetColumn($chev, 2)
+    $g.Children.Add($chev) | Out-Null
+    $b.Content = $g
+    [System.Windows.Automation.AutomationProperties]::SetName($b, $title)
+    $root.Children.Add($b) | Out-Null
+
+    # the explanation, hidden until the card is clicked
+    $details = New-Object System.Windows.Controls.StackPanel
+    $details.Margin = New-GuiThickness '53,0,16,14'
+    $details.Visibility = 'Collapsed'
+    Add-GuiHelpPart $details 'What it does' $Topic.What
+    Add-GuiHelpPart $details 'What changes' $Topic.Changes
+    Add-GuiHelpPart $details 'To undo it' $Topic.Undo
+    $all = @($title, $short, (L $Topic.What), (L $Topic.Changes), (L $Topic.Undo))
+    if ($Topic.Steps.Count -gt 0) {
+        $details.Children.Add((New-GuiText (L 'Step by step') 12 'Text3' 'SemiBold' -Margin '0,10,0,2')) | Out-Null
+        $i = 0
+        foreach ($s in $Topic.Steps) {
+            $i++
+            $details.Children.Add((New-GuiText ('{0}. {1}' -f $i, (L $s)) 13 'Text2' -Wrap -Margin '0,0,0,3')) | Out-Null
+            $all += (L $s)
+        }
+    }
+    if ($script:MenuKeys -contains $Topic.Key -or $Topic.Key -eq 'L') {
+        $open = New-Object System.Windows.Controls.Button
+        $open.Style = $script:GuiWindow.FindResource('Link')
+        $open.Content = L 'Open this tool'
+        $open.HorizontalAlignment = 'Left'
+        $open.Margin = New-GuiThickness '-6,8,0,0'
+        $open.Tag = $Topic.Key
+        $open.Add_Click({ param($s, $e) Invoke-GuiSafe 'help: open' { Invoke-GuiAction "$($s.Tag)" } })
+        $details.Children.Add($open) | Out-Null
+    }
+    $root.Children.Add($details) | Out-Null
+    $card = @{ Root = $root; Details = $details; Chevron = $chev; Text = ($all -join ' ').ToLowerInvariant() }
+    $b.Add_Click({ param($s, $e) Invoke-GuiSafe 'help' { $c = $script:GuiHelp["$($s.Tag)"]; Set-GuiHelpOpen $c ($c.Details.Visibility -ne 'Visible') } })
+    return $card
+}
+
+function Set-GuiHelpOpen($Card, [bool]$Open) {
+    $Card.Details.Visibility = $(if ($Open) { 'Visible' } else { 'Collapsed' })
+    $Card.Chevron.Text = [string][char]$(if ($Open) { 0xE70E } else { 0xE70D })
+}
+
+function Update-GuiHelpFilter {
+    # Typing in the search box keeps the cards that have every word typed.
+    $words = @("$($script:Ui.HelpSearch.Text)".ToLowerInvariant() -split '\s+' | Where-Object { $_ })
+    $found = $false
+    foreach ($g in $script:GuiHelpGroups) {
+        $any = $false
+        foreach ($c in $g.Cards) {
+            $show = $true
+            foreach ($w in $words) { if (-not $c.Text.Contains($w)) { $show = $false; break } }
+            $c.Root.Visibility = $(if ($show) { 'Visible' } else { 'Collapsed' })
+            if ($show) { $any = $true }
+        }
+        $g.Head.Visibility = $(if ($any) { 'Visible' } else { 'Collapsed' })
+        if ($any) { $found = $true }
+    }
+    $script:GuiHelpNone.Visibility = $(if ($found) { 'Collapsed' } else { 'Visible' })
+}
+
+function Show-GuiHelpTopic([string]$Key) {
+    # Opens the Help page at a tool's card, opened, at the top of the page.
+    Show-GuiPage 'Help'
+    if ($script:Ui.HelpSearch.Text) { $script:Ui.HelpSearch.Text = '' }
+    if (-not $script:GuiHelp.ContainsKey($Key)) { return }
+    $c = $script:GuiHelp[$Key]
+    Set-GuiHelpOpen $c $true
+    $page = $script:Ui.PageHelp
+    $page.UpdateLayout()
+    try {
+        $y = $c.Root.TranslatePoint((New-Object System.Windows.Point 0, 0), $page.Content).Y
+        $page.ScrollToVerticalOffset([math]::Max(0, $y - 12))
+    } catch { $c.Root.BringIntoView() }
 }
 
 # ------------------------------------------------------------------
@@ -9182,7 +9522,7 @@ function Show-YsoWindow([string]$Snapshot = '') {
                         'PageRun', 'RunTitle', 'RunState', 'RunProgress', 'RunStep', 'RunBar0', 'RunStatus', 'RunBar1', 'RunResult',
                         'RunResultIcon', 'RunResultBig', 'RunResultText', 'RunScroll', 'RunDoc', 'RunCopy', 'RunAsk', 'RunAskText', 'RunAskBox', 'RunAskType', 'RunAskNo', 'RunAskYes',
                         'RunAskOk', 'RunAskContinue', 'RunHint', 'RunStop', 'RunBack',
-                        'PageTools', 'ToolsPanel', 'Overlay', 'DlgTitle', 'DlgText', 'DlgNo', 'DlgYes')) {
+                        'PageTools', 'ToolsPanel', 'PageHelp', 'HelpSearch', 'HelpPanel', 'NavHelp', 'RunHelp', 'Overlay', 'DlgTitle', 'DlgText', 'DlgNo', 'DlgYes')) {
         $ui[$name] = $window.FindName($name)
         if (-not $ui[$name]) { throw "The window has no element named $name." }
     }
@@ -9196,6 +9536,7 @@ function Show-YsoWindow([string]$Snapshot = '') {
     Clear-GuiOutput
     Initialize-GuiClean
     Initialize-GuiTools
+    Initialize-GuiHelp
 
     # Title bar
     $ui.BtnMin.Add_Click({ $script:GuiWindow.WindowState = 'Minimized' })
@@ -9214,6 +9555,9 @@ function Show-YsoWindow([string]$Snapshot = '') {
     $ui.NavHome.Add_Click({ Show-GuiPage 'Home' })
     $ui.NavClean.Add_Click({ Show-GuiPage 'Clean' })
     $ui.NavTools.Add_Click({ Show-GuiPage 'Tools' })
+    $ui.NavHelp.Add_Click({ Show-GuiPage 'Help' })
+    $ui.HelpSearch.Add_TextChanged({ Invoke-GuiSafe 'help: search' { Update-GuiHelpFilter } })
+    $ui.RunHelp.Add_Click({ Invoke-GuiSafe 'help' { Show-GuiHelpTopic "$($script:GuiRunKey)" } })
     foreach ($pair in @(@('NavUpdates', '28'), @('NavStartup', '17'), @('NavHealth', '19'), @('NavRestore', 'R'), @('NavHistory', 'H'), @('NavSettings', 'O'))) {
         $ui[$pair[0]].Tag = $pair[1]
         $ui[$pair[0]].Add_Click({ param($s, $e) Invoke-GuiSafe 'menu' { Start-GuiOption "$($s.Tag)" } })
@@ -9393,6 +9737,8 @@ function Initialize-GuiSnapshot([string]$Dir) {
         { Save-GuiPng '19-undo'; $true },
         { if ($script:GuiCurrent) { Send-GuiAnswer '' }; $true },
         { -not $script:GuiCurrent -and $script:GuiJobs.Count -eq 0 },
+        { Show-GuiHelpTopic '29'; $true },
+        { Save-GuiPng '20-help'; $true },
         { Start-GuiOption 'O'; $true },
         { $script:Ui.RunAsk.Visibility -eq 'Visible' -or -not $script:GuiCurrent },
         { Save-GuiPng '14-settings'; $true },
@@ -11329,6 +11675,179 @@ Look for what it left behind anyway? ==> Chercher quand même ce qu'elle a laiss
 Looking for what it left behind... ==> Recherche de ce qu'elle a laissé...
 Microsoft Store package ==> Paquet Microsoft Store
 Name ==> Nom
+Every tool explained, step by step. ==> Chaque outil expliqué, pas à pas.
+How YSO works ==> Comment marche YSO
+YSO looks after Windows: it frees space, checks the health of the PC, installs updates and fixes common problems. The home page shows the state of the PC in green, orange or red, and each card has the button that helps. Every tool says what it does while it works, asks its questions with buttons, and can be stopped. ==> YSO entretient Windows : il libère de l'espace, vérifie la santé du PC, installe les mises à jour et règle les problèmes courants. La page d'accueil montre l'état du PC en vert, orange ou rouge, et chaque carte a le bouton qui aide. Chaque outil dit ce qu'il fait pendant qu'il travaille, pose ses questions avec des boutons, et peut être arrêté.
+YSO needs administrator rights (one Windows prompt), because it cleans system folders and changes Windows settings. It asks before it changes anything, except the cleanups you start yourself. ==> YSO a besoin des droits d'administrateur (une seule demande de Windows), parce qu'il nettoie des dossiers du système et modifie des réglages de Windows. Il demande avant de changer quoi que ce soit, sauf pour les nettoyages que vous lancez vous-même.
+Settings YSO changes can be put back with Undo YSO changes (32). The files it deletes are temporary files and caches: Windows and your apps make them again when they need them. ==> Les réglages modifiés par YSO peuvent être remis avec Annuler les modifications de YSO (32). Les fichiers qu'il supprime sont des fichiers temporaires et des caches : Windows et vos applications les recréent quand ils en ont besoin.
+Click Analyze: YSO measures what can be freed, and deletes nothing. ==> Cliquez sur Analyse : YSO mesure ce qui peut être libéré, sans rien supprimer.
+On the Clean page, untick what you want to keep, then click Clean selected. ==> Sur la page Nettoyer, décochez ce que vous voulez garder, puis cliquez sur Nettoyer la sélection.
+Once a month, run Full maintenance, or switch on Weekly auto-clean. ==> Une fois par mois, lancez l'Entretien complet, ou activez le Nettoyage auto.
+What YSO never touches ==> Ce que YSO ne touche jamais
+YSO never deletes your passwords, cookies, browsing history, bookmarks, site data, messages, Downloads, Documents, browser extensions or game files. Files in use are skipped, recent temporary files are kept (24 hours by default), folder links are never followed, and system folders are refused. ==> YSO ne supprime jamais vos mots de passe, cookies, historique, favoris, données de sites, messages, Téléchargements, Documents, extensions de navigateur ni fichiers de jeux. Les fichiers utilisés sont ignorés, les fichiers temporaires récents sont gardés (24 heures par défaut), les liens de dossiers ne sont jamais suivis, et les dossiers du système sont refusés.
+What cannot be undone is always asked separately: emptying the Recycle Bin, old driver versions, Windows.old, old restore points, a network reset. Full maintenance and driver updates create a restore point first. ==> Ce qui ne peut pas être annulé est toujours demandé à part : vider la Corbeille, les anciennes versions de pilotes, Windows.old, les anciens points de restauration, la réinitialisation du réseau. L'Entretien complet et les mises à jour de pilotes créent d'abord un point de restauration.
+In Settings (O) you can list folders YSO must never touch. Started with -DryRun, YSO is in analyze-only mode: it shows everything and changes nothing. Each session is written to C:\ProgramData\YSO\Logs. ==> Dans les Paramètres (O), vous pouvez donner des dossiers que YSO ne doit jamais toucher. Lancé avec -DryRun, YSO est en mode analyse seule : il montre tout et ne change rien. Chaque session est notée dans C:\ProgramData\YSO\Logs.
+The Clean page ==> La page Nettoyer
+The Clean page lists every part YSO can clean, with a sentence on what it is. Analyze shows how much each part frees. Tick what you want, then click Clean selected. ==> La page Nettoyer liste chaque partie que YSO peut nettoyer, avec une phrase qui dit ce que c'est. Analyse montre combien chaque partie libère. Cochez ce que vous voulez, puis cliquez sur Nettoyer la sélection.
+The ticked parts are cleaned one after the other, with a progress bar and what each one freed. The Recycle Bin and old driver versions are cleaned only if you tick them. ==> Les parties cochées sont nettoyées l'une après l'autre, avec une barre de progression et ce que chacune a libéré. La Corbeille et les anciennes versions de pilotes ne sont nettoyées que si vous les cochez.
+Deleted temporary files and caches do not go to the Recycle Bin: Windows and your apps make them again when they need them. ==> Les fichiers temporaires et les caches supprimés ne vont pas dans la Corbeille : Windows et vos applications les recréent quand ils en ont besoin.
+Deletes the temporary files of every user of the PC and of Windows. Apps leave them behind after installs, updates and crashes. ==> Supprime les fichiers temporaires de chaque utilisateur du PC et de Windows. Les applications les laissent derrière elles après une installation, une mise à jour ou un plantage.
+Only files older than 24 hours (you can change it in Settings), and never a file that is in use. ==> Seulement les fichiers de plus de 24 heures (modifiable dans les Paramètres), et jamais un fichier en cours d'utilisation.
+Not needed: apps make new temporary files when they need them. ==> Inutile : les applications créent de nouveaux fichiers temporaires quand elles en ont besoin.
+Deletes the copies of web pages, images and scripts that Chrome, Edge, Brave, Vivaldi, Opera and Firefox keep, in every profile. Pages load from the internet again the first time. ==> Supprime les copies de pages web, d'images et de scripts que gardent Chrome, Edge, Brave, Vivaldi, Opera et Firefox, dans chaque profil. Les pages se rechargent depuis internet la première fois.
+Passwords, cookies, history, bookmarks, open tabs and extensions are not touched. If a browser is open, YSO offers to close it for a complete clean; its tabs come back when you open it again. ==> Les mots de passe, cookies, historique, favoris, onglets ouverts et extensions ne sont pas touchés. Si un navigateur est ouvert, YSO propose de le fermer pour un nettoyage complet ; ses onglets reviennent quand vous le rouvrez.
+Not needed: the browser fills its cache again as you browse. ==> Inutile : le navigateur remplit de nouveau son cache pendant que vous naviguez.
+Deletes error reports, crash dumps (also those in the temporary folders of Windows services, sometimes several GB), logs older than 14 days and the thumbnail cache. ==> Supprime les rapports d'erreurs, les fichiers de vidage après plantage (aussi ceux des dossiers temporaires des services de Windows, parfois plusieurs Go), les journaux de plus de 14 jours et le cache des miniatures.
+Recent logs and dumps are kept, so a recent crash can still be looked at. The Prefetch folder is never touched: emptying it would make Windows slower. ==> Les journaux et vidages récents sont gardés, pour qu'un plantage récent puisse encore être étudié. Le dossier Prefetch n'est jamais touché : le vider rendrait Windows plus lent.
+Not needed. Thumbnails are made again when you open a folder. ==> Inutile. Les miniatures sont recréées quand vous ouvrez un dossier.
+Deletes update files Windows has already installed, and the Delivery Optimization cache (updates shared with other PCs). ==> Supprime les fichiers de mises à jour que Windows a déjà installées, et le cache de l'Optimisation de la distribution (mises à jour partagées avec d'autres PC).
+If updates are waiting for a restart, or Windows Update is busy, the cache is kept: restart, then run it again. ==> Si des mises à jour attendent un redémarrage, ou si Windows Update travaille, le cache est gardé : redémarrez, puis relancez-le.
+Not needed: Windows downloads again what it still needs. ==> Inutile : Windows retélécharge ce dont il a encore besoin.
+Empties the Recycle Bin of every drive. ==> Vide la Corbeille de chaque disque.
+YSO always asks first, and shows how much it holds. ==> YSO demande toujours avant, et montre combien elle contient.
+Cannot be undone: files emptied from the Recycle Bin are gone. ==> Impossible à annuler : les fichiers vidés de la Corbeille sont perdus.
+Deletes the compiled shaders that NVIDIA, AMD, Intel and DirectX keep. Most useful after a driver update, or when a game shows graphics glitches. ==> Supprime les shaders compilés que gardent NVIDIA, AMD, Intel et DirectX. Surtout utile après une mise à jour de pilote, ou quand un jeu a des problèmes d'affichage.
+Games make them again on their next launch, so the first load may stutter briefly. ==> Les jeux les recréent au lancement suivant : le premier chargement peut saccader un peu.
+Not needed: they come back by themselves. ==> Inutile : ils reviennent tout seuls.
+Deletes the caches and old logs of npm, pip, VS Code, Discord, Teams, Spotify, Steam and every app built on Chromium. ==> Supprime les caches et les vieux journaux de npm, pip, VS Code, Discord, Teams, Spotify, Steam et de toutes les applications basées sur Chromium.
+Projects, installed packages, settings, logins and game files are not touched. For VS Code, the saved data of projects not opened for 60 days goes too (it comes back if you open them again). ==> Les projets, paquets installés, réglages, connexions et fichiers de jeux ne sont pas touchés. Pour VS Code, les données des projets pas ouverts depuis 60 jours partent aussi (elles reviennent si vous les rouvrez).
+Not needed: apps rebuild their caches. ==> Inutile : les applications reconstruisent leurs caches.
+Runs Windows Disk Cleanup with every safe option, then cleans the component store (old versions of Windows files kept after updates). Frees a lot, and takes 10 to 30 minutes. ==> Lance le Nettoyage de disque de Windows avec toutes les options sûres, puis nettoie le magasin de composants (anciennes versions de fichiers de Windows gardées après les mises à jour). Libère beaucoup, et prend 10 à 30 minutes.
+Downloads, the Recycle Bin and Windows.old are never included. Old driver versions are removed only if you say yes. Part of the cleanup finishes at the next restart. ==> Les Téléchargements, la Corbeille et Windows.old ne sont jamais inclus. Les anciennes versions de pilotes ne sont retirées que si vous dites oui. Une partie du nettoyage se termine au redémarrage suivant.
+Afterwards, updates installed before it can no longer be uninstalled, and removed driver versions cannot come back. ==> Après, les mises à jour installées avant ne peuvent plus être désinstallées, et les versions de pilotes retirées ne peuvent pas revenir.
+Windows.old holds the previous version of Windows after a big update, so you can go back to it for 10 days. It often takes 15 to 30 GB. ==> Windows.old contient la version précédente de Windows après une grosse mise à jour, pour pouvoir y revenir pendant 10 jours. Il prend souvent 15 à 30 Go.
+YSO shows its size and whether going back is still possible, then asks. ==> YSO montre sa taille et si le retour en arrière est encore possible, puis demande.
+Cannot be undone: once it is removed, you can no longer go back to the previous version of Windows. ==> Impossible à annuler : une fois retiré, vous ne pouvez plus revenir à la version précédente de Windows.
+hiberfil.sys can take several GB. Windows uses it for Hibernate and Fast Startup. Reduced keeps Fast Startup and halves it, Off removes it, Full is the Windows default. ==> hiberfil.sys peut prendre plusieurs Go. Windows s'en sert pour la mise en veille prolongée et le démarrage rapide. Réduit garde le démarrage rapide et le divise par deux, Désactivé le supprime, Complet est le réglage de Windows.
+On a laptop, Hibernate saves your work when the battery runs out: keep Reduced or Full there. ==> Sur un portable, la veille prolongée sauve votre travail quand la batterie se vide : gardez Réduit ou Complet.
+Undo YSO changes (32) puts the previous setting back, or choose Full here. ==> Annuler les modifications de YSO (32) remet le réglage d'avant, ou choisissez Complet ici.
+Measures the link to your router, the time it takes to reach the internet, the speed of several DNS servers and the Wi-Fi signal, and says where a problem comes from. ==> Mesure la liaison avec votre box, le temps pour atteindre internet, la vitesse de plusieurs serveurs DNS et le signal Wi-Fi, et dit d'où vient un problème.
+Nothing is changed. ==> Rien n'est modifié.
+Nothing to undo. ==> Rien à annuler.
+DNS turns site names into addresses. Your provider's DNS can be slow; Cloudflare, Google or Quad9 are often faster, and some block dangerous sites. Network check (11) shows which one is fastest for you. ==> Le DNS traduit le nom des sites en adresses. Celui de votre fournisseur peut être lent ; Cloudflare, Google ou Quad9 sont souvent plus rapides, et certains bloquent les sites dangereux. Le Test réseau (11) montre lequel est le plus rapide chez vous.
+YSO saves your current DNS settings first, then sets the new ones on every connected adapter. ==> YSO enregistre d'abord vos réglages DNS actuels, puis met les nouveaux sur chaque carte réseau connectée.
+Option 4 on the same screen puts your previous settings back, and so does Undo YSO changes (32). ==> L'option 4 du même écran remet vos réglages d'avant, tout comme Annuler les modifications de YSO (32).
+Empties the list of site addresses Windows remembers. Helps when a site moved, or will not load after a change of DNS or of network. ==> Vide la liste des adresses de sites que Windows retient. Aide quand un site a changé d'adresse, ou ne s'ouvre plus après un changement de DNS ou de réseau.
+Nothing else changes: sites are looked up again. ==> Rien d'autre ne change : les sites sont recherchés à nouveau.
+Resets Winsock and the TCP/IP settings of Windows. A last resort when the internet does not work and nothing else helped. ==> Réinitialise Winsock et les réglages TCP/IP de Windows. En dernier recours, quand internet ne marche pas et que rien d'autre n'a aidé.
+It erases IP and DNS settings typed by hand, can disturb VPN or proxy software until it is set up again, and needs a restart. Your network settings are saved to a file in the logs folder first. ==> Elle efface les réglages IP et DNS saisis à la main, peut perturber les VPN ou les proxys jusqu'à leur reconfiguration, et demande un redémarrage. Vos réglages réseau sont d'abord enregistrés dans un fichier du dossier des journaux.
+Cannot be undone automatically: the saved file lists your previous settings, so you can type them again. ==> Impossible à annuler automatiquement : le fichier enregistré liste vos réglages d'avant, pour que vous puissiez les ressaisir.
+Asks Windows to optimize each drive: TRIM for SSDs (it tells the drive which blocks are free) and defragmentation for hard drives. ==> Demande à Windows d'optimiser chaque disque : TRIM pour les SSD (il indique au disque les blocs libres) et défragmentation pour les disques durs.
+The same as Windows' own Optimize Drives tool. Safe for SSDs: Windows never defragments them. ==> Comme l'outil Optimiser les lecteurs de Windows. Sans danger pour les SSD : Windows ne les défragmente jamais.
+Chooses between Ultimate Performance, High Performance and Balanced. Performance plans keep the processor ready, for a slightly faster PC. ==> Choisit entre Performances optimales, Performances élevées et Utilisation normale. Les modes performance gardent le processeur prêt, pour un PC un peu plus rapide.
+On a laptop they mean more heat, more fan noise and less battery: Balanced is better there. ==> Sur un portable, cela veut dire plus de chaleur, plus de bruit de ventilateur et moins de batterie : Utilisation normale y est préférable.
+Undo YSO changes (32), or choose Balanced here. ==> Annuler les modifications de YSO (32), ou choisissez Utilisation normale ici.
+Lists the programs that start with Windows, with their publisher and how much they slow down startup. Click one to switch it on or off. ==> Liste les programmes qui démarrent avec Windows, avec leur éditeur et combien ils ralentissent le démarrage. Cliquez sur l'un d'eux pour l'activer ou le désactiver.
+It works like Task Manager: the program stays installed and only stops starting by itself. Microsoft Store apps manage their own startup, in Windows Settings. ==> Cela marche comme le Gestionnaire des tâches : le programme reste installé et arrête seulement de démarrer tout seul. Les applications du Microsoft Store gèrent leur démarrage dans les Paramètres de Windows.
+Click it again, or use Undo YSO changes (32). ==> Cliquez de nouveau dessus, ou utilisez Annuler les modifications de YSO (32).
+Reads how long the last startups took, from Windows' own records, and which apps, drivers and services slowed them down. ==> Lit la durée des derniers démarrages dans les relevés de Windows, et quelles applications, pilotes et services les ont ralentis.
+Nothing is changed. Only full startups are measured: Restart, or Shut down when Fast Startup is off. ==> Rien n'est modifié. Seuls les démarrages complets sont mesurés : Redémarrer, ou Arrêter quand le démarrage rapide est désactivé.
+Switches off, with tick boxes: ads and suggestions in Windows, tips on the lock screen, web results (Bing) in the Start menu search, ad tracking, diagnostic data and activity history, Copilot, Recall and Click to Do, the AI features of Edge, Notepad and Paint, and ads in Edge. ==> Désactive, avec des cases à cocher : les publicités et suggestions de Windows, les conseils de l'écran de verrouillage, les résultats web (Bing) dans la recherche du menu Démarrer, le suivi publicitaire, les données de diagnostic et l'historique des activités, Copilot, Recall et Click to Do, les fonctions IA d'Edge, du Bloc-notes et de Paint, et les publicités d'Edge.
+These are the settings Windows and Edge offer for it. Some are policies: Windows or Edge then shows "managed by your organization", which is normal. Some changes show after you sign out. Defender, Windows Update and the Store are never touched. ==> Ce sont les réglages que Windows et Edge prévoient pour cela. Certains sont des stratégies : Windows ou Edge affiche alors « géré par votre organisation », c'est normal. Certains changements apparaissent après une déconnexion. Defender, Windows Update et le Store ne sont jamais touchés.
+Untick a line and Apply to get the Windows default back, or use Undo YSO changes (32) for the exact previous state. ==> Décochez une ligne puis Appliquer pour revenir au réglage de Windows, ou utilisez Annuler les modifications de YSO (32) pour l'état exact d'avant.
+Tick what you do not want, or click Tick the recommended ones. ==> Cochez ce que vous ne voulez pas, ou cliquez sur Cocher les recommandés.
+Click Apply, read the list of changes, and confirm. ==> Cliquez sur Appliquer, lisez la liste des changements, et confirmez.
+Sign out and back in, or let YSO restart File Explorer when it offers to. ==> Déconnectez-vous puis reconnectez-vous, ou laissez YSO redémarrer l'Explorateur quand il le propose.
+Lists your desktop apps with their size and when they were last used. YSO starts the app's own uninstaller, then looks for what it left behind: folders and registry keys named like it. ==> Liste vos applications de bureau avec leur taille et leur dernière utilisation. YSO lance le programme de désinstallation de l'application, puis cherche ce qu'elle a laissé : les dossiers et clés du registre qui portent son nom.
+YSO never offers the folder of another installed app, a system folder, or a name another app also uses. Folders of 1 GB or more start unticked: a folder can hold your own data, like game saves or a mail profile. Runtimes and drivers get a warning. ==> YSO ne propose jamais le dossier d'une autre application installée, un dossier du système, ni un nom qu'une autre application utilise aussi. Les dossiers de 1 Go ou plus sont décochés au départ : un dossier peut contenir vos propres données, comme des sauvegardes de jeu ou un profil de messagerie. Les runtimes et les pilotes ont un avertissement.
+The app can be installed again. Removed folders go to the Recycle Bin and registry keys are saved to a file first: Undo YSO changes (32) puts them back. ==> L'application peut être réinstallée. Les dossiers retirés vont dans la Corbeille et les clés du registre sont d'abord enregistrées dans un fichier : Annuler les modifications de YSO (32) les remet.
+Find the app: sort by size or by last use, or type part of its name. ==> Trouvez l'application : triez par taille ou par dernière utilisation, ou tapez une partie de son nom.
+Click it, read what YSO shows about it, and confirm. ==> Cliquez dessus, lisez ce que YSO en montre, et confirmez.
+Follow the window of its uninstaller to the end. ==> Suivez la fenêtre de sa désinstallation jusqu'au bout.
+Among the leftovers, untick what you want to keep, then click Remove the ticked ones. ==> Parmi les restes, décochez ce que vous voulez garder, puis cliquez sur Supprimer ce qui est coché.
+Every setting YSO changes is written down first, with what it was before: startup programs, power plan, hibernation file, DNS, privacy settings and app leftovers. This list shows them, newest first. ==> Chaque réglage modifié par YSO est d'abord noté, avec ce qu'il était avant : programmes au démarrage, mode d'alimentation, fichier de veille prolongée, DNS, réglages de vie privée et restes d'applications. Cette liste les montre, du plus récent au plus ancien.
+Click one to see what it changed, then confirm: it is back exactly as it was. Cleaned files are not in this list: they are caches that come back by themselves. ==> Cliquez sur l'un d'eux pour voir ce qu'il a changé, puis confirmez : tout revient exactement comme avant. Les fichiers nettoyés ne sont pas dans cette liste : ce sont des caches qui reviennent tout seuls.
+An undone change is marked as such. The last 300 changes are kept. ==> Une modification annulée est marquée comme telle. Les 300 dernières modifications sont gardées.
+Everything about the PC in one report: Windows and hardware, disk space and wear, battery capacity, Windows Update, recent crashes, security and drivers. For each problem, an arrow shows the tool that helps. ==> Tout le PC dans un seul rapport : Windows et matériel, espace et usure des disques, capacité de la batterie, Windows Update, plantages récents, sécurité et pilotes. Pour chaque problème, une flèche montre l'outil qui aide.
+Nothing is changed. It can make Windows' detailed battery report, which opens in your browser. ==> Rien n'est modifié. Il peut créer le rapport détaillé de batterie de Windows, qui s'ouvre dans votre navigateur.
+Shows the recent blue screens, app crashes and serious errors from Windows' logs, and what caused them when Windows knows. ==> Montre les écrans bleus, plantages d'applications et erreurs graves récents des journaux de Windows, et leur cause quand Windows la connaît.
+Nothing is changed. A few errors are normal on every PC: look for the ones that repeat, or happen when you have a problem. ==> Rien n'est modifié. Quelques erreurs sont normales sur tout PC : cherchez celles qui se répètent, ou qui arrivent quand vous avez un problème.
+Checks the antivirus, the firewall and Windows Update. With Microsoft Defender, it can update the virus definitions and run a quick scan (5 to 15 minutes). ==> Vérifie l'antivirus, le pare-feu et Windows Update. Avec Microsoft Defender, il peut mettre à jour les définitions de virus et lancer une analyse rapide (5 à 15 minutes).
+Only Defender's own update and scan: no setting is changed. ==> Seulement la mise à jour et l'analyse de Defender : aucun réglage n'est modifié.
+Lists the scheduled tasks and services that do not come from Microsoft, and whether their program is signed. Takes 10 to 60 seconds. ==> Liste les tâches planifiées et les services qui ne viennent pas de Microsoft, et si leur programme est signé. Prend 10 à 60 secondes.
+Nothing is changed. Not signed does not mean malware. To remove something, uninstall the program it belongs to. ==> Rien n'est modifié. Non signé ne veut pas dire malveillant. Pour retirer quelque chose, désinstallez le programme auquel il appartient.
+Lists the devices with a missing or broken driver, then helps: Device Manager, optional driver updates in Windows Update, or a new scan of the hardware. ==> Liste les appareils dont le pilote manque ou ne marche pas, puis aide : Gestionnaire de périphériques, mises à jour facultatives de pilotes dans Windows Update, ou nouvelle recherche du matériel.
+Nothing is changed unless you choose one of these actions. ==> Rien n'est modifié, sauf si vous choisissez l'une de ces actions.
+Scans each drive for file-system errors, while you keep working. ==> Recherche les erreurs du système de fichiers sur chaque disque, pendant que vous continuez à travailler.
+If errors are found, YSO asks before repairing: other drives are repaired at once, the Windows drive at the next restart, before Windows loads. ==> Si des erreurs sont trouvées, YSO demande avant de réparer : les autres disques sont réparés tout de suite, celui de Windows au prochain redémarrage, avant le chargement de Windows.
+A repair cannot be undone, but it only fixes the records of the file system. ==> Une réparation ne peut pas être annulée, mais elle corrige seulement les registres du système de fichiers.
+Starts Windows Memory Diagnostic, which checks the RAM for faults, a common cause of blue screens and random crashes. It runs after a restart, before Windows loads, and takes 10 to 30 minutes. ==> Lance le Diagnostic de mémoire Windows, qui vérifie la RAM, une cause fréquente d'écrans bleus et de plantages au hasard. Il tourne après un redémarrage, avant le chargement de Windows, et prend 10 à 30 minutes.
+Save your work first. The result shows as a notification when Windows starts again, and here next time. ==> Enregistrez votre travail avant. Le résultat s'affiche dans une notification au redémarrage de Windows, et ici la fois suivante.
+Runs DISM, which repairs Windows' store of system files (it needs internet), then SFC, which repairs the system files from that store. Takes 15 to 45 minutes. ==> Lance DISM, qui répare la réserve de fichiers système de Windows (il faut internet), puis SFC, qui répare les fichiers système à partir de cette réserve. Prend 15 à 45 minutes.
+Only Windows' own files are repaired, with Windows' own tools. ==> Seuls les fichiers de Windows sont réparés, avec les outils de Windows.
+Nothing to undo: the repaired files are the original ones. ==> Rien à annuler : les fichiers réparés sont ceux d'origine.
+Shows which folders fill a drive, biggest first. Click a folder to open it, Back to go up, Biggest files to see the largest files, Show in Explorer to open it there. ==> Montre quels dossiers remplissent un disque, du plus gros au plus petit. Cliquez sur un dossier pour l'ouvrir, Retour pour remonter, Plus gros fichiers pour voir les plus gros fichiers, Voir dans l'Explorateur pour l'ouvrir là.
+Nothing is changed or deleted: it only shows. Delete what you do not need yourself, in File Explorer. ==> Rien n'est modifié ni supprimé : il montre seulement. Supprimez vous-même ce dont vous n'avez pas besoin, dans l'Explorateur.
+Finds app updates (with winget) and driver updates (with Windows Update), and shows them in one list where you tick what to install. YSO can also check on a schedule and tell you, or install safe updates by itself. ==> Trouve les mises à jour d'applications (avec winget) et de pilotes (avec Windows Update), et les montre dans une seule liste où vous cochez ce qu'il faut installer. YSO peut aussi vérifier selon un horaire et vous prévenir, ou installer seul les mises à jour sûres.
+A restore point is made before drivers are installed. In automatic mode, big new versions (7.x to 8.x), optional drivers and the apps you exclude are left for you. Only apps in the winget catalog are checked. ==> Un point de restauration est créé avant l'installation de pilotes. En mode automatique, les grosses nouvelles versions (7.x vers 8.x), les pilotes facultatifs et les applications que vous excluez vous sont laissés. Seules les applications du catalogue winget sont vérifiées.
+An app can be uninstalled, then its previous version installed from its website. A driver can be rolled back in Device Manager, or with the restore point. ==> Une application peut être désinstallée, puis sa version d'avant réinstallée depuis son site. Un pilote peut être restauré dans le Gestionnaire de périphériques, ou avec le point de restauration.
+Click Check for updates now. ==> Cliquez sur Chercher les mises à jour maintenant.
+Tick what to install, then click Install the ticked updates. ==> Cochez ce qu'il faut installer, puis cliquez sur Installer les mises à jour cochées.
+If you want, choose Notify me or Automatic, and when it runs. ==> Si vous voulez, choisissez Me prévenir ou Automatique, et quand ça tourne.
+The disk of a virtual machine is one big file on your PC (.vdi for VirtualBox, .vhdx for WSL and Docker Desktop). It grows when the machine writes, but never shrinks, even when you delete files inside it. Compacting removes the empty space from the file: the file gets smaller, and nothing inside the machine changes. ==> Le disque d'une machine virtuelle est un seul gros fichier sur votre PC (.vdi pour VirtualBox, .vhdx pour WSL et Docker Desktop). Il grossit quand la machine écrit, mais ne rétrécit jamais, même quand vous supprimez des fichiers dedans. Compacter retire l'espace vide du fichier : il devient plus petit, et rien ne change dans la machine.
+YSO refuses a machine that is running, in saved state or with snapshots, and wants VirtualBox and Docker Desktop closed. The file is rewritten in place: a power cut or a crash during compaction can damage it. ==> YSO refuse une machine allumée, en état sauvegardé ou avec des snapshots, et demande que VirtualBox et Docker Desktop soient fermés. Le fichier est réécrit sur place : une coupure de courant ou un plantage pendant le compactage peut l'abîmer.
+Compacting cannot be undone, and does not need to be. Copy a disk you cannot lose before, so you can put it back if something goes wrong. ==> Le compactage ne s'annule pas, et n'en a pas besoin. Copiez avant un disque que vous ne voulez pas perdre, pour pouvoir le remettre si quelque chose tourne mal.
+VirtualBox: compacting only removes empty blocks, and deleted files are not empty until the free space is filled with zeros. Inside the machine, run sdelete -z C: (Windows) or the dd command YSO shows (Linux), then shut the machine down from inside. ==> VirtualBox : le compactage ne retire que les blocs vides, et les fichiers supprimés ne sont pas vides tant que l'espace libre n'est pas rempli de zéros. Dans la machine, lancez sdelete -z C: (Windows) ou la commande dd que YSO affiche (Linux), puis éteignez la machine depuis l'intérieur.
+WSL and Docker: nothing to do inside. YSO frees the unused blocks and stops WSL by itself. ==> WSL et Docker : rien à faire à l'intérieur. YSO libère les blocs inutilisés et arrête WSL lui-même.
+Copy the disk file of the machine somewhere else, an external drive for example: that is your backup. ==> Copiez le fichier disque de la machine ailleurs, sur un disque externe par exemple : c'est votre sauvegarde.
+Keep the PC plugged in. Open Virtual disks, check that the disk says it can be compacted, and confirm. ==> Gardez le PC branché. Ouvrez Disques virtuels, vérifiez que le disque peut être compacté, et confirmez.
+Start the machine to check that it works. Then you can delete the copy. ==> Démarrez la machine pour vérifier qu'elle marche. Ensuite, vous pouvez supprimer la copie.
+Measures how much each part of the cleaning would free. Deletes nothing. ==> Mesure combien chaque partie du nettoyage libérerait. Ne supprime rien.
+Nothing is changed. Deep clean (8) usually frees more on top of it, but cannot be measured in advance. ==> Rien n'est modifié. Le Nettoyage approfondi (8) libère souvent plus en plus, mais ne peut pas être mesuré à l'avance.
+Everything at once: a restore point, then temporary files, browser caches, offline copies of sites, system junk, developer and app caches, GPU caches, the Windows Update cache, DNS, deep clean, and drive optimization. The Recycle Bin and updates only if you choose them. ==> Tout d'un coup : un point de restauration, puis fichiers temporaires, caches des navigateurs, copies hors ligne des sites, fichiers inutiles du système, caches de développement et d'applications, caches GPU, cache de Windows Update, DNS, nettoyage approfondi et optimisation des disques. La Corbeille et les mises à jour seulement si vous les choisissez.
+All the questions are asked at the start, then you can walk away. If Windows is waiting for a restart, restart first: some parts can only be cleaned after it. ==> Toutes les questions sont posées au début, ensuite vous pouvez vous éloigner. Si Windows attend un redémarrage, redémarrez d'abord : certaines parties ne peuvent être nettoyées qu'après.
+The restore point (R) takes Windows and its settings back to before; your documents are not touched by it. ==> Le point de restauration (R) ramène Windows et ses réglages à l'état d'avant ; vos documents n'y sont pas touchés.
+A restore point takes Windows, its settings and your programs back to an earlier state. Your documents are not touched. Here you see yours, create one, keep only the newest, or open System Protection. ==> Un point de restauration ramène Windows, ses réglages et vos programmes à un état antérieur. Vos documents ne sont pas touchés. Ici, vous voyez les vôtres, en créez un, gardez seulement le plus récent, ou ouvrez la Protection du système.
+Deleting old restore points is asked separately, and cannot be undone. ==> Supprimer les anciens points de restauration est demandé à part, et ne peut pas être annulé.
+To go back to a restore point: System Protection, then System Restore. ==> Pour revenir à un point de restauration : Protection du système, puis Restauration du système.
+Cleans by itself every Sunday at 3:00 (or at the next startup if the PC was off), silently, and only when plugged in. You choose what it cleans in Settings. ==> Nettoie tout seul chaque dimanche à 3 h (ou au démarrage suivant si le PC était éteint), sans rien afficher, et seulement sur secteur. Vous choisissez ce qu'il nettoie dans les Paramètres.
+It never closes your apps and never empties the Recycle Bin. It runs as a scheduled task, from C:\Program Files\YSO. ==> Il ne ferme jamais vos applications et ne vide jamais la Corbeille. Il tourne comme tâche planifiée, depuis C:\Program Files\YSO.
+Turn it off here, at any time. ==> Désactivez-le ici, à tout moment.
+Shows what each cleanup freed, with its date, its parts and its total. ==> Montre ce que chaque nettoyage a libéré, avec sa date, ses parties et son total.
+Checks that each part of YSO works on this PC, one line per check. A BROKEN line says what does not work, and why. ==> Vérifie que chaque partie de YSO marche sur ce PC, une ligne par vérification. Une ligne ERREUR dit ce qui ne marche pas, et pourquoi.
+Makes one zip file on your Desktop with the self-test, the error log and recent logs, to send to the developer (a GitHub issue, an email...). ==> Crée un fichier zip sur votre Bureau avec l'autotest, le journal d'erreurs et les journaux récents, à envoyer au développeur (ticket GitHub, e-mail...).
+User names, the PC name, private IP addresses and the Wi-Fi name are removed from it. Nothing is sent by itself: open it and check it before you send it. ==> Les noms d'utilisateurs, le nom du PC, les adresses IP privées et le nom du Wi-Fi en sont retirés. Rien n'est envoyé tout seul : ouvrez-le et vérifiez-le avant de l'envoyer.
+Delete the zip when you no longer need it. ==> Supprimez le zip quand vous n'en avez plus besoin.
+Language, how old temporary files and logs must be before YSO deletes them, what weekly auto-clean cleans, folders YSO must never touch, new versions of YSO, and the icon next to the clock. ==> Langue, âge minimum des fichiers temporaires et des journaux avant que YSO les supprime, ce que nettoie le nettoyage hebdomadaire, dossiers que YSO ne doit jamais toucher, nouvelles versions de YSO, et l'icône à côté de l'horloge.
+Saved in C:\ProgramData\YSO\settings.json. Reset to defaults puts everything back as after installing. ==> Enregistré dans C:\ProgramData\YSO\settings.json. Rétablir les valeurs par défaut remet tout comme après l'installation.
+Change it back here, or use Reset to defaults. ==> Remettez-le ici, ou utilisez Rétablir les valeurs par défaut.
+Opens the folder where YSO writes what it did in each session, and its errors. ==> Ouvre le dossier où YSO note ce qu'il a fait à chaque session, et ses erreurs.
+Optional, in Settings (option 9). Every 6 hours it checks free space, the drives and the battery, and tells you when something needs you, at most once a week for each thing. It also tells you what the weekly cleanup freed. Right-click it to open YSO or to check now. ==> Facultative, dans les Paramètres (option 9). Toutes les 6 heures, elle vérifie l'espace libre, les disques et la batterie, et vous prévient quand quelque chose demande votre attention, au plus une fois par semaine pour chaque chose. Elle dit aussi ce que le nettoyage hebdomadaire a libéré. Clic droit dessus pour ouvrir YSO ou vérifier maintenant.
+It starts with Windows (a scheduled task) and only reads. Uninstalling YSO removes it. ==> Elle démarre avec Windows (une tâche planifiée) et ne fait que lire. Désinstaller YSO la retire.
+Right-click it, then Remove this icon, or use option 9 in Settings. ==> Clic droit dessus, puis Retirer cette icône, ou utilisez l'option 9 des Paramètres.
+When a new version is published, an Update button appears in YSO. It downloads the new version from GitHub, checks its SHA-256 checksum and that PowerShell can read it, then replaces YSO. Your settings and history stay. ==> Quand une nouvelle version est publiée, un bouton de mise à jour apparaît dans YSO. Il télécharge la nouvelle version depuis GitHub, vérifie sa somme SHA-256 et que PowerShell peut la lire, puis remplace YSO. Vos réglages et votre historique restent.
+YSO asks GitHub at most once an hour, when its window opens; you can turn it off in Settings. Installed from the Microsoft Store, YSO is updated by the Store instead. ==> YSO interroge GitHub au plus une fois par heure, à l'ouverture de sa fenêtre ; vous pouvez le désactiver dans les Paramètres. Installé depuis le Microsoft Store, YSO est mis à jour par le Store.
+To go back to an earlier version, download it from the Releases page of YSO on GitHub. ==> Pour revenir à une version précédente, téléchargez-la sur la page Releases de YSO sur GitHub.
+Uninstall YSO ==> Désinstaller YSO
+Settings > Apps > Installed apps > YSO > Uninstall. YSO asks whether to keep its history and settings. ==> Paramètres > Applications > Applications installées > YSO > Désinstaller. YSO demande s'il faut garder son historique et ses réglages.
+Its weekly cleanup, automatic updates and the icon next to the clock stop too. ==> Son nettoyage hebdomadaire, ses mises à jour automatiques et l'icône à côté de l'horloge s'arrêtent aussi.
+Install it again with the same line as the first time. ==> Réinstallez-le avec la même ligne que la première fois.
+GETTING STARTED ==> POUR COMMENCER
+YSO ITSELF ==> YSO LUI-MÊME
+What it does ==> Ce que ça fait
+What changes ==> Ce qui change
+To undo it ==> Pour annuler
+Step by step ==> Étape par étape
+Open this tool ==> Ouvrir cet outil
+Help ==> Aide
+How this tool works ==> Comment marche cet outil
+Search the guide ==> Chercher dans le guide
+What each tool does, what it changes, and how to undo it. Click a line to read it. ==> Ce que fait chaque outil, ce qu'il change, et comment l'annuler. Cliquez sur une ligne pour la lire.
+What each tool does, what it changes, and how to undo it. ==> Ce que fait chaque outil, ce qu'il change, et comment l'annuler.
+The same guide is in YSO: Help, in the window, or G in the console menu. ==> Le même guide est dans YSO : Aide, dans la fenêtre, ou G dans le menu console.
+GUIDE ==> GUIDE
+Guide: what each tool does ==> Guide : chaque outil expliqué
+Number = read it, Enter = back ==> Numéro = le lire, Entrée = retour
+Press Enter to go back to the guide ==> Appuyez sur Entrée pour revenir au guide
+YSO guide ==> Guide de YSO
+Contents ==> Sommaire
+Nothing found. Try another word. ==> Rien trouvé. Essayez un autre mot.
+The home page, Analyze and Clean. ==> La page d'accueil, Analyser et Nettoyer.
+Passwords, documents, games: what stays. ==> Mots de passe, documents, jeux : ce qui reste.
+Tick what to clean, see what it frees. ==> Cochez ce qu'il faut nettoyer, voyez ce que ça libère.
+Alerts when the disk is almost full. ==> Alertes quand le disque est presque plein.
+The Update button, and what it checks. ==> Le bouton de mise à jour, et ce qu'il vérifie.
+Removes YSO from the PC. ==> Retire YSO du PC.
 YSO {0} is no longer on GitHub: it was replaced. YSO looked again. ==> YSO {0} n'est plus sur GitHub : il a été remplacé. YSO a vérifié à nouveau.
 Available now: YSO {0}. Click the update button again. ==> Disponible maintenant : YSO {0}. Cliquez de nouveau sur le bouton de mise à jour.
 You have the newest YSO ({0}): nothing to install. ==> Vous avez le YSO le plus récent ({0}) : rien à installer.
@@ -11541,7 +12060,7 @@ try {
         Write-Host ''
         Invoke-MenuOption $choice
         # Options with their own menu (17, 28, R, O) come back here directly - unless something went wrong.
-        if (@('17', '28', '31', '32', 'R', 'O') -contains $choice -and $script:LastRun.Status -eq 'done') { continue main }
+        if (@('17', '28', '31', '32', 'R', 'O', 'G') -contains $choice -and $script:LastRun.Status -eq 'done') { continue main }
         Wait-Key
     }
 } catch {

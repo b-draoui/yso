@@ -23,6 +23,13 @@ foreach ($c in $ast.FindAll({ $args[0] -is [System.Management.Automation.Languag
     if ($firstArg -contains $name -and $pos.Count -ge 1) { $targets += $pos[0] }
     if ($secondArg -contains $name -and $pos.Count -ge 2) { $targets += $pos[1] }
     if (@('Invoke-Purge','Add-Result') -contains $name -and $named['Category']) { $targets += $named['Category'] }
+    if ($name -eq 'New-HelpTopic') {
+        # the guide: title, what it does, what changes, how to undo it, and the steps
+        foreach ($p in @($pos | Select-Object -Skip 1)) {
+            if ($p -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $targets += $p }
+            else { foreach ($sc in $p.FindAll({ $args[0] -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true)) { $targets += $sc } }
+        }
+    }
     if ($name -eq 'Read-Choice') {
         # -Hint 'Click a folder to open it.' and the labels of -Buttons @(@('B', 'Back'), ...)
         if ($named['Hint']) { $targets += $named['Hint'] }
