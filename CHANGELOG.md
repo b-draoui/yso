@@ -86,6 +86,7 @@ The window reads like an app, not like a terminal. Four new tools: virtual disks
 - **Windows Update cache** is kept when Windows has downloaded updates it has not installed yet (deleting them only made Windows download them again).
 - Readable names for apps found by their cache (Ollama, Outlook, Microsoft Store, Windows Settings...); "yesterday" means the calendar day; copied text no longer shows "Drive C::".
 - The window: a message it cannot show is saved in errors.log and skipped, so the question after it still arrives.
+- **Update button**: an answer from GitHub kept by another version of YSO (before a reinstall) is no longer used, and a version taken back between the offer and the click is not an error: YSO looks again and offers what GitHub has now, or nothing.
 
 ### Tests
 - 746 automated checks in 26 groups on Linux, and on every change, Windows Server 2022, Windows Server 2025 and Windows 11 run the self-test, the update check, a real update install, the installation, and draw 19 pages of the window in English and French. Lists that need real machines or past changes (updates, virtual disks, apps to uninstall, the list of changes) are drawn with sample data.

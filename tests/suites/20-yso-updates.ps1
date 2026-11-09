@@ -58,6 +58,11 @@ $c.Checked = (Get-Date).AddMinutes(-61).ToString('yyyyMMddHHmmss', [System.Globa
 $c | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $script:UpdateCheckPath
 [void](Get-YsoUpdateOffer)
 Check ($script:Calls -eq 2) 'after an hour, GitHub is asked again'
+$c = Get-Content -LiteralPath $script:UpdateCheckPath -Raw | ConvertFrom-Json
+$c.Checked = (Get-Date).ToString('yyyyMMddHHmmss', [System.Globalization.CultureInfo]::InvariantCulture); $c.For = '9.9'
+$c | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $script:UpdateCheckPath
+[void](Get-YsoUpdateOffer)
+Check ($script:Calls -eq 3) 'an answer kept by another version of YSO (before a reinstall) is not used: GitHub is asked again'
 Remove-Item -LiteralPath $script:UpdateCheckPath
 $script:Answer = (New-Release -Tag ('v' + $script:Version) | ConvertTo-Json -Depth 5)
 Check ($null -eq (Get-YsoUpdateOffer)) 'the same version: nothing offered'
@@ -135,6 +140,18 @@ Reset-Target; Set-Download (New-YsoText -Broken)
 Check (-not (Install-YsoUpdate -Release $release -Target $target 6>$null) -and (Get-Content $target -Raw) -match "'1.0'") 'a file PowerShell cannot read (cut or damaged): refused'
 Reset-Target; Set-Download "Write-Host 'hello'`r`n`$script:Version = '1.2'"
 Check (-not (Install-YsoUpdate -Release $release -Target $target 6>$null)) 'a file that is not YSO: refused'
+# a version taken back between the offer and the click: its file is gone (404)
+function Install-YsoUpdate { throw 'Exception calling "GetResponse" with "0" argument(s): "The remote server returned an error: (404) Not Found."' }
+function Get-YsoUpdateOffer([switch]$Force) { $script:Asked = $Force; return $null }
+$script:Asked = $false
+$r = Invoke-YsoSelfUpdate $release $target 6>$null
+Check ($r.Replaced -and -not $r.Updated -and $null -eq $r.Offer -and $script:Asked -and -not (Test-Path $script:UpdateCheckPath)) 'a version taken back meanwhile: not an error, YSO asks GitHub again and finds nothing newer'
+function Get-YsoUpdateOffer([switch]$Force) { return [pscustomobject]@{ Version = [version]'1.0.2' } }
+$r = Invoke-YsoSelfUpdate $release $target 6>$null
+Check ($r.Replaced -and $r.Offer.Version -eq [version]'1.0.2') 'or offers the version that replaced it'
+function Install-YsoUpdate { throw 'The remote name could not be resolved' }
+$r = Invoke-YsoSelfUpdate $release $target 6>$null
+Check (-not $r.Updated -and -not $r.Replaced) 'no internet: a real failure'
 $real = Get-Content -LiteralPath $ScriptPath -Raw
 Check (Test-YsoScriptText $real ([version]$script:Version)) "this YSO.ps1 would be accepted as an update to $($script:Version)"
 

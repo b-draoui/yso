@@ -8987,6 +8987,12 @@ function Start-GuiSelfUpdate {
 }
 
 function Complete-GuiSelfUpdate($Data, [string]$Err) {
+    if ($Data -and $Data.PSObject.Properties['Replaced'] -and $Data.Replaced) {
+        # the version offered was taken back: the button shows what GitHub has now (or goes)
+        Set-GuiRunFinished 'done'
+        Set-GuiUpdateOffer $(if ($Data.Offer -and $Data.Offer.PSObject.Properties['Version']) { $Data.Offer } else { $null })
+        return
+    }
     $ok = [bool]($Data -and $Data.Updated)
     Set-GuiRunFinished $(if ($ok) { 'done' } else { 'failed' })
     if (-not $ok) { return }
@@ -9978,7 +9984,8 @@ function Get-YsoUpdateOffer([switch]$Force) {
         try {
             $c = Get-Content -LiteralPath $script:UpdateCheckPath -Raw | ConvertFrom-Json
             $when = [datetime]::ParseExact("$($c.Checked)", 'yyyyMMddHHmmss', [System.Globalization.CultureInfo]::InvariantCulture)   # no dashes: PowerShell 7 would turn it into a date
-            if (((Get-Date) - $when).TotalMinutes -lt 60 -and ((Get-Date) - $when).TotalMinutes -ge 0) {
+            # kept by this version of YSO only: after a reinstall (another version) GitHub is asked again
+            if ("$($c.For)" -eq $script:Version -and ((Get-Date) - $when).TotalMinutes -lt 60 -and ((Get-Date) - $when).TotalMinutes -ge 0) {
                 $fresh = $true
                 if ($c.Release) { $release = ConvertFrom-YsoRelease $c.Release }
                 if ("$($c.Sum)" -match '^[0-9a-f]{64}$') { $sum = "$($c.Sum)" }
@@ -10006,7 +10013,7 @@ function Get-YsoUpdateOffer([switch]$Force) {
                 $keep = [ordered]@{ tag_name = $release.Tag; body = $release.Notes; html_url = $release.Page; draft = $false; prerelease = $false
                     assets = @([ordered]@{ name = 'YSO.ps1'; browser_download_url = $release.Url; size = 0 }, [ordered]@{ name = 'YSO.ps1.sha256'; browser_download_url = $release.SumUrl; size = 0 }) }
             }
-            [ordered]@{ Checked = (Get-Date).ToString('yyyyMMddHHmmss', [System.Globalization.CultureInfo]::InvariantCulture); Release = $keep; Sum = $sum } |
+            [ordered]@{ Checked = (Get-Date).ToString('yyyyMMddHHmmss', [System.Globalization.CultureInfo]::InvariantCulture); For = $script:Version; Release = $keep; Sum = $sum } |
                 ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $script:UpdateCheckPath -Encoding UTF8
         } catch { }
     }
@@ -10032,15 +10039,37 @@ function Test-YsoScriptText([string]$Text, [version]$Version) {
     return ($Text -match '\$script:ReleaseRepo\s*=' -and $Text -match 'function Install-YsoUpdate\s*\{')
 }
 
+function Test-WebNotFound($ErrorRecord) {
+    # True when a download failed because the file is not there (any more): HTTP 404.
+    $e = $ErrorRecord
+    if ($e -is [System.Management.Automation.ErrorRecord]) { $e = $e.Exception }
+    while ($e) {
+        if ($e -is [System.Net.WebException] -and $e.Response -and [int]$e.Response.StatusCode -eq 404) { return $true }
+        if ("$($e.Message)" -match '\(404\)') { return $true }
+        $e = $e.InnerException
+    }
+    return $false
+}
+
 function Invoke-YsoSelfUpdate($Release, [string]$Target) {
     # The window's Update button: Install-YsoUpdate, with any error saved and shown.
+    # A version taken back meanwhile (its file is gone from GitHub) is not an error: YSO looks again.
     $ok = $false
     try { $ok = Install-YsoUpdate -Release $Release -Target $Target }
     catch {
+        if (Test-WebNotFound $_) {
+            Remove-Item -LiteralPath $script:UpdateCheckPath -Force -ErrorAction SilentlyContinue
+            Write-Warn (L 'YSO {0} is no longer on GitHub: it was replaced. YSO looked again.' $Release.Version)
+            $offer = $null
+            try { $offer = Get-YsoUpdateOffer -Force } catch { }
+            if ($offer) { Write-Info (L 'Available now: YSO {0}. Click the update button again.' $offer.Version) }
+            else { Write-Ok (L 'You have the newest YSO ({0}): nothing to install.' $script:Version) }
+            return [pscustomobject]@{ Updated = $false; Replaced = $true; Offer = $offer }
+        }
         Write-YsoError -Context 'update YSO' -ErrorRecord $_
         Write-Bad (L 'The update failed: {0}' $_.Exception.Message)
     }
-    return [pscustomobject]@{ Updated = [bool]$ok }
+    return [pscustomobject]@{ Updated = [bool]$ok; Replaced = $false; Offer = $null }
 }
 
 function Install-YsoUpdate {
@@ -11300,6 +11329,9 @@ Look for what it left behind anyway? ==> Chercher quand même ce qu'elle a laiss
 Looking for what it left behind... ==> Recherche de ce qu'elle a laissé...
 Microsoft Store package ==> Paquet Microsoft Store
 Name ==> Nom
+YSO {0} is no longer on GitHub: it was replaced. YSO looked again. ==> YSO {0} n'est plus sur GitHub : il a été remplacé. YSO a vérifié à nouveau.
+Available now: YSO {0}. Click the update button again. ==> Disponible maintenant : YSO {0}. Cliquez de nouveau sur le bouton de mise à jour.
+You have the newest YSO ({0}): nothing to install. ==> Vous avez le YSO le plus récent ({0}) : rien à installer.
 not shown ==> non affichée
 No Copilot button on the taskbar, and the Copilot built into Windows is switched off. A Copilot app you installed stays. ==> Plus de bouton Copilot dans la barre des tâches, et le Copilot intégré à Windows est désactivé. Une application Copilot que vous avez installée reste.
 no installed apps found ==> aucune application installée trouvée
