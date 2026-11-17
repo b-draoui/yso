@@ -22,6 +22,7 @@ foreach ($c in $ast.FindAll({ $args[0] -is [System.Management.Automation.Languag
     $targets = @()
     if ($firstArg -contains $name -and $pos.Count -ge 1) { $targets += $pos[0] }
     if ($secondArg -contains $name -and $pos.Count -ge 2) { $targets += $pos[1] }
+    if ($name -eq 'Write-Option' -and $pos.Count -ge 3) { $targets += $pos[2] }   # the grey note under a choice
     if (@('Invoke-Purge','Add-Result') -contains $name -and $named['Category']) { $targets += $named['Category'] }
     if ($name -eq 'New-HelpTopic') {
         # the guide: title, what it does, what changes, how to undo it, and the steps

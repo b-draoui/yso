@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    YSO - Your System Optimizer 1.0.1: a Windows cleaner, health check, updater and maintenance tool.
+    YSO - Your System Optimizer 1.0.2: a Windows cleaner, health check, updater and maintenance tool.
 
 .DESCRIPTION
     One PowerShell script with a window (WPF). English by default; French in Settings.
@@ -188,13 +188,17 @@ function N([string]$Text) { return $Text }   # marks text that is translated lat
 # ==================================================================
 #  Settings & state
 # ==================================================================
-$script:Version       = '1.0.1'
+$script:Version       = '1.0.2'
 $script:DataDir       = Join-Path $env:ProgramData 'YSO'
 $script:LogDir        = Join-Path $script:DataDir 'Logs'
 $script:SettingsPath  = Join-Path $script:DataDir 'settings.json'
 $script:HistoryPath   = Join-Path $script:DataDir 'history.csv'
 $script:DnsBackupPath = Join-Path $script:DataDir 'dns-backup.json'
 $script:JournalPath   = Join-Path $script:DataDir 'changes.json'   # every setting YSO changed, and what it was before (32)
+$script:PcHistoryPath = Join-Path $script:DataDir 'pc-history.csv'   # startup time, free space, startup programs: once a day (35)
+$script:ClassicMenuKey  = 'HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32'   # its empty value = classic right-click menu (37)
+$script:ShellBlockedKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked'   # right-click entries switched off (37)
+$script:WuUxKey         = 'HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings'   # restart hours and pause of Windows Update (28)
 $script:TrayStatePath = Join-Path $script:DataDir 'tray-alerts.json'
 $script:TrayTaskName  = 'YSO Tray'
 $script:TaskName      = 'YSO Weekly Clean'
@@ -231,7 +235,7 @@ $script:StopSignal    = $null    # set by the window: a shared table whose 'Stop
 $script:LastRun       = $null    # what the last option did (status, results, free space): read by the window
 $script:GuiFailure    = ''       # why the window could not open (shown before the console menu opens instead)
 # Every key of the menu that runs an option (Invoke-MenuOption); M, L and Q only change the menu itself.
-$script:MenuKeys      = @(@(1..32 | ForEach-Object { "$_" }) + @('A', 'F', 'R', 'S', 'H', 'T', 'P', 'O', 'G'))
+$script:MenuKeys      = @(@(1..39 | ForEach-Object { "$_" }) + @('A', 'F', 'R', 'S', 'H', 'T', 'P', 'O', 'G'))
 $script:HealthCache   = $null
 $script:DetectedApps  = @()
 $script:DryRun        = [bool]$DryRun
@@ -241,7 +245,9 @@ $script:Settings      = $null
 $script:SettingsError = $false
 $script:SigCache      = @{}
 $script:BrowserProcs  = @('chrome', 'msedge', 'firefox', 'brave', 'opera', 'vivaldi')
-$script:AppProcs      = @('Code', 'Discord', 'Teams', 'ms-teams', 'Spotify', 'steam', 'EpicGamesLauncher')
+$script:AppProcs      = @('Code', 'Discord', 'Teams', 'ms-teams', 'Spotify', 'steam', 'EpicGamesLauncher',
+                         'idea64', 'pycharm64', 'webstorm64', 'rider64', 'clion64', 'goland64', 'phpstorm64', 'rubymine64', 'datagrip64', 'studio64',
+                         'Adobe Premiere Pro', 'AfterFX', 'Adobe Media Encoder', 'Unity', 'UnrealEditor')
 # Apps YSO may offer to close: closing them loses nothing. Never VS Code (unsaved work),
 # Teams (calls) or Steam (games and downloads) - for those it only warns.
 $script:SafeToCloseApps = @('Spotify', 'Discord', 'EpicGamesLauncher')
@@ -1192,7 +1198,7 @@ function Clear-BrowserCaches {
 
 function Clear-SystemJunk {
     $keepDays = [double]$script:Settings.LogMinAgeDays
-    Write-Step (L 'System junk - error reports, crash dumps (also in the temp folders of Windows services), logs older than {0} days, thumbnail cache' $keepDays)
+    Write-Step (L 'System junk - error reports, crash dumps (also in the temp folders of Windows services), logs older than {0} days, thumbnail cache, graphics driver installer leftovers' $keepDays)
     $W  = Esc $env:WINDIR
     $PD = Esc $env:ProgramData
     $targets = @(
@@ -1206,7 +1212,11 @@ function Clear-SystemJunk {
         # Temp folders of Windows services: old crash dumps (.dmp) pile up there, sometimes several GB each.
         # Only files older than the log age, so nothing a running service still uses.
         @{ Path = "$W\ServiceProfiles\LocalService\AppData\Local\Temp"; Days = $keepDays },
-        @{ Path = "$W\ServiceProfiles\NetworkService\AppData\Local\Temp"; Days = $keepDays }
+        @{ Path = "$W\ServiceProfiles\NetworkService\AppData\Local\Temp"; Days = $keepDays },
+        # What graphics driver installers unpack and leave behind (1 to 3 GB): the installed driver does not use it.
+        @{ Path = "$(Esc $env:SystemDrive)\NVIDIA\DisplayDriver"; Days = 1 },
+        @{ Path = "$(Esc $env:SystemDrive)\AMD\*"; Days = 1 },
+        @{ Path = "$PD\NVIDIA Corporation\Downloader"; Days = 2 }
     )
     foreach ($p in $script:Profiles) {
         $L = "$(Esc $p)\AppData\Local"
@@ -1382,7 +1392,6 @@ function Get-AppCacheTargets {
             "$L\pip\Cache",                                               # pip
             "$L\NuGet\v3-cache", "$L\NuGet\plugins-cache",                # NuGet download caches (not your packages)
             "$L\Yarn\Cache",                                              # Yarn 1
-            "$base\.gradle\caches\build-cache-*",                            # Gradle build cache
             "$R\Code\Cache", "$R\Code\CachedData", "$R\Code\Code Cache",  # VS Code
             "$R\Code\GPUCache", "$R\Code\CachedExtensionVSIXs", "$R\Code\logs",
             "$R\discord\Cache", "$R\discord\Code Cache", "$R\discord\GPUCache",
@@ -1412,6 +1421,27 @@ function Get-AppCacheTargets {
             $targets += @{ Path = $log; Days = [double]$script:Settings.LogMinAgeDays }   # keeps recent logs for troubleshooting
         }
         $targets += @{ Path = "$base\.gradle\daemon\*"; Filter = '*.log' }
+        # More developer tools: each one downloads again what a project still needs.
+        $targets += @{ Path = "$base\.gradle\caches\build-cache-*" }              # Gradle: build cache
+        $targets += @{ Path = "$base\.gradle\caches\transforms-*"; Days = 30 }    # Gradle: transformed jars
+        $targets += @{ Path = "$base\.gradle\caches\modules-2\files-2.1"; Days = 90 }   # Gradle: downloaded dependencies
+        $targets += @{ Path = "$base\.m2\repository"; Days = 90 }                  # Maven
+        $targets += @{ Path = "$base\.cargo\registry\cache"; Days = 30 }  # Rust: downloaded crates
+        $targets += @{ Path = "$base\.cargo\registry\src"; Days = 30 }    # Rust: unpacked crates
+        $targets += @{ Path = "$L\go-build" }                               # Go build cache
+        $targets += @{ Path = "$L\uv\cache"; Days = 30 }                   # uv (Python)
+        $targets += @{ Path = "$L\pnpm\store"; Days = 30 }                 # pnpm (projects keep their own links)
+        foreach ($c in @("$base\miniconda3\pkgs", "$base\anaconda3\pkgs", "$base\miniforge3\pkgs", "$L\conda\conda\pkgs")) {
+            $targets += @{ Path = $c; Filter = '*.tar.bz2' }                 # conda: downloaded archives only, never
+            $targets += @{ Path = $c; Filter = '*.conda' }                   # the unpacked packages your environments use
+        }
+        $targets += @{ Path = "$L\JetBrains\*\caches" }                     # JetBrains IDEs: they index the project again
+        $targets += @{ Path = "$L\JetBrains\*\log"; Days = [double]$script:Settings.LogMinAgeDays }
+        # Creative tools: rebuilt from your own files when they are needed again.
+        foreach ($c in @("$R\Adobe\Common\Media Cache Files", "$R\Adobe\Common\Media Cache", "$R\Adobe\Common\Peak Files")) { $targets += @{ Path = $c; Days = 30 } }
+        $targets += @{ Path = "$L\Unity\cache"; Days = 30 }
+        $targets += @{ Path = "$base\AppData\LocalLow\Unity\Caches\GiCache"; Days = 30 }
+        $targets += @{ Path = "$L\UnrealEngine\Common\DerivedDataCache"; Days = 30 }
     }
     $steam = @(Get-SteamRoots)
     if ($steam.Count -gt 0) {
@@ -1526,9 +1556,10 @@ function Get-DetectedAppCacheTargets {
 
 function Clear-DevAppCaches {
     param([switch]$NoPrompt)
-    Write-Step 'Developer & app caches - npm, pip, NuGet, Yarn, Gradle, VS Code, Discord, Teams, Spotify, Steam, Epic, OneDrive logs'
+    Write-Step 'Developer & app caches - npm, pip, NuGet, Yarn, Gradle, Maven, Rust, Go, uv, pnpm, conda, JetBrains, VS Code, Discord, Teams, Spotify, Steam, Epic, Adobe, Unity, Unreal, OneDrive logs'
     Write-Info 'Only caches and old logs: projects, installed packages, settings, logins and game files are not touched.'
     Write-Info 'VS Code: also removes the saved data of projects not opened for 60 days (rebuilt if you open them again).'
+    Write-Info 'Gradle, Maven, Rust, uv, pnpm, Adobe, Unity, Unreal: only files not changed for 30 days (90 for the libraries Gradle and Maven downloaded). A project downloads again what it needs.'
     if (-not $script:DryRun -and -not $NoPrompt) {
         $open = @(Get-Process -Name $script:AppProcs -ErrorAction SilentlyContinue | ForEach-Object { $_.ProcessName } | Sort-Object -Unique)
         $closable = @($open | Where-Object { $script:SafeToCloseApps -contains $_ })
@@ -1542,11 +1573,35 @@ function Clear-DevAppCaches {
         }
     }
     Invoke-Purge -Category 'Developer & app caches' -Targets @(Get-AppCacheTargets)
+    if (-not $script:DryRun -and -not $NoPrompt) { Clear-HuggingFaceModels }
     $other = @(Get-DetectedAppCacheTargets)
     if ($other.Count -gt 0) {
         Write-Step (L 'Other apps built on Chromium (found by their cache layout): {0}' ($script:DetectedApps -join ', '))
         Invoke-Purge -Category 'Other app caches' -Targets $other
     }
+}
+
+function Get-HuggingFaceCaches {
+    # AI models downloaded by programs that use Hugging Face (Python, ComfyUI, LM tools...): often tens of GB.
+    return @(foreach ($p in $script:Profiles) {
+        foreach ($d in @('hub', 'xet')) {
+            $x = [System.IO.Path]::Combine($p, '.cache', 'huggingface', $d)
+            if (Test-Path -LiteralPath $x -PathType Container) { $x }
+        }
+    })
+}
+
+function Clear-HuggingFaceModels {
+    # Only when you say yes: a model can take long to download again.
+    $dirs = @(Get-HuggingFaceCaches)
+    if ($dirs.Count -eq 0) { return }
+    $size = 0L
+    foreach ($d in $dirs) { foreach ($f in (Get-Tree -Root $d).Files) { $size += $f.Length } }
+    if ($size -lt 100MB) { return }
+    Write-Host ''
+    Write-Info (L 'AI models downloaded by programs that use Hugging Face: {0}. A program downloads a model again when it needs it, which can take long.' (Format-Size $size))
+    if (-not (Confirm-Action 'Delete these downloaded AI models too?' $false)) { Write-Info 'Kept.'; return }
+    Invoke-Purge -Category 'AI models (Hugging Face)' -Targets @($dirs | ForEach-Object { @{ Path = (Esc $_) } })
 }
 
 function ConvertTo-VersionSafe([string]$Text) {
@@ -1649,9 +1704,53 @@ function Invoke-DeepClean {
 }
 
 function Remove-WindowsOld {
+    # Option 9: Windows.old, then what big Windows upgrades leave behind.
+    $rollBack = [bool](Remove-WindowsOldFolder)
+    Remove-UpgradeLeftovers $rollBack
+}
+
+function Get-UpgradeLeftovers {
+    # Folders of big Windows upgrades: the setup files ($WINDOWS.~BT), the Media Creation Tool's ($WINDOWS.~WS)
+    # and the Update Assistant's ($GetCurrent). C:\ESD stays: Reset this PC can need it.
+    return @(foreach ($n in @('$WINDOWS.~BT', '$WINDOWS.~WS', '$GetCurrent')) {
+        $x = [System.IO.Path]::Combine("$env:SystemDrive\", $n)
+        if (Test-Path -LiteralPath $x) { $x }
+    })
+}
+
+function Remove-UpgradeLeftovers([bool]$RollBack) {
+    $found = @(Get-UpgradeLeftovers)
+    if ($found.Count -eq 0) { return }
+    Write-Host ''
+    Write-Step 'Leftovers of Windows upgrades'
+    $size = 0L
+    foreach ($x in $found) {
+        $one = 0L
+        foreach ($f in (Get-Tree -Root $x).Files) { $one += $f.Length }
+        $size += $one
+        Write-Kv $x (Format-Size $one)
+    }
+    if ($RollBack) { Write-Info 'Kept while you can still go back to the previous Windows version: going back needs them.'; return }
+    if (@(Get-Process -Name 'SetupHost', 'SetupPrep', 'Windows10UpgraderApp', 'WindowsUpdateBox' -ErrorAction SilentlyContinue).Count -gt 0) {
+        Write-Warn 'A Windows upgrade is running: they are kept. Run this again when it is finished.'
+        return
+    }
+    if ($script:DryRun) { Add-Result -Category 'Upgrade leftovers' -Files -1 -Bytes $size -Skipped 0; return }
+    if (-not (Confirm-Action 'Remove them now?' $true)) { Write-Info 'Kept.'; return }
+    $before = Get-FreeBytes
+    if (@($found | Where-Object { $_ -like '*$WINDOWS.~BT' }).Count -gt 0) { [void](Invoke-CleanMgr -Handlers @('Temporary Setup Files') -Id 4244) }
+    foreach ($x in $found) { if (Test-Path -LiteralPath $x) { Remove-Item -LiteralPath $x -Recurse -Force -ErrorAction SilentlyContinue } }
+    $gain = [math]::Max([long]0, [long]((Get-FreeBytes) - $before))
+    Add-Result -Category 'Upgrade leftovers' -Files -1 -Bytes $gain -Skipped 0
+    if (@($found | Where-Object { Test-Path -LiteralPath $_ }).Count -gt 0) { Write-Warn 'Windows protects part of them: Deep clean (8) removes the rest.' }
+    else { Write-Ok (L 'Upgrade leftovers removed: {0} freed' (Format-Size $gain)) }
+}
+
+function Remove-WindowsOldFolder {
+    # Returns $true while going back to the previous Windows version is still possible.
     Write-Step 'Previous Windows version (Windows.old)'
     $path = Join-Path $env:SystemDrive 'Windows.old'
-    if (-not (Test-Path -LiteralPath $path)) { Write-Ok 'There is no Windows.old folder - nothing to remove.'; return }
+    if (-not (Test-Path -LiteralPath $path)) { Write-Ok 'There is no Windows.old folder - nothing to remove.'; return $false }
     $item = Get-Item -LiteralPath $path -Force
     Write-Info 'Measuring...'
     $size = [long]0
@@ -1675,18 +1774,19 @@ function Remove-WindowsOld {
         }
     }
     if (-not $canRollBack) { Write-Info 'Going back to the previous version is no longer possible, so this is just leftover files.' }
-    if ($script:DryRun) { Add-Result -Category 'Windows.old' -Files -1 -Bytes $size -Skipped 0; return }
-    if (-not (Confirm-Action 'Remove Windows.old now?' (-not $canRollBack))) { Write-Info 'Kept.'; return }
+    if ($script:DryRun) { Add-Result -Category 'Windows.old' -Files -1 -Bytes $size -Skipped 0; return $canRollBack }
+    if (-not (Confirm-Action 'Remove Windows.old now?' (-not $canRollBack))) { Write-Info 'Kept.'; return $canRollBack }
     $before = Get-FreeBytes
     Write-Info 'Running Disk Cleanup (previous Windows installations)...'
     if (-not (Invoke-CleanMgr -Handlers @('Previous Installations') -Id 4243)) {
         Write-Warn 'Disk Cleanup is not available on this Windows build.'
-        return
+        return $canRollBack
     }
     $gain = [math]::Max([long]0, [long]((Get-FreeBytes) - $before))
     Add-Result -Category 'Windows.old' -Files -1 -Bytes $gain -Skipped 0
     if (Test-Path -LiteralPath $path) { Write-Warn 'Part of Windows.old is still there. Restart and run this again.' }
     else { Write-Ok (L 'Windows.old removed: {0} freed' (Format-Size $gain)) }
+    return $false
 }
 
 function Set-Hibernation {
@@ -2366,6 +2466,12 @@ function Get-HealthItems {
         else { $items.Add((New-HealthItem (N 'App updates') 'Info' (L 'manual - never checked with YSO') '28')) }
     } catch { }
     try {
+        Save-PcSnapshot
+        $p = Get-PcProgress @(Read-PcHistory)
+        $t = Get-PcProgressText $p
+        if ($t) { $items.Add((New-HealthItem (N 'Over time') 'Info' (L 'since {0}: {1}' $p.Since.ToString('d') $t) '35')) }
+    } catch { }
+    try {
         $up = (Get-Date) - (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime
         if ($up.TotalDays -gt 14) { $items.Add((New-HealthItem (N 'Restart') 'Warn' (L 'not restarted for {0} days - Restart (not Shut down) once in a while' ([int]$up.TotalDays)))) }
     } catch { }
@@ -2491,6 +2597,8 @@ function Show-HealthReport {
             if (Test-Path -LiteralPath $out) { Start-Process explorer.exe -ArgumentList "`"$out`"" }
         }
     }
+    Write-Host ''
+    if (Confirm-Action 'Save a one-page PDF of this report on your Desktop (to send to someone who helps you)?' $false) { Save-HealthReportPdf }
 }
 
 function Show-RecentProblems {
@@ -3225,7 +3333,10 @@ function Show-VDiskList([object[]]$Disks) {
     foreach ($d in $Disks) {
         Write-Host ('  ' + (Get-Truncated $d.Name 26).PadRight(28)) -NoNewline
         Write-Host ((L $d.Kind).PadRight(14)) -NoNewline -ForegroundColor DarkGray
-        Write-Host ((Format-Size $d.Size).PadRight(12)) -NoNewline
+        # VirtualBox shows the most a disk can grow to (52 GB); the file only holds what was written
+        $size = Format-Size $d.Size
+        if ($d.PSObject.Properties['Capacity'] -and $d.Capacity -gt $d.Size) { $size = L '{0} (max {1})' $size (Format-Size $d.Capacity) }
+        Write-Host ($size.PadRight(26)) -NoNewline
         if ($d.Ready) { Write-Host (L 'ready') -ForegroundColor Green } else { Write-Host (L $d.Why) -ForegroundColor Yellow }
     }
     Write-Host ''
@@ -3247,27 +3358,64 @@ function Show-VDiskAdvice([object[]]$Disks) {
     if ($grow -gt 0) { Write-Info (L 'While the zeros are written, the disk file grows up to its full size: keep {0} free on the drive of the machine.' (Format-Size $grow)) }
 }
 
-function Read-VDiskChoice([object[]]$Disks) {
-    # The list, then the choice: 'R' = check again, @() = back, or the disks to compact.
+function Read-VDiskChoice([object[]]$Disks, [bool]$Docker = $false) {
+    # The list, then the choice: 'R' = check again, 'D' = clean Docker, @() = back, or the disks to compact.
     Show-VDiskList $Disks
     $ready = @($Disks | Where-Object { $_.Ready })
     if ($ready.Count -eq 0) {
         Write-Warn 'No disk can be compacted right now: see the reason next to each one.'
+        if ($Docker) { Write-Option 'D' 'Clean Docker first (unused images, containers, build cache)' }
         Write-Option 'R' 'Check again'
         Write-Option '0' 'Back'
-        if ((Read-Choice) -eq 'R') { return 'R' }
+        $c = Read-Choice
+        if ($c -eq 'R' -or ($Docker -and $c -eq 'D')) { return $c }
         return @()
     }
     Show-VDiskAdvice $ready
     for ($i = 0; $i -lt $ready.Count; $i++) { Write-Option "$($i + 1)" (L 'Compact {0} ({1})' $ready[$i].Name (Format-Size $ready[$i].Size)) }
     if ($ready.Count -gt 1) { Write-Option 'A' 'Compact all the ready ones' }
+    if ($Docker) { Write-Option 'D' 'Clean Docker first (unused images, containers, build cache)' }
     Write-Option 'R' 'Check again'
     Write-Option '0' 'Back'
     $c = Read-Choice
-    if ($c -eq 'R') { return 'R' }
+    if ($c -eq 'R' -or ($Docker -and $c -eq 'D')) { return $c }
     if ($c -eq 'A') { return $ready }
     if ($c -match '^\d+$' -and [int]$c -ge 1 -and [int]$c -le $ready.Count) { return @($ready[[int]$c - 1]) }
     return @()
+}
+
+function Get-DockerExe {
+    $c = Get-Command docker.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($c) { return $c.Source }
+    if ($env:ProgramFiles) {
+        $p = [System.IO.Path]::Combine($env:ProgramFiles, 'Docker\Docker\resources\bin\docker.exe')
+        if (Test-Path -LiteralPath $p) { return $p }
+    }
+    return ''
+}
+
+function Invoke-DockerPrune {
+    # Docker's own cleanup: what no container uses. Volumes (your data) are never removed.
+    # The space is freed inside Docker's disk; compacting that disk gives it back to Windows.
+    $exe = Get-DockerExe
+    if (-not $exe) { return }
+    Write-Host ''
+    Write-Step 'Docker: stopped containers, unused networks, unused build cache, images without a name'
+    & $exe info --format '{{.ServerVersion}}' 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) { Write-Warn 'Start Docker Desktop first: Docker only cleans itself while it runs.'; return }
+    foreach ($line in @(& $exe system df 2>$null)) { if ("$line".Trim()) { Write-Host ('    ' + "$line") -ForegroundColor Gray } }
+    Write-Info 'Your volumes (the data of your containers) stay.'
+    $all = Confirm-Action 'Also remove the images no container uses? They download again when you need them.' $false
+    if (-not (Confirm-Action 'Clean Docker now?' $true)) { Write-Info 'Nothing was changed.'; return }
+    $cmd = @('system', 'prune', '-f')
+    if ($all) { $cmd += '-a' }
+    Write-YsoProgress -Activity (L 'Cleaning Docker') -Status '' -Percent -1
+    $out = @(& $exe @cmd 2>&1)
+    Write-YsoProgress -Activity (L 'Cleaning Docker') -Completed
+    $gain = @($out | ForEach-Object { if ("$_" -match 'reclaimed space:\s*(.+)$') { $Matches[1].Trim() } }) | Select-Object -Last 1
+    if ($LASTEXITCODE -ne 0) { Write-Warn (L 'Docker stopped with code {0}: {1}' $LASTEXITCODE ((@($out) | Select-Object -Last 2) -join ' ')); return }
+    Write-Ok (L 'Docker cleaned: {0} freed inside its disk.' $(if ($gain) { $gain } else { '0B' }))
+    Write-Info 'To give this space back to Windows: quit Docker Desktop (icon next to the clock, Quit), then compact its disk here.'
 }
 
 function Invoke-VDiskCompact {
@@ -3277,7 +3425,12 @@ function Invoke-VDiskCompact {
         $disks = @(Get-VirtualDisks)
         if ($disks.Count -eq 0) { Write-Info 'No virtual machine disks found (VirtualBox, WSL, Docker Desktop).'; return }
         if ($script:DryRun) { Show-VDiskList $disks; Write-Info 'Analyze-only mode: nothing was changed.'; return }
-        $r = @(Read-VDiskChoice $disks)
+        $r = @(Read-VDiskChoice $disks ([bool](Get-DockerExe)))
+        if ($r.Count -eq 1 -and $r[0] -is [string] -and $r[0] -eq 'D') {
+            Invoke-DockerPrune
+            [void](Read-Choice 'Press Enter to continue' -Buttons @(, @('', 'OK')))
+            $r = @('R')
+        }
         if ($r.Count -eq 1 -and $r[0] -is [string] -and $r[0] -eq 'R') { Clear-Host; Write-Section 'VIRTUAL DISKS'; continue }
         $chosen = @($r | Where-Object { $_ -isnot [string] })
         if ($chosen.Count -eq 0) { return }
@@ -3347,6 +3500,12 @@ function Read-RegValue([string]$Path, [string]$Name) {
 
 function Write-RegValue([string]$Path, [string]$Name, $Value, [string]$Type = 'DWord') {
     if (-not (Test-Path -LiteralPath $Path)) { New-Item -Path $Path -Force | Out-Null }
+    if (-not $Name) {
+        # the key's own (default) value: New-ItemProperty does not take an empty name
+        $k = (Get-Item -LiteralPath $Path -ErrorAction Stop).OpenSubKey('', $true)
+        try { $k.SetValue('', "$Value", [Microsoft.Win32.RegistryValueKind]::String) } finally { $k.Close() }
+        return
+    }
     switch ($Type) {
         'Binary'      { if ($Value -is [string]) { $Value = [Convert]::FromBase64String($Value) } }
         'MultiString' { $Value = [string[]]@($Value) }
@@ -3358,7 +3517,13 @@ function Write-RegValue([string]$Path, [string]$Name, $Value, [string]$Type = 'D
 }
 
 function Remove-RegValue([string]$Path, [string]$Name) {
-    if (Test-Path -LiteralPath $Path) { Remove-ItemProperty -LiteralPath $Path -Name $Name -Force -ErrorAction SilentlyContinue }
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    if (-not $Name) {
+        $k = (Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue).OpenSubKey('', $true)
+        if ($k) { try { $k.DeleteValue('', $false) } finally { $k.Close() } }
+        return
+    }
+    Remove-ItemProperty -LiteralPath $Path -Name $Name -Force -ErrorAction SilentlyContinue
 }
 
 function Get-MissingRegParent([string]$Path) {
@@ -3467,6 +3632,10 @@ function Get-ChangeItemText($Item) {
         'dns'       { return (L 'DNS servers of {0}' ((@($Item.Adapters) | ForEach-Object { "$($_.Name)" }) -join ', ')) }
         'recycled'  { return (L 'Folder {0} (in the Recycle Bin)' "$($Item.Path)") }
         'regkey'    { return (L 'Registry key {0} (saved in {1})' "$($Item.Key)" (Split-Path -Leaf "$($Item.File)")) }
+        'compactos' { return (L 'Compact OS (Windows files compressed)') }
+        'reserved'  { return (L 'Space reserved for Windows updates') }
+        'shadow'    { return (L 'Space for restore points on {0}' "$($Item.Drive)") }
+        'appx'      { return (L 'App {0} (installed again from the Microsoft Store)' "$($Item.Name)") }
     }
     return "$($Item.Kind)"
 }
@@ -3583,6 +3752,30 @@ function Undo-ChangeItem($Item) {
             & reg.exe import "$($Item.File)" 2>&1 | Out-Null
             return ($LASTEXITCODE -eq 0)
         }
+        'compactos' {
+            & compact.exe $(if ($Item.Before) { '/compactos:always' } else { '/compactos:never' }) 2>&1 | Out-Null
+            return ($LASTEXITCODE -eq 0)
+        }
+        'reserved' {
+            Set-WindowsReservedStorageState -State "$($Item.Before)" -ErrorAction Stop | Out-Null
+            return $true
+        }
+        'shadow' {
+            $d = "$($Item.Drive)"
+            $max = $(if ([long]$Item.Before -lt 0) { 'UNBOUNDED' } else { '{0}MB' -f [math]::Floor([long]$Item.Before / 1MB) })
+            & vssadmin.exe Resize ShadowStorage "/For=$d" "/On=$d" "/MaxSize=$max" 2>&1 | Out-Null
+            return ($LASTEXITCODE -eq 0)
+        }
+        'appx' {
+            # Still on the PC for Windows (another account, or ready for new ones): registered again at once.
+            # Otherwise its page opens in the Microsoft Store, to install it from there.
+            $copy = @(Get-AppxPackage -AllUsers -Name "$($Item.Pkg)" -ErrorAction SilentlyContinue | Where-Object { $_.InstallLocation -and (Test-Path -LiteralPath (Join-Path $_.InstallLocation 'AppxManifest.xml')) }) | Select-Object -First 1
+            if ($copy) {
+                try { Add-AppxPackage -Register (Join-Path $copy.InstallLocation 'AppxManifest.xml') -DisableDevelopmentMode -ErrorAction Stop; return $true } catch { }
+            }
+            Start-Process ("ms-windows-store://pdp/?PFN=" + "$($Item.Family)")
+            return $true
+        }
     }
     return $false
 }
@@ -3626,7 +3819,7 @@ function Show-UndoCenter([object[]]$Sample = $null) {
         [array]::Reverse($list)
         Write-Host ''
         if ($list.Count -eq 0) {
-            Write-Info 'Nothing yet. Changes made by Privacy & ads (30), Uninstall apps (31), Startup programs (17), Power plan (16), Change DNS servers (12) and Hibernation file (10) show up here.'
+            Write-Info 'Nothing yet. Settings changed by YSO show up here: privacy, apps removed, startup programs, power plan, DNS servers, hibernation, right-click menu, performance mode, Windows Update hours and pause, space settings of Windows.'
             return
         }
         Show-ChangeList $list
@@ -4203,14 +4396,14 @@ function Show-Uninstaller([object[]]$Sample = $null) {
         Clear-Host
         Write-Section 'UNINSTALL APPS'
         Write-Info 'Choose an app: YSO starts its own uninstaller, then shows what it left behind (folders, settings) and removes what you tick, to the Recycle Bin.'
-        Write-Info 'Apps from the Microsoft Store are uninstalled in Settings > Apps.'
+        Write-Info 'Apps from the Microsoft Store are uninstalled in Settings > Apps. W shows the apps Windows put on the PC (Candy Crush, TikTok...): YSO removes those too.'
         $list = @(Get-SortedApps $all $sort $filter)
         Write-Host ''
         if ($filter) { Write-Info (L '{0} app(s) with "{1}" in their name.' $list.Count $filter) }
         else { Write-Info (L '{0} apps.' $list.Count) }
         if ($list.Count -gt 0) { Show-AppList $list }
         Write-Host ''
-        $c = Read-Choice 'Number = uninstall, S = biggest first, U = least used first, N = by name, or type part of a name. Enter = back' -Buttons @(@('S', 'Biggest first'), @('U', 'Least used first'), @('N', 'By name'), @('', 'Back')) -Hint 'Click an app to uninstall it. To find one, type part of its name.' -KeepCase
+        $c = Read-Choice 'Number = uninstall, S = biggest first, U = least used first, N = by name, W = apps Windows put on the PC, or type part of a name. Enter = back' -Buttons @(@('S', 'Biggest first'), @('U', 'Least used first'), @('N', 'By name'), @('W', 'Pre-installed apps'), @('', 'Back')) -Hint 'Click an app to uninstall it. To find one, type part of its name.' -KeepCase
         if (-not $c) {
             if ($filter) { $filter = ''; continue }
             return
@@ -4218,6 +4411,7 @@ function Show-Uninstaller([object[]]$Sample = $null) {
         if ($c -match '^[sS]$') { $sort = 'size' }
         elseif ($c -match '^[uU]$') { $sort = 'used' }
         elseif ($c -match '^[nN]$') { $sort = 'name' }
+        elseif ($c -match '^[wW]$') { if ($null -ne $Sample) { return }; Show-PreinstalledApps }
         elseif ($c -match '^\d+$') {
             if ($null -ne $Sample) { return }
             if ([int]$c -ge 1 -and [int]$c -le $list.Count) {
@@ -4227,6 +4421,1162 @@ function Show-Uninstaller([object[]]$Sample = $null) {
                 Set-AppLastUsed $all (Get-PrefetchTimes)
             }
         } else { $filter = $c.Trim() }
+    }
+}
+
+# ==================================================================
+#  MORE SPACE FROM WINDOWS  (33) - settings of Windows itself that give space back, each with
+#  what it costs: Compact OS, the space reserved for updates, the space for restore points,
+#  OneDrive files not opened for a long time, a search index that grew too big.
+#  YSO asks before each one; Undo YSO changes (32) puts back the three settings.
+# ==================================================================
+function Test-CompactOs {
+    # $true when Windows' files are compressed (Compact OS), $false when not, $null when unknown.
+    # Asked to Windows itself (WofIsExternalFile on its own programs): the same in every language.
+    try {
+        if (-not ('YsoNative.YsoWof' -as [type])) {
+            Add-Type -Namespace 'YsoNative' -Name 'YsoWof' -MemberDefinition @'
+[DllImport("wofutil.dll", CharSet = CharSet.Unicode)]
+public static extern int WofIsExternalFile(string FilePath, out int IsExternalFile, out uint Provider, System.IntPtr ExternalFileInfo, ref uint BufferLength);
+'@ -ErrorAction Stop
+        }
+        foreach ($f in @("$env:WINDIR\System32\cmd.exe", "$env:WINDIR\System32\kernel32.dll", "$env:WINDIR\explorer.exe")) {
+            if (-not (Test-Path -LiteralPath $f)) { continue }
+            $ext = 0; $prov = [uint32]0; $len = [uint32]0
+            $hr = [YsoNative.YsoWof]::WofIsExternalFile($f, [ref]$ext, [ref]$prov, [System.IntPtr]::Zero, [ref]$len)
+            if ($hr -eq 0 -and $ext -ne 0) { return $true }
+        }
+        return $false
+    } catch { return $null }
+}
+
+function Get-ReservedStorageState {
+    # 'Enabled', 'Disabled' or '' (Windows 10 before 1903, or unknown).
+    try { return "$((Get-WindowsReservedStorageState -ErrorAction Stop).ReservedStorageState)" } catch { return '' }
+}
+
+function Get-ShadowStorage {
+    # Space Windows may use for restore points on the Windows drive: Max (bytes, or -1 = no limit), Used, Size of the drive.
+    try {
+        $vol = @(Get-CimInstance -ClassName Win32_Volume -Filter "DriveLetter = '$($env:SystemDrive)'" -ErrorAction Stop)[0]
+        if (-not $vol) { return $null }
+        $ss = @(Get-CimInstance -ClassName Win32_ShadowStorage -ErrorAction Stop | Where-Object { "$($_.Volume.DeviceID)" -eq "$($vol.DeviceID)" })[0]
+        if (-not $ss) { return $null }
+        $max = [double]$ss.MaxSpace
+        return [pscustomobject]@{ Max = $(if ($max -ge [double]$vol.Capacity) { -1L } else { [long]$max }); Used = [long]$ss.UsedSpace; Size = [long]$vol.Capacity }
+    } catch { return $null }
+}
+
+function Get-OneDriveFolders {
+    # The OneDrive folders of this account (personal, work or school).
+    return @(@($env:OneDriveConsumer, $env:OneDriveCommercial, $env:OneDrive) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Container) } | Select-Object -Unique)
+}
+
+function Get-OneDriveIdleFiles([string[]]$Folders, [int]$Days = 60) {
+    # Files of OneDrive kept on this PC but not opened or changed for $Days days, and not set to
+    # "Always keep on this device". Read-only.
+    $cutoff = (Get-Date).AddDays(-$Days)
+    $pinned = 0x80000; $unpinned = 0x100000; $recall = 0x400000; $offline = 0x1000
+    $out = New-Object System.Collections.Generic.List[System.IO.FileInfo]
+    foreach ($root in $Folders) {
+        foreach ($f in (Get-Tree -Root $root).Files) {
+            $a = [int]$f.Attributes
+            if ($a -band ($pinned -bor $unpinned -bor $recall -bor $offline)) { continue }
+            $last = $f.LastWriteTime
+            if ($f.LastAccessTime -gt $last) { $last = $f.LastAccessTime }
+            if ($last -lt $cutoff -and $f.Length -gt 0) { $out.Add($f) }
+        }
+    }
+    return , $out.ToArray()
+}
+
+function Get-SearchIndexSize {
+    $dir = [System.IO.Path]::Combine("$env:ProgramData", 'Microsoft\Search\Data\Applications\Windows')
+    if (-not (Test-Path -LiteralPath $dir)) { return 0L }
+    $sum = 0L
+    foreach ($f in (Get-Tree -Root $dir).Files) { $sum += $f.Length }
+    return $sum
+}
+
+function Show-WindowsSpace($Sample = $null) {
+    # -Sample: made-up states for the window's pictures; choosing a line only ends the page.
+    while ($true) {
+        Clear-Host
+        Write-Section 'MORE SPACE FROM WINDOWS'
+        Write-Info 'Settings of Windows that give space back. Each one says what it costs; YSO asks before changing anything, and Undo YSO changes (32) puts the settings back.'
+        if ($null -ne $Sample) {
+            $compact = $Sample.Compact; $reserved = $Sample.Reserved; $shadow = $Sample.Shadow; $od = @($Sample.OneDrive)
+            $idle = @(1..$Sample.IdleCount); $idleBytes = [long]$Sample.IdleBytes; $index = [long]$Sample.Index
+        } else {
+            Write-Step 'Looking at Windows...'
+            $compact = Test-CompactOs
+            $reserved = Get-ReservedStorageState
+            $shadow = Get-ShadowStorage
+            $od = @(Get-OneDriveFolders)
+            $idle = $(if ($od.Count) { Get-OneDriveIdleFiles $od } else { @() })
+            $idleBytes = 0L; foreach ($f in $idle) { $idleBytes += $f.Length }
+            $index = Get-SearchIndexSize
+        }
+        Clear-Host
+        Write-Section 'MORE SPACE FROM WINDOWS'
+        Write-Info 'Settings of Windows that give space back. Each one says what it costs; YSO asks before changing anything, and Undo YSO changes (32) puts the settings back.'
+        Write-Host ''
+        Write-Option '1' 'Compress Windows files (Compact OS)' $(if ($compact -eq $true) { L 'On already.' } elseif ($compact -eq $false) { L 'Off. Usually gives back 2 to 4 GB.' } else { L 'Usually gives back 2 to 4 GB.' })
+        Write-Option '2' 'Space reserved for Windows updates' $(if ($reserved -eq 'Enabled') { L 'On: about 7 GB kept free for updates.' } elseif ($reserved -eq 'Disabled') { L 'Off already.' } else { L 'Not available on this Windows.' })
+        Write-Option '3' 'Space for restore points' $(if ($shadow) { L 'Up to {0} ({1} used now).' $(if ($shadow.Max -lt 0) { L 'no limit' } else { Format-Size $shadow.Max }) (Format-Size $shadow.Used) } else { L 'System Protection is off: no space used.' })
+        Write-Option '4' 'OneDrive files not opened for 60 days' $(if ($od.Count -eq 0) { L 'OneDrive is not set up on this PC.' } else { L '{0} files, {1} on this PC.' $idle.Count (Format-Size $idleBytes) })
+        Write-Option '5' 'Windows search index' (L '{0} now. Worth rebuilding when it is over 1 GB.' (Format-Size $index))
+        Write-Option '0' 'Back'
+        $c = Read-Choice -Buttons @(, @('0', 'Back')) -Hint 'Click a line to see what it does and what it costs.'
+        if ($null -ne $Sample) { return }
+        Write-Host ''
+        switch ($c) {
+            '1' { Set-CompactOsChoice $compact }
+            '2' { Set-ReservedStorageChoice $reserved }
+            '3' { Set-ShadowStorageChoice $shadow }
+            '4' { Invoke-OneDriveFreeUp $idle $idleBytes }
+            '5' { Reset-SearchIndex $index }
+            default { return }
+        }
+        [void](Read-Choice 'Press Enter to continue' -Buttons @(, @('', 'OK')))
+    }
+}
+
+function Set-CompactOsChoice($On) {
+    Write-Step 'Compress Windows files (Compact OS)'
+    Write-Info 'Windows compresses its own program files, like a zip file it opens by itself. It usually gives back 2 to 4 GB.'
+    Write-Info 'Cost: a little more processor work when Windows loads a file (not noticeable on a recent PC). It takes 10 to 20 minutes.'
+    if ($script:DryRun) { Write-Info 'Analyze-only mode: nothing was changed.'; return }
+    $turnOn = ($On -ne $true)
+    if (-not (Confirm-Action $(if ($turnOn) { N 'Compress Windows files now?' } else { N 'Compact OS is on. Uncompress Windows files now? (uses 2 to 4 GB again)' }) $turnOn)) { Write-Info 'Nothing was changed.'; return }
+    $before = Get-FreeBytes
+    Write-YsoProgress -Activity (L 'Compressing Windows files') -Status (L 'This takes 10 to 20 minutes.') -Percent -1
+    $out = & compact.exe $(if ($turnOn) { '/compactos:always' } else { '/compactos:never' }) 2>&1
+    $code = $LASTEXITCODE
+    Write-YsoProgress -Activity (L 'Compressing Windows files') -Completed
+    if ($code -ne 0) { Write-Warn (L 'compact.exe stopped with code {0}: {1}' $code ((@($out) | Select-Object -Last 2) -join ' ')); return }
+    $c = New-ChangeEntry (N 'More space from Windows') $(if ($turnOn) { N 'Windows files compressed (Compact OS)' } else { N 'Windows files uncompressed' })
+    [void]$c.Items.Add([pscustomobject]@{ Kind = 'compactos'; Before = [bool]$On })
+    Add-ChangeEntry $c
+    $gain = [long]((Get-FreeBytes) - $before)
+    if ($turnOn) { Add-Result -Category 'Compact OS' -Files -1 -Bytes ([math]::Max(0L, $gain)) -Skipped 0; Write-Ok (L 'Done: {0} freed.' (Format-Size ([math]::Max(0L, $gain)))) }
+    else { Write-Ok 'Done: Windows files are uncompressed.' }
+}
+
+function Set-ReservedStorageChoice([string]$State) {
+    Write-Step 'Space reserved for Windows updates'
+    if (-not $State) { Write-Info 'This Windows has no reserved storage.'; return }
+    Write-Info 'Windows keeps about 7 GB aside so that updates can always install. Switched off, that space is yours.'
+    Write-Info 'Cost: when the disk is almost full, a big update may fail to install until you free some space.'
+    if ($State -eq 'Disabled') {
+        if ($script:DryRun -or -not (Confirm-Action 'It is off. Switch it back on?' $false)) { Write-Info 'Nothing was changed.'; return }
+        $new = 'Enabled'
+    } else {
+        if ($script:DryRun -or -not (Confirm-Action 'Switch off the space reserved for updates?' $false)) { Write-Info 'Nothing was changed.'; return }
+        $new = 'Disabled'
+    }
+    try { Set-WindowsReservedStorageState -State $new -ErrorAction Stop | Out-Null }
+    catch {
+        Write-Warn (L 'Windows refused: {0}' $_.Exception.Message)
+        Write-Info 'Windows does not change it while updates are being installed: restart, then try again.'
+        return
+    }
+    $c = New-ChangeEntry (N 'More space from Windows') $(if ($new -eq 'Disabled') { N 'Space reserved for updates: off' } else { N 'Space reserved for updates: on' })
+    [void]$c.Items.Add([pscustomobject]@{ Kind = 'reserved'; Before = $State })
+    Add-ChangeEntry $c
+    Write-Ok $(if ($new -eq 'Disabled') { L 'Done: the reserved space is free now.' } else { L 'Done: Windows reserves space for updates again.' })
+}
+
+function Get-ShadowCap([long]$Size) {
+    # The proposed limit for restore points: 5 % of the drive, at least 5 GB.
+    return [long][math]::Max(5GB, [math]::Floor($Size * 0.05))
+}
+
+function Set-ShadowStorageChoice($Shadow) {
+    Write-Step 'Space for restore points'
+    if (-not $Shadow) { Write-Info 'System Protection is off on the Windows drive: restore points use no space. Restore points (R) can switch it on.'; return }
+    $cap = Get-ShadowCap $Shadow.Size
+    Write-Kv 'Can use up to' $(if ($Shadow.Max -lt 0) { L 'no limit' } else { Format-Size $Shadow.Max })
+    Write-Kv 'Used now' (Format-Size $Shadow.Used)
+    if ($Shadow.Max -ge 0 -and $Shadow.Max -le $cap) { Write-Ok (L 'Already limited to {0}: nothing to do.' (Format-Size $Shadow.Max)); return }
+    Write-Info (L 'YSO can limit it to {0} (5 % of the drive). That is enough for several restore points.' (Format-Size $cap))
+    if ($Shadow.Used -gt $cap) { Write-Warn 'They use more than that now: Windows deletes the oldest restore points to fit.' }
+    if ($script:DryRun -or -not (Confirm-Action (L 'Limit restore points to {0}?' (Format-Size $cap)) $true)) { Write-Info 'Nothing was changed.'; return }
+    $before = Get-FreeBytes
+    $out = & vssadmin.exe Resize ShadowStorage "/For=$($env:SystemDrive)" "/On=$($env:SystemDrive)" "/MaxSize=$([math]::Floor($cap / 1MB))MB" 2>&1
+    if ($LASTEXITCODE -ne 0) { Write-Warn (L 'vssadmin stopped with code {0}: {1}' $LASTEXITCODE ((@($out) | Where-Object { "$_".Trim() } | Select-Object -Last 2) -join ' ')); return }
+    $c = New-ChangeEntry (N 'More space from Windows') (N 'Restore points limited to {0}') @((Format-Size $cap))
+    [void]$c.Items.Add([pscustomobject]@{ Kind = 'shadow'; Drive = "$env:SystemDrive"; Before = $Shadow.Max })
+    Add-ChangeEntry $c
+    $gain = [math]::Max(0L, [long]((Get-FreeBytes) - $before))
+    if ($gain -gt 0) { Add-Result -Category 'Restore point space' -Files -1 -Bytes $gain -Skipped 0 }
+    Write-Ok (L 'Done: restore points can use up to {0}.' (Format-Size $cap))
+}
+
+function Invoke-OneDriveFreeUp([object[]]$Files, [long]$Bytes) {
+    Write-Step 'OneDrive files not opened for 60 days'
+    if (@(Get-OneDriveFolders).Count -eq 0) { Write-Info 'OneDrive is not set up on this PC.'; return }
+    if ($Files.Count -eq 0) { Write-Ok 'Nothing to free: every file was opened recently, or is online only already.'; return }
+    Write-Info (L '{0} files ({1}) are on this PC but were not opened or changed for 60 days.' $Files.Count (Format-Size $Bytes))
+    Write-Info 'Freed, they stay in OneDrive and in File Explorer, with a cloud icon: a double-click downloads them again (it needs internet). Nothing is deleted.'
+    Write-Info 'Files set to "Always keep on this device" are left as they are.'
+    if ($script:DryRun -or -not (Confirm-Action 'Free up this space?' $true)) { Write-Info 'Nothing was changed.'; return }
+    $done = 0; $failed = 0; $n = 0
+    foreach ($f in $Files) {
+        $n++
+        if (($n % 50) -eq 1) { Write-YsoProgress -Activity (L 'Freeing up OneDrive files') -Status (L '{0} of {1}' $n $Files.Count) -Percent (100 * $n / $Files.Count) }
+        try {
+            # "Free up space" of File Explorer: unpinned (0x100000), not pinned (0x80000)
+            $a = ([int]$f.Attributes -bor 0x100000) -band (-bnot 0x80000)
+            [System.IO.File]::SetAttributes($f.FullName, [System.IO.FileAttributes]$a)
+            $done++
+        } catch { $failed++ }
+    }
+    Write-YsoProgress -Activity (L 'Freeing up OneDrive files') -Completed
+    Add-Result -Category 'OneDrive files freed up' -Files $done -Bytes $Bytes -Skipped $failed
+    Write-Ok (L 'Done: {0} files are online only now. OneDrive frees the space within a few minutes, while it runs.' $done)
+    if ($failed) { Write-Warn (L '{0} files could not be changed (open in a program?).' $failed) }
+}
+
+function Reset-SearchIndex([long]$Size) {
+    Write-Step 'Windows search index'
+    Write-Kv 'Size now' (Format-Size $Size)
+    Write-Info 'Windows keeps an index of your files so that searching is fast. Sometimes it grows far too big; rebuilt, it is usually much smaller.'
+    Write-Info 'Cost: for a few hours, searching finds only part of your files, and indexing uses some processor time.'
+    if ($Size -lt 1GB) { Write-Ok 'It is not big: no need to rebuild it.'; return }
+    if ($script:DryRun -or -not (Confirm-Action 'Rebuild the search index now?' $false)) { Write-Info 'Nothing was changed.'; return }
+    $before = Get-FreeBytes
+    try {
+        # The way Windows rebuilds it (Indexing Options > Advanced > Rebuild): the service starts from scratch.
+        Stop-Service -Name WSearch -Force -ErrorAction Stop
+        Set-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows Search' -Name SetupCompletedSuccessfully -Value 0 -Type DWord -ErrorAction Stop
+        Start-Service -Name WSearch -ErrorAction Stop
+    } catch {
+        Write-Warn (L 'Windows refused: {0}' $_.Exception.Message)
+        Start-Service -Name WSearch -ErrorAction SilentlyContinue
+        return
+    }
+    Start-Sleep -Seconds 5
+    $gain = [math]::Max(0L, [long]((Get-FreeBytes) - $before))
+    if ($gain -gt 0) { Add-Result -Category 'Search index' -Files -1 -Bytes $gain -Skipped 0 }
+    Write-Ok 'Done: Windows is building the index again, quietly, over the next hours.'
+}
+
+# ==================================================================
+#  FILES YOU MIGHT NOT NEED  (34) - your own files, shown only: old installers in Downloads,
+#  iPhone and iPad backups, files that are there twice. YSO deletes nothing here: a click shows
+#  the file in File Explorer, and you decide there.
+# ==================================================================
+function Get-UserFolders([string[]]$Names) {
+    # Folders of this account (Downloads, Documents...), where Windows says they are (they can be moved).
+    $known = @{ Desktop = 'Desktop'; Documents = 'MyDocuments'; Pictures = 'MyPictures'; Videos = 'MyVideos'; Music = 'MyMusic' }
+    $out = @()
+    foreach ($n in $Names) {
+        $p = ''
+        if ($n -eq 'Downloads') {
+            $p = (Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders' -Name '{374DE290-123F-4565-9164-39C4925E467B}' -ErrorAction SilentlyContinue).'{374DE290-123F-4565-9164-39C4925E467B}'
+            if ($p) { $p = [Environment]::ExpandEnvironmentVariables("$p") } elseif ($env:USERPROFILE) { $p = [System.IO.Path]::Combine($env:USERPROFILE, 'Downloads') }
+        } elseif ($known.ContainsKey($n)) {
+            $p = [Environment]::GetFolderPath($known[$n])
+        }
+        if ($p -and (Test-Path -LiteralPath $p -PathType Container)) { $out += $p }
+    }
+    return @($out | Select-Object -Unique)
+}
+
+function Test-CloudOnly([System.IO.FileSystemInfo]$Item) {
+    # A OneDrive (or other cloud) file that is online only: reading it would download it.
+    return [bool]([int]$Item.Attributes -band (0x400000 -bor 0x1000 -bor 0x40000))
+}
+
+function Get-OldInstallers([string[]]$Folders, [int]$Days = 30) {
+    # Installers and disk images not touched for $Days days: once a program is installed, they are rarely needed.
+    $cutoff = (Get-Date).AddDays(-$Days)
+    $ext = @('.exe', '.msi', '.msix', '.msixbundle', '.appx', '.appxbundle', '.iso', '.img')
+    $found = @(foreach ($d in $Folders) {
+        foreach ($f in @(Get-ChildItem -LiteralPath $d -File -Force -ErrorAction SilentlyContinue)) {
+            if ($ext -contains $f.Extension.ToLowerInvariant() -and $f.LastWriteTime -lt $cutoff -and -not (Test-CloudOnly $f)) { $f }
+        }
+    })
+    return @($found | Sort-Object Length -Descending)
+}
+
+function Get-DeviceBackups {
+    # iPhone and iPad backups (iTunes or Apple Devices): one folder per device, often 10 to 100 GB.
+    $roots = @()
+    foreach ($p in $script:Profiles) {
+        $roots += [System.IO.Path]::Combine($p, 'AppData\Roaming\Apple Computer\MobileSync\Backup')
+        $roots += [System.IO.Path]::Combine($p, 'Apple\MobileSync\Backup')
+    }
+    return @(foreach ($r in $roots) {
+        if (-not (Test-Path -LiteralPath $r -PathType Container)) { continue }
+        foreach ($d in @(Get-ChildItem -LiteralPath $r -Directory -Force -ErrorAction SilentlyContinue)) {
+            $name = ''
+            $info = [System.IO.Path]::Combine($d.FullName, 'Info.plist')
+            if (Test-Path -LiteralPath $info) {
+                try { if ([System.IO.File]::ReadAllText($info) -match '<key>Device Name</key>\s*<string>([^<]*)</string>') { $name = $Matches[1] } } catch { }
+            }
+            $size = 0L
+            foreach ($f in (Get-Tree -Root $d.FullName).Files) { $size += $f.Length }
+            [pscustomobject]@{ Path = $d.FullName; Name = $(if ($name) { $name } else { $d.Name }); Size = $size; When = $d.LastWriteTime }
+        }
+    })
+}
+
+function Get-FileHashPart([string]$Path, [long]$Bytes = 0) {
+    # SHA-256 of the whole file, or of its first $Bytes bytes (a quick first pass).
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $fs = [System.IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
+    try {
+        if ($Bytes -gt 0) {
+            $buf = New-Object byte[] ([int][math]::Min($Bytes, $fs.Length))
+            $read = $fs.Read($buf, 0, $buf.Length)
+            return [BitConverter]::ToString($sha.ComputeHash($buf, 0, $read))
+        }
+        return [BitConverter]::ToString($sha.ComputeHash($fs))
+    } finally { $fs.Dispose(); $sha.Dispose() }
+}
+
+function Find-DuplicateFiles([string[]]$Folders, [long]$MinSize = 1MB) {
+    # Files that are there twice or more (same size, same content), biggest waste first.
+    # Same size first, then the first 64 KB, then the whole file: only real copies are shown.
+    $bySize = @{}
+    foreach ($d in $Folders) {
+        foreach ($f in (Get-Tree -Root $d).Files) {
+            if ($f.Length -lt $MinSize -or (Test-CloudOnly $f)) { continue }
+            if (-not $bySize.ContainsKey($f.Length)) { $bySize[$f.Length] = New-Object System.Collections.Generic.List[System.IO.FileInfo] }
+            $bySize[$f.Length].Add($f)
+        }
+    }
+    $groups = New-Object System.Collections.Generic.List[object]
+    $sizes = @($bySize.Keys | Where-Object { $bySize[$_].Count -gt 1 })
+    $n = 0
+    foreach ($len in $sizes) {
+        $n++
+        Write-YsoProgress -Activity (L 'Looking for files that are there twice') -Status '' -Percent (100 * $n / [math]::Max(1, $sizes.Count))
+        $byHead = @{}
+        foreach ($f in $bySize[$len]) {
+            try { $h = Get-FileHashPart $f.FullName 65536 } catch { continue }
+            if (-not $byHead.ContainsKey($h)) { $byHead[$h] = New-Object System.Collections.Generic.List[System.IO.FileInfo] }
+            $byHead[$h].Add($f)
+        }
+        foreach ($hk in @($byHead.Keys)) {
+            if ($byHead[$hk].Count -lt 2) { continue }
+            $byFull = @{}
+            foreach ($f in $byHead[$hk]) {
+                try { $h = $(if ($len -le 65536) { $hk } else { Get-FileHashPart $f.FullName }) } catch { continue }
+                if (-not $byFull.ContainsKey($h)) { $byFull[$h] = New-Object System.Collections.Generic.List[System.IO.FileInfo] }
+                $byFull[$h].Add($f)
+            }
+            foreach ($fk in @($byFull.Keys)) {
+                $copies = $byFull[$fk]
+                if ($copies.Count -lt 2) { continue }
+                $groups.Add([pscustomobject]@{ Size = [long]$len; Files = $copies.ToArray(); Waste = [long]$len * ($copies.Count - 1) })
+            }
+        }
+    }
+    Write-YsoProgress -Activity (L 'Looking for files that are there twice') -Completed
+    return @($groups | Sort-Object Waste -Descending)
+}
+
+function Show-FileRows([object[]]$Rows) {
+    # Rows: Path, Size, Note. Numbered; a number (a click in the window) shows the file in File Explorer.
+    $i = 0
+    foreach ($r in $Rows) {
+        $i++
+        Write-Host ('  {0,3}  ' -f $i) -NoNewline -ForegroundColor Green
+        Write-Host ((Get-Truncated $r.Path 70).PadRight(72)) -NoNewline
+        Write-Host ((Format-Size $r.Size).PadRight(12)) -NoNewline
+        Write-Host "$($r.Note)" -ForegroundColor DarkGray
+    }
+}
+
+function Read-FileRows([object[]]$Rows, [string]$Title, [string]$Tip = '') {
+    # The list, then: a number shows that file in File Explorer, Enter goes back.
+    while ($true) {
+        Clear-Host
+        Write-Section 'FILES YOU MIGHT NOT NEED'
+        Write-Step $Title
+        Write-Info 'YSO deletes nothing here. Click a line to see the file in File Explorer, and delete it there if you do not need it.'
+        if ($Tip -and $Rows.Count) { Write-Info $Tip }
+        Write-Host ''
+        if ($Rows.Count -eq 0) { Write-Ok 'Nothing found.'; [void](Read-Choice 'Press Enter to continue' -Buttons @(, @('', 'OK'))); return }
+        Show-FileRows $Rows
+        Write-Host ''
+        $c = Read-Choice 'Number = show it in File Explorer, Enter = back' -Buttons @(, @('', 'Back')) -Hint 'Click a line to see it in File Explorer.'
+        if (-not $c) { return }
+        if ($c -match '^\d+$' -and [int]$c -ge 1 -and [int]$c -le $Rows.Count) {
+            $p = $Rows[[int]$c - 1].Path
+            if (Test-Path -LiteralPath $p -PathType Container) { Start-Process explorer.exe -ArgumentList "`"$p`"" }
+            else { Start-Process explorer.exe -ArgumentList "/select,`"$p`"" }
+        }
+    }
+}
+
+function Show-UnneededFiles {
+    while ($true) {
+        Clear-Host
+        Write-Section 'FILES YOU MIGHT NOT NEED'
+        Write-Info 'Your own files that often take space for nothing. YSO only shows them: you decide, in File Explorer.'
+        Write-Host ''
+        Write-Option '1' 'Old installers and disk images in Downloads' 'Programs you installed long ago leave their installer behind (.exe, .msi, .iso).'
+        Write-Option '2' 'iPhone and iPad backups' 'Made by iTunes or Apple Devices: one folder per device, often tens of GB.'
+        Write-Option '3' 'Files that are there twice' 'Same content in two places (Desktop, Documents, Downloads, Pictures, Videos, Music). Can take a few minutes.'
+        Write-Option '0' 'Back'
+        $c = Read-Choice -Buttons @(, @('0', 'Back'))
+        switch ($c) {
+            '1' {
+                Write-Step 'Reading Downloads...'
+                $rows = @(Get-OldInstallers (Get-UserFolders @('Downloads')) | ForEach-Object { [pscustomobject]@{ Path = $_.FullName; Size = $_.Length; Note = (Format-DaysAgo $_.LastWriteTime) } })
+                Read-FileRows $rows (L 'Old installers and disk images in Downloads: {0}' (Format-Size (($rows | Measure-Object Size -Sum).Sum)))
+            }
+            '2' {
+                Write-Step 'Looking for device backups...'
+                $rows = @(Get-DeviceBackups | ForEach-Object { [pscustomobject]@{ Path = $_.Path; Size = $_.Size; Note = ('{0}, {1}' -f $_.Name, (Format-DaysAgo $_.When)) } })
+                Read-FileRows $rows (L 'iPhone and iPad backups: {0}' (Format-Size (($rows | Measure-Object Size -Sum).Sum))) (N 'To delete a backup the Apple way: Apple Devices (or iTunes) > Manage backups.')
+            }
+            '3' {
+                Write-Step 'Looking for files that are there twice (files of 1 MB or more)...'
+                $groups = @(Find-DuplicateFiles (Get-UserFolders @('Desktop', 'Documents', 'Downloads', 'Pictures', 'Videos', 'Music')))
+                $rows = @(foreach ($g in ($groups | Select-Object -First 40)) {
+                    foreach ($f in $g.Files) { [pscustomobject]@{ Path = $f.FullName; Size = $f.Length; Note = (L '{0} copies' $g.Files.Count) } }
+                })
+                Read-FileRows $rows (L 'Files that are there twice: {0} could be freed' (Format-Size (($groups | Measure-Object Waste -Sum).Sum)))
+            }
+            default { return }
+        }
+    }
+}
+
+# ==================================================================
+#  MY PC OVER TIME  (35) - startup time, free space and programs at startup, written down once a
+#  day when YSO opens (pc-history.csv), to see what changed since the first time.
+# ==================================================================
+function Get-LastBootSeconds {
+    $e = @(Get-EventsSafe @{ LogName = 'Microsoft-Windows-Diagnostics-Performance/Operational'; Id = 100 } -MaxEvents 1)
+    if ($e.Count -eq 0) { return $null }
+    return [math]::Round([double](Get-EventFields $e[0])['BootTime'] / 1000, 1)
+}
+
+function Read-PcHistory {
+    if (-not (Test-Path -LiteralPath $script:PcHistoryPath)) { return @() }
+    try { return @(Import-Csv -LiteralPath $script:PcHistoryPath -ErrorAction Stop | Where-Object { "$($_.Day)" -match '^\d{8}$' }) } catch { return @() }
+}
+
+function Save-PcSnapshot {
+    # Once a day at most. Each measure stands alone: one that fails is left empty.
+    try {
+        $day = (Get-Date).ToString('yyyyMMdd')
+        $rows = @(Read-PcHistory)
+        if (@($rows | Where-Object { $_.Day -eq $day }).Count -gt 0) { return }
+        $boot = ''; $free = ''; $startup = ''
+        try { $b = Get-LastBootSeconds; if ($null -ne $b) { $boot = "$b" } } catch { }
+        try {
+            $sys = "$env:SystemDrive".TrimEnd(':', '\')
+            $v = @(Get-FixedVolumes | Where-Object { "$($_.DriveLetter)" -eq $sys })[0]
+            if ($v) { $free = "$([long]$v.SizeRemaining)" }
+        } catch { }
+        try { $startup = "$(@(Get-StartupEntries -Fast | Where-Object { $_.Enabled }).Count)" } catch { }
+        $line = [pscustomobject]@{ Day = $day; BootSeconds = $boot; FreeBytes = $free; Startup = $startup }
+        New-Item -ItemType Directory -Path $script:DataDir -Force | Out-Null
+        @(@($rows | Select-Object -Last 729) + @($line)) | Export-Csv -LiteralPath $script:PcHistoryPath -NoTypeInformation -Encoding UTF8
+    } catch { }
+}
+
+function ConvertFrom-PcDay([string]$Day) { return [datetime]::ParseExact($Day, 'yyyyMMdd', [System.Globalization.CultureInfo]::InvariantCulture) }
+
+function Get-PcProgress([object[]]$Rows) {
+    # First measure against the latest, when at least a week lies between them. $null before that.
+    if ($Rows.Count -lt 2) { return $null }
+    $first = $Rows[0]; $last = $Rows[-1]
+    $span = ((ConvertFrom-PcDay $last.Day) - (ConvertFrom-PcDay $first.Day)).TotalDays
+    if ($span -lt 7) { return $null }
+    $pick = { param($rows, $field, [switch]$Last) $list = @($rows | Where-Object { "$($_.$field)" -ne '' }); if ($list.Count -eq 0) { $null } elseif ($Last) { $list[-1] } else { $list[0] } }
+    $b0 = & $pick $Rows 'BootSeconds'; $b1 = & $pick $Rows 'BootSeconds' -Last
+    $f0 = & $pick $Rows 'FreeBytes';   $f1 = & $pick $Rows 'FreeBytes' -Last
+    $s0 = & $pick $Rows 'Startup';     $s1 = & $pick $Rows 'Startup' -Last
+    return [pscustomobject]@{
+        Since = (ConvertFrom-PcDay $first.Day)
+        Boot = $(if ($b0 -and $b1 -and [double]$b0.BootSeconds -ne [double]$b1.BootSeconds) { [pscustomobject]@{ Before = [double]$b0.BootSeconds; After = [double]$b1.BootSeconds } } else { $null })
+        Free = $(if ($f0 -and $f1 -and [long]$f0.FreeBytes -ne [long]$f1.FreeBytes) { [pscustomobject]@{ Before = [long]$f0.FreeBytes; After = [long]$f1.FreeBytes } } else { $null })
+        Startup = $(if ($s0 -and $s1 -and [int]$s0.Startup -ne [int]$s1.Startup) { [pscustomobject]@{ Before = [int]$s0.Startup; After = [int]$s1.Startup } } else { $null })
+    }
+}
+
+function Get-PcProgressText($Progress) {
+    # "startup 42 s (54 s before), 8 GB more free space, 3 fewer programs at startup", or ''.
+    if (-not $Progress) { return '' }
+    $parts = @()
+    if ($Progress.Boot) { $parts += L 'startup {0:N0} s ({1:N0} s before)' $Progress.Boot.After $Progress.Boot.Before }
+    if ($Progress.Free) {
+        $d = $Progress.Free.After - $Progress.Free.Before
+        $parts += $(if ($d -ge 0) { L '{0} more free space' (Format-Size $d) } else { L '{0} less free space' (Format-Size (-$d)) })
+    }
+    if ($Progress.Startup) {
+        $d = $Progress.Startup.After - $Progress.Startup.Before
+        $parts += $(if ($d -le 0) { L '{0} fewer programs at startup' (-$d) } else { L '{0} more programs at startup' $d })
+    }
+    return ($parts -join ', ')
+}
+
+function Show-PcHistory([object[]]$Sample = $null) {
+    # -Sample: made-up measures for the window's pictures.
+    if ($null -eq $Sample) { Save-PcSnapshot }
+    Write-Section 'MY PC OVER TIME'
+    Write-Info 'Measured once a day, when YSO opens: how long the last startup took, the free space on the Windows drive, and how many programs start with Windows.'
+    $rows = $(if ($null -ne $Sample) { @($Sample) } else { @(Read-PcHistory) })
+    if ($rows.Count -eq 0) { Write-Info 'Nothing measured yet: come back tomorrow.'; return }
+    $p = Get-PcProgress $rows
+    $text = Get-PcProgressText $p
+    Write-Host ''
+    if ($text) { Write-Ok (L 'Since {0}: {1}.' $p.Since.ToString('d') $text) }
+    else { Write-Info 'Too soon to compare: YSO needs a week of measures.' }
+    Write-Host ''
+    Write-Host ('       ' + (L 'Day').PadRight(14) + (L 'Startup').PadRight(12) + (L 'Free space').PadRight(14) + (L 'At startup')) -ForegroundColor DarkGray
+    # one line a week (the last of each week), newest first
+    $weekly = @($rows | Group-Object { $d = ConvertFrom-PcDay $_.Day; '{0}-{1:00}' -f $d.Year, [System.Globalization.CultureInfo]::InvariantCulture.Calendar.GetWeekOfYear($d, 'FirstFourDayWeek', 'Monday') } | ForEach-Object { $_.Group[-1] })
+    [array]::Reverse($weekly)
+    foreach ($r in @($weekly | Select-Object -First 26)) {
+        Write-Host ('       ' + (ConvertFrom-PcDay $r.Day).ToString('d').PadRight(14)) -NoNewline -ForegroundColor Gray
+        Write-Host ($(if ($r.BootSeconds) { L '{0:N0} s' ([double]$r.BootSeconds) } else { '-' })).PadRight(12) -NoNewline
+        Write-Host ($(if ($r.FreeBytes) { Format-Size ([long]$r.FreeBytes) } else { '-' })).PadRight(14) -NoNewline
+        Write-Host $(if ($r.Startup) { "$($r.Startup)" } else { '-' })
+    }
+    Write-Host ''
+    Write-Info 'Startup: only full startups are measured (Restart, or Shut down when Fast Startup is off).'
+}
+
+# ==================================================================
+#  DISK SPEED & TEMPERATURE  (36) - each drive's type, temperature and wear, and a speed test
+#  with Windows' own tool (winsat): read and write speed, with what is normal for that kind of drive.
+# ==================================================================
+function Get-DiskFacts {
+    return @(foreach ($d in @(Get-PhysicalDisk -ErrorAction SilentlyContinue | Sort-Object DeviceId)) {
+        $rc = $null
+        try { $rc = $d | Get-StorageReliabilityCounter -ErrorAction Stop } catch { }
+        [pscustomobject]@{
+            Name = "$($d.FriendlyName)".Trim(); Media = "$($d.MediaType)"; Bus = "$($d.BusType)"; Size = [long]$d.Size; Health = "$($d.HealthStatus)"
+            Temp = $(if ($rc -and $rc.Temperature) { [int]$rc.Temperature } else { $null })
+            TempMax = $(if ($rc -and $rc.TemperatureMax) { [int]$rc.TemperatureMax } else { $null })
+            Wear = $(if ($rc -and $null -ne $rc.Wear) { [int]$rc.Wear } else { $null })
+            Hours = $(if ($rc -and $rc.PowerOnHours) { [long]$rc.PowerOnHours } else { $null })
+        }
+    })
+}
+
+function Get-DiskKind($Disk) {
+    # 'nvme', 'ssd', 'hdd' or 'usb': what decides which speed is normal.
+    if ($Disk.Bus -match 'USB') { return 'usb' }
+    if ($Disk.Bus -match 'NVMe') { return 'nvme' }
+    if ($Disk.Media -match 'SSD') { return 'ssd' }
+    if ($Disk.Media -match 'HDD') { return 'hdd' }
+    return 'ssd'
+}
+
+function Get-SpeedVerdict([string]$Kind, [double]$ReadMBs) {
+    # What a read speed means for that kind of drive: Level, Text.
+    $limits = @{ nvme = @(1500, 700); ssd = @(400, 200); hdd = @(120, 60); usb = @(300, 30) }
+    $l = $limits[$Kind]; if (-not $l) { $l = $limits['ssd'] }
+    if ($ReadMBs -ge $l[0]) { return [pscustomobject]@{ Level = 'Good'; Text = (N 'fast for this kind of drive') } }
+    if ($ReadMBs -ge $l[1]) { return [pscustomobject]@{ Level = 'Warn'; Text = (N 'a bit slow for this kind of drive') } }
+    return [pscustomobject]@{ Level = 'Bad'; Text = (N 'slow for this kind of drive: an almost full disk, an old cable or port, or a worn drive') }
+}
+
+function Get-TempVerdict($Temp) {
+    if ($null -eq $Temp) { return $null }
+    if ($Temp -ge 70) { return [pscustomobject]@{ Level = 'Bad'; Text = (N 'hot: check that air can flow around the PC') } }
+    if ($Temp -ge 55) { return [pscustomobject]@{ Level = 'Warn'; Text = (N 'warm') } }
+    return [pscustomobject]@{ Level = 'Good'; Text = (N 'normal') }
+}
+
+function ConvertFrom-WinsatSpeed([string[]]$Lines) {
+    # The MB/s figure of a winsat disk run ("> Disk  Sequential 64.0 Read   2873.24 MB/s   9.4").
+    foreach ($l in $Lines) { if ("$l" -match '(\d+(?:[\.,]\d+)?)\s*MB/s') { return [double]($Matches[1] -replace ',', '.') } }
+    return $null
+}
+
+function Test-DiskSpeed([string]$Letter) {
+    # Windows' own disk test: about a minute per drive. Read, write: MB/s, or $null.
+    $winsat = [System.IO.Path]::Combine("$env:WINDIR", 'System32\winsat.exe')
+    if (-not (Test-Path -LiteralPath $winsat)) { return $null }
+    $r = [pscustomobject]@{ Read = $null; Write = $null }
+    Write-YsoProgress -Activity (L 'Testing the speed of {0}:' $Letter) -Status (L 'Reading...') -Percent 10
+    $r.Read = ConvertFrom-WinsatSpeed @(& $winsat disk -seq -read -drive $Letter 2>&1)
+    Write-YsoProgress -Activity (L 'Testing the speed of {0}:' $Letter) -Status (L 'Writing...') -Percent 60
+    $r.Write = ConvertFrom-WinsatSpeed @(& $winsat disk -seq -write -drive $Letter 2>&1)
+    Write-YsoProgress -Activity (L 'Testing the speed of {0}:' $Letter) -Completed
+    return $r
+}
+
+function Show-DiskSpeed([object[]]$Sample = $null) {
+    # -Sample: made-up drives for the window's pictures; choosing a test only ends the page.
+    Write-Section 'DISK SPEED & TEMPERATURE'
+    $disks = $(if ($null -ne $Sample) { @($Sample) } else { @(Get-DiskFacts) })
+    if ($disks.Count -eq 0) { Write-Warn 'Windows does not give the details of the drives here.' }
+    foreach ($d in $disks) {
+        Write-Host ''
+        Write-Step ('{0} ({1}, {2})' -f $d.Name, (Format-Size $d.Size), $(switch (Get-DiskKind $d) { 'nvme' { 'NVMe SSD' } 'ssd' { 'SSD' } 'hdd' { L 'hard drive' } default { 'USB' } }))
+        $t = Get-TempVerdict $d.Temp
+        if ($t) { Write-Kv 'Temperature' ('{0} °C ({1})' -f $d.Temp, (L $t.Text)) $(switch ($t.Level) { 'Good' { 'Green' } 'Warn' { 'Yellow' } default { 'Red' } }) }
+        if ($null -ne $d.Wear) { Write-Kv 'Wear' ('{0} %' -f $d.Wear) $(if ($d.Wear -ge 80) { 'Red' } elseif ($d.Wear -ge 50) { 'Yellow' } else { 'Green' }) }
+        if ($d.Hours) { Write-Kv 'Powered on' (L '{0:N0} hours' $d.Hours) }
+        Write-Kv 'Health' $(if ($d.Health -eq 'Healthy') { L 'healthy' } elseif ($d.Health) { $d.Health } else { L 'unknown' })
+    }
+    Write-Host ''
+    $vols = @(Get-FixedVolumes)
+    if ($vols.Count -eq 0) { return }
+    Write-Info 'The speed test uses Windows'' own tool (winsat): about a minute per drive. It writes a test file, then deletes it.'
+    $i = 0
+    foreach ($v in $vols) { $i++; Write-Option "$i" (L 'Test the speed of {0}: ({1} free)' $v.DriveLetter (Format-Size $v.SizeRemaining)) }
+    Write-Option '0' 'Back'
+    $c = Read-Choice -Buttons @(, @('0', 'Back'))
+    if ($null -ne $Sample -or $c -notmatch '^\d+$' -or [int]$c -lt 1 -or [int]$c -gt $vols.Count) { return }
+    $v = $vols[[int]$c - 1]
+    $speed = Test-DiskSpeed "$($v.DriveLetter)"
+    if (-not $speed -or ($null -eq $speed.Read -and $null -eq $speed.Write)) { Write-Warn 'Windows'' speed test (winsat) did not run on this PC.'; return }
+    # the drive behind that letter, to know what speed is normal
+    $kind = 'ssd'
+    try {
+        $num = "$(@(Get-Partition -DriveLetter $v.DriveLetter -ErrorAction Stop)[0].DiskNumber)"
+        $pd = @(Get-PhysicalDisk -ErrorAction Stop | Where-Object { "$($_.DeviceId)" -eq $num })[0]
+        if ($pd) { $kind = Get-DiskKind ([pscustomobject]@{ Bus = "$($pd.BusType)"; Media = "$($pd.MediaType)" }) }
+    } catch { }
+    Write-Host ''
+    if ($null -ne $speed.Read) {
+        $vd = Get-SpeedVerdict $kind $speed.Read
+        Write-Kv 'Read' (L '{0:N0} MB/s ({1})' $speed.Read (L $vd.Text)) $(switch ($vd.Level) { 'Good' { 'Green' } 'Warn' { 'Yellow' } default { 'Red' } })
+    }
+    if ($null -ne $speed.Write) { Write-Kv 'Write' (L '{0:N0} MB/s' $speed.Write) }
+    Write-Info 'For comparison: NVMe SSD 1500 to 7000 MB/s, SATA SSD about 500, hard drive 100 to 200, USB stick 20 to 400.'
+}
+
+# ==================================================================
+#  RIGHT-CLICK MENU  (37) - the classic menu of Windows 10 on Windows 11, and the entries other
+#  programs add to it (shell extensions): each one can be switched off (Windows' own "Blocked"
+#  list) and on again. Written down first: Undo YSO changes (32) puts it back.
+# ==================================================================
+
+function Test-ClassicMenu { return [bool](Read-RegValue $script:ClassicMenuKey '').Existed }
+
+function Get-ShellExtensions {
+    # Entries other programs add to the right-click menu of files, folders and drives. Microsoft's are left out.
+    $seen = @{}
+    $out = New-Object System.Collections.Generic.List[object]
+    foreach ($r in @('*', 'Directory', 'Directory\Background', 'Folder', 'AllFilesystemObjects', 'Drive')) {
+        $k = "Registry::HKEY_CLASSES_ROOT\$r\shellex\ContextMenuHandlers"
+        foreach ($sub in @(Get-RegSubKeyNames $k)) {
+            $clsid = $sub
+            if ($clsid -notmatch '^\{[0-9A-Fa-f-]{36}\}$') { $clsid = "$((Get-ItemProperty -LiteralPath "$k\$sub" -ErrorAction SilentlyContinue).'(default)')" }
+            if ($clsid -notmatch '^\{[0-9A-Fa-f-]{36}\}$' -or $seen.ContainsKey($clsid.ToUpperInvariant())) { continue }
+            $seen[$clsid.ToUpperInvariant()] = $true
+            $dll = "$((Get-ItemProperty -LiteralPath "Registry::HKEY_CLASSES_ROOT\CLSID\$clsid\InprocServer32" -ErrorAction SilentlyContinue).'(default)')"
+            $dll = [Environment]::ExpandEnvironmentVariables($dll).Trim().Trim('"')
+            if (-not $dll -or -not (Test-Path -LiteralPath $dll -PathType Leaf)) { continue }
+            $vi = (Get-Item -LiteralPath $dll -ErrorAction SilentlyContinue).VersionInfo
+            if ("$($vi.CompanyName)" -match 'Microsoft') { continue }
+            $name = $(if ($sub -notmatch '^\{') { $sub.Trim() } elseif ($vi.FileDescription) { "$($vi.FileDescription)".Trim() } else { [System.IO.Path]::GetFileNameWithoutExtension($dll) })
+            $out.Add([pscustomobject]@{ Clsid = $clsid; Name = $name; Company = "$($vi.CompanyName)".Trim(); Dll = $dll; Blocked = [bool](Read-RegValue $script:ShellBlockedKey $clsid).Existed })
+        }
+    }
+    return @($out | Sort-Object Name)
+}
+
+function Restart-Explorer {
+    Get-Process -Name explorer -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    # Windows starts it again by itself, as you (not as administrator)
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    while (-not (Get-Process -Name explorer -ErrorAction SilentlyContinue) -and $clock.ElapsedMilliseconds -lt 10000) { Start-Sleep -Milliseconds 500 }
+    if (-not (Get-Process -Name explorer -ErrorAction SilentlyContinue)) { Start-Process explorer.exe }
+}
+
+function Show-ContextMenuTool([object[]]$Sample = $null) {
+    # -Sample: made-up entries for the window's pictures; choosing one only ends the page.
+    $changed = $false
+    while ($true) {
+        Clear-Host
+        Write-Section 'RIGHT-CLICK MENU'
+        $win11 = ($script:Build -ge 22000)
+        if ($win11) {
+            $classic = Test-ClassicMenu
+            Write-Kv 'Menu' $(if ($classic) { L 'classic (like Windows 10): everything at once' } else { L 'Windows 11 (the rest under "Show more options")' })
+        }
+        $ext = $(if ($null -ne $Sample) { @($Sample) } else { @(Get-ShellExtensions) })
+        Write-Info 'Entries other programs add to the menu. Each one can slow down the right-click a little; switched off, it disappears from the menu and the program keeps working.'
+        Write-Host ''
+        if ($ext.Count -eq 0) { Write-Ok 'No program adds entries to the right-click menu.' }
+        $i = 0
+        foreach ($e in $ext) {
+            $i++
+            Write-Host ('  {0,3}  ' -f $i) -NoNewline -ForegroundColor Green
+            Write-Host ((Get-Truncated $e.Name 34).PadRight(36)) -NoNewline
+            Write-Host ((Get-Truncated $(if ($e.Company) { $e.Company } else { '-' }) 30).PadRight(32)) -NoNewline -ForegroundColor DarkGray
+            if ($e.Blocked) { Write-Host 'OFF' -ForegroundColor DarkGray } else { Write-Host 'ON' -ForegroundColor Green }
+        }
+        Write-Host ''
+        $buttons = @()
+        if ($win11) { $buttons += , @('C', $(if ($classic) { N 'Back to the Windows 11 menu' } else { N 'Classic menu (like Windows 10)' })) }
+        if ($changed) { $buttons += , @('R', (N 'Restart File Explorer now')) }
+        $buttons += , @('', (N 'Back'))
+        $c = Read-Choice 'Number = switch it on or off, C = classic menu, R = restart File Explorer, Enter = back' -Buttons $buttons -Hint 'Click an entry to switch it on or off. Changes show after File Explorer restarts.'
+        if ($null -ne $Sample) { return }
+        if (-not $c) {
+            if ($changed) { Write-Info 'Changes show after File Explorer restarts (or after you sign out).' }
+            return
+        }
+        if ($script:DryRun) { Write-Info 'Analyze-only mode: nothing was changed.'; Start-Sleep -Seconds 2; continue }
+        if ($c -eq 'R') { Restart-Explorer; $changed = $false; continue }
+        if ($c -eq 'C' -and $win11) {
+            $change = New-ChangeEntry (N 'Right-click menu') $(if ($classic) { N 'Windows 11 right-click menu back' } else { N 'Classic right-click menu' })
+            try {
+                if ($classic) { Remove-RegValueLogged $change $script:ClassicMenuKey '' } else { Set-RegValueLogged $change $script:ClassicMenuKey '' '' 'String' }
+            } catch { Write-Warn (L 'Windows refused: {0}' $_.Exception.Message) }
+            Add-ChangeEntry $change
+            $changed = $true
+            continue
+        }
+        if ($c -match '^\d+$' -and [int]$c -ge 1 -and [int]$c -le $ext.Count) {
+            $e = $ext[[int]$c - 1]
+            $change = New-ChangeEntry (N 'Right-click menu') $(if ($e.Blocked) { N '{0} back in the right-click menu' } else { N '{0} removed from the right-click menu' }) @($e.Name)
+            try {
+                if ($e.Blocked) { Remove-RegValueLogged $change $script:ShellBlockedKey $e.Clsid } else { Set-RegValueLogged $change $script:ShellBlockedKey $e.Clsid '' 'String' }
+            } catch { Write-Warn (L 'Windows refused: {0}' $_.Exception.Message) }
+            Add-ChangeEntry $change
+            $changed = $true
+        }
+    }
+}
+
+# ==================================================================
+#  PERFORMANCE MODE  (38) - for older or slower PCs: fewer animations, no transparency, faster
+#  menus, like "Adjust for best performance" of Windows. Font smoothing stays. Undo puts it back.
+# ==================================================================
+function Get-PerformanceValues {
+    # key, name, value for performance mode, Windows default, kind
+    $adv = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+    $desk = 'HKCU:\Control Panel\Desktop'
+    return @(
+        @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects', 'VisualFXSetting', 2, $null, 'DWord'),
+        @($desk, 'UserPreferencesMask', [Convert]::ToBase64String([byte[]](0x90, 0x12, 0x03, 0x80, 0x10, 0x00, 0x00, 0x00)), [Convert]::ToBase64String([byte[]](0x9E, 0x1E, 0x07, 0x80, 0x12, 0x00, 0x00, 0x00)), 'Binary'),
+        @("$desk\WindowMetrics", 'MinAnimate', '0', '1', 'String'),
+        @($desk, 'MenuShowDelay', '100', '400', 'String'),
+        @($desk, 'FontSmoothing', '2', '2', 'String'),
+        @($adv, 'TaskbarAnimations', 0, 1, 'DWord'),
+        @($adv, 'ListviewAlphaSelect', 0, 1, 'DWord'),
+        @($adv, 'ListviewShadow', 0, 1, 'DWord'),
+        @('HKCU:\Software\Microsoft\Windows\DWM', 'EnableAeroPeek', 0, 1, 'DWord'),
+        @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize', 'EnableTransparency', 0, 1, 'DWord')
+    )
+}
+
+function Test-PerformanceMode {
+    foreach ($v in @(Get-PerformanceValues)) {
+        $s = Read-RegValue $v[0] $v[1]
+        if (-not $s.Existed -or "$($s.Data)" -ne "$($v[2])") { return $false }
+    }
+    return $true
+}
+
+function Show-PerformanceMode {
+    Write-Section 'PERFORMANCE MODE'
+    $on = Test-PerformanceMode
+    Write-Kv 'Now' $(if ($on) { L 'on' } else { L 'off (Windows effects)' })
+    Write-Info 'For older or slower PCs: Windows looks a little plainer but answers faster.'
+    Write-Info '- no animations when windows open, close or minimize, and in the taskbar'
+    Write-Info '- no transparency, no shadows under icons and windows, no fading menus'
+    Write-Info '- menus open faster; text stays smooth'
+    Write-Info 'It shows after you sign out and back in. Undo YSO changes (32) puts everything back.'
+    if ($script:DryRun) { Write-Info 'Analyze-only mode: nothing was changed.'; return }
+    if (-not (Confirm-Action $(if ($on) { N 'Switch performance mode off (Windows effects back)?' } else { N 'Switch performance mode on?' }) (-not $on))) { Write-Info 'Nothing was changed.'; return }
+    $change = New-ChangeEntry (N 'Performance mode') $(if ($on) { N 'Performance mode off' } else { N 'Performance mode on' })
+    $failed = 0
+    foreach ($v in @(Get-PerformanceValues)) {
+        try {
+            if (-not $on) { Set-RegValueLogged $change $v[0] $v[1] $v[2] $v[4] }
+            elseif ($null -eq $v[3]) { Remove-RegValueLogged $change $v[0] $v[1] }
+            else { Set-RegValueLogged $change $v[0] $v[1] $v[3] $v[4] }
+        } catch { $failed++; Write-YsoError -Context ('performance mode: ' + $v[1]) -ErrorRecord $_ }
+    }
+    Add-ChangeEntry $change
+    if ($failed) { Write-Warn (L 'Done, but {0} setting(s) could not be changed. The details were saved.' $failed) }
+    else { Write-Ok $(if ($on) { L 'Done: Windows effects are back after you sign out and back in.' } else { L 'Done: performance mode is on after you sign out and back in.' }) }
+}
+
+# ==================================================================
+#  BROWSER EXTENSIONS  (39) - every extension of Chrome, Edge, Brave, Vivaldi, Opera and Firefox,
+#  switched on or off, and what it may do (read every site, your browsing...). Shown only:
+#  removing one is done in the browser, from its extensions page.
+# ==================================================================
+function Get-ExtensionReach([string[]]$Permissions) {
+    # What an extension may do, from its permissions: 'all' (read and change every site),
+    # 'browsing' (tabs, history, cookies...), or 'small'.
+    $p = @($Permissions | ForEach-Object { "$_" })
+    if (@($p | Where-Object { $_ -in @('<all_urls>', '*://*/*', 'http://*/*', 'https://*/*', 'file:///*') }).Count) { return 'all' }
+    if (@($p | Where-Object { $_ -in @('tabs', 'history', 'cookies', 'webRequest', 'webRequestBlocking', 'debugger', 'nativeMessaging', 'proxy', 'management', 'clipboardRead', 'downloads', 'webNavigation', 'declarativeNetRequestWithHostAccess', 'scripting') }).Count) { return 'browsing' }
+    return 'small'
+}
+
+function Get-ChromiumExtensionName([string]$Dir, $Manifest) {
+    $n = "$($Manifest.name)"
+    if ($n -match '^__MSG_(.+)__$') {
+        $key = $Matches[1]
+        foreach ($loc in @("$($Manifest.default_locale)", 'en', 'en_US', 'fr')) {
+            if (-not $loc) { continue }
+            $f = [System.IO.Path]::Combine($Dir, '_locales', $loc, 'messages.json')
+            if (-not (Test-Path -LiteralPath $f)) { continue }
+            try {
+                $m = Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json
+                foreach ($p in $m.PSObject.Properties) { if ($p.Name -ieq $key -and $p.Value.message) { return "$($p.Value.message)" } }
+            } catch { }
+        }
+    }
+    return $n
+}
+
+function Get-ChromiumProfiles {
+    # Browser, profile folder: Chrome, Edge, Brave, Vivaldi, Chromium (one folder per profile), Opera (its own layout).
+    $out = @()
+    foreach ($p in $script:Profiles) {
+        $L = [System.IO.Path]::Combine($p, 'AppData\Local')
+        $R = [System.IO.Path]::Combine($p, 'AppData\Roaming')
+        foreach ($b in @(@('Chrome', "$L\Google\Chrome\User Data"), @('Edge', "$L\Microsoft\Edge\User Data"), @('Brave', "$L\BraveSoftware\Brave-Browser\User Data"),
+                         @('Vivaldi', "$L\Vivaldi\User Data"), @('Chromium', "$L\Chromium\User Data"))) {
+            if (-not (Test-Path -LiteralPath $b[1])) { continue }
+            foreach ($d in @(Get-ChildItem -LiteralPath $b[1] -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq 'Default' -or $_.Name -like 'Profile *' })) {
+                $out += [pscustomobject]@{ Browser = $b[0]; Dir = $d.FullName }
+            }
+        }
+        foreach ($o in @("$R\Opera Software\Opera Stable", "$R\Opera Software\Opera GX Stable")) {
+            if (Test-Path -LiteralPath $o) { $out += [pscustomobject]@{ Browser = $(if ($o -like '*GX*') { 'Opera GX' } else { 'Opera' }); Dir = $o } }
+        }
+    }
+    return $out
+}
+
+function Get-BrowserExtensions {
+    $out = New-Object System.Collections.Generic.List[object]
+    foreach ($pr in @(Get-ChromiumProfiles)) {
+        $ext = [System.IO.Path]::Combine($pr.Dir, 'Extensions')
+        if (-not (Test-Path -LiteralPath $ext)) { continue }
+        $settings = $null
+        foreach ($pf in @('Secure Preferences', 'Preferences')) {
+            $f = [System.IO.Path]::Combine($pr.Dir, $pf)
+            if ($settings -or -not (Test-Path -LiteralPath $f)) { continue }
+            try { $settings = (Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json).extensions.settings } catch { }
+        }
+        foreach ($idDir in @(Get-ChildItem -LiteralPath $ext -Directory -ErrorAction SilentlyContinue)) {
+            $ver = @(Get-ChildItem -LiteralPath $idDir.FullName -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending)[0]
+            if (-not $ver) { continue }
+            $mf = [System.IO.Path]::Combine($ver.FullName, 'manifest.json')
+            if (-not (Test-Path -LiteralPath $mf)) { continue }
+            try { $m = Get-Content -LiteralPath $mf -Raw -Encoding UTF8 | ConvertFrom-Json } catch { continue }
+            if ("$($m.theme)" -or $m.PSObject.Properties['theme']) { continue }   # themes only change colours
+            $perm = @(@($m.permissions) + @($m.host_permissions) + @($m.optional_host_permissions | Where-Object { $false }) | Where-Object { $_ -is [string] })
+            foreach ($cs in @($m.content_scripts)) { $perm += @($cs.matches) }
+            $st = $null
+            if ($settings) { $st = $settings.PSObject.Properties[$idDir.Name] }
+            $on = $true
+            if ($st) {
+                $v = $st.Value
+                if ($v.PSObject.Properties['state'] -and "$($v.state)" -eq '0') { $on = $false }
+                if ($v.PSObject.Properties['disable_reasons'] -and @($v.disable_reasons | Where-Object { "$_" -ne '0' -and "$_" -ne '' }).Count) { $on = $false }
+            }
+            $store = $(if ($st -and $st.Value.PSObject.Properties['from_webstore']) { [bool]$st.Value.from_webstore } else { $true })
+            $out.Add([pscustomobject]@{ Browser = $pr.Browser; Name = (Get-ChromiumExtensionName $ver.FullName $m); On = $on; Reach = (Get-ExtensionReach $perm); Store = $store })
+        }
+    }
+    # Firefox: extensions.json of each profile (only the extensions you installed)
+    foreach ($p in $script:Profiles) {
+        $root = [System.IO.Path]::Combine($p, 'AppData\Roaming\Mozilla\Firefox\Profiles')
+        foreach ($d in @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue)) {
+            $f = [System.IO.Path]::Combine($d.FullName, 'extensions.json')
+            if (-not (Test-Path -LiteralPath $f)) { continue }
+            try { $j = Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json } catch { continue }
+            foreach ($a in @($j.addons)) {
+                if ("$($a.type)" -ne 'extension' -or "$($a.location)" -ne 'app-profile') { continue }
+                $perm = @(@($a.userPermissions.permissions) + @($a.userPermissions.origins) | Where-Object { $_ })
+                $out.Add([pscustomobject]@{ Browser = 'Firefox'; Name = "$($a.defaultLocale.name)"; On = [bool]$a.active; Reach = (Get-ExtensionReach $perm); Store = ("$($a.signedState)" -ne '0') })
+            }
+        }
+    }
+    return @($out | Sort-Object Browser, Name)
+}
+
+function Show-BrowserExtensions([object[]]$Sample = $null) {
+    # -Sample: made-up extensions for the window's pictures.
+    Write-Section 'BROWSER EXTENSIONS'
+    Write-Info 'Every extension of your browsers, and what it may do. An extension that can read every site sees your passwords as you type them: keep only the ones you know and use.'
+    $list = $(if ($null -ne $Sample) { @($Sample) } else { @(Get-BrowserExtensions) })
+    Write-Host ''
+    if ($list.Count -eq 0) { Write-Ok 'No extension found.'; return }
+    Write-Host ('       ' + (L 'Browser').PadRight(10) + (L 'Extension').PadRight(40) + (L 'State').PadRight(8) + (L 'May')) -ForegroundColor DarkGray
+    foreach ($e in $list) {
+        Write-Host ('       ' + $e.Browser.PadRight(10)) -NoNewline -ForegroundColor DarkGray
+        Write-Host ((Get-Truncated $e.Name 38).PadRight(40)) -NoNewline
+        if ($e.On) { Write-Host 'ON'.PadRight(8) -NoNewline -ForegroundColor Green } else { Write-Host 'OFF'.PadRight(8) -NoNewline -ForegroundColor DarkGray }
+        $reach = $(switch ($e.Reach) { 'all' { L 'read and change every site' } 'browsing' { L 'see your browsing (tabs, history...)' } default { L 'little' } })
+        if (-not $e.Store) { $reach += ', ' + (L 'not from the store') }
+        Write-Host $reach -ForegroundColor $(if ($e.Reach -eq 'all' -or -not $e.Store) { 'Yellow' } else { 'Gray' })
+    }
+    Write-Host ''
+    $off = @($list | Where-Object { -not $_.On }).Count
+    if ($off) { Write-Info (L '{0} extension(s) are switched off: if you do not use them, remove them.' $off) }
+    Write-Info 'To remove one: open the browser, then its extensions page (Chrome: chrome://extensions, Edge: edge://extensions, Firefox: about:addons).'
+}
+
+# ==================================================================
+#  PRE-INSTALLED APPS  (31 > W) - apps Windows or the shop put on the PC that many people never use.
+#  Removed for your account only; each one can be installed again from the Microsoft Store.
+# ==================================================================
+function Get-BloatCatalog {
+    # Name pattern (Get-AppxPackage), what people know it as, and whether it is ticked by "the usual ones".
+    # Never: the Store, Photos, Calculator, Camera, Notepad, Paint, Terminal, Media Player, Xbox, drivers' apps.
+    return @(
+        @('king.com.*', (N 'Candy Crush and other King games'), $true), @('BytedancePte.Ltd.TikTok', 'TikTok', $true),
+        @('Disney.*', 'Disney+', $true), @('Clipchamp.Clipchamp', 'Clipchamp', $true), @('Microsoft.BingNews', (N 'Microsoft News'), $true),
+        @('Microsoft.BingWeather', (N 'Weather'), $false), @('Microsoft.BingFinance', (N 'Money'), $true), @('Microsoft.BingSports', 'Sports', $true),
+        @('Microsoft.BingSearch', (N 'Bing Search'), $false), @('Microsoft.MicrosoftSolitaireCollection', 'Solitaire Collection', $false),
+        @('Microsoft.GetHelp', (N 'Get Help'), $false), @('Microsoft.Getstarted', (N 'Tips'), $true), @('Microsoft.WindowsFeedbackHub', (N 'Feedback Hub'), $true),
+        @('Microsoft.MicrosoftOfficeHub', 'Microsoft 365 (Office)', $false), @('Microsoft.People', (N 'People'), $true), @('Microsoft.WindowsMaps', (N 'Maps'), $false),
+        @('Microsoft.MixedReality.Portal', 'Mixed Reality Portal', $true), @('Microsoft.Microsoft3DViewer', '3D Viewer', $true), @('Microsoft.Print3D', 'Print 3D', $true),
+        @('Microsoft.MSPaint', 'Paint 3D', $true), @('Microsoft.SkypeApp', 'Skype', $true), @('Microsoft.Todos', 'Microsoft To Do', $false),
+        @('MicrosoftCorporationII.MicrosoftFamily', 'Microsoft Family Safety', $true), @('Microsoft.PowerAutomateDesktop', 'Power Automate', $true),
+        @('MicrosoftTeams', (N 'Teams (personal, built into Windows 11)'), $true), @('Microsoft.549981C3F5F10', 'Cortana', $true),
+        @('Microsoft.ZuneVideo', (N 'Movies & TV'), $false), @('Microsoft.Messaging', (N 'Messaging'), $true), @('Microsoft.OneConnect', (N 'Mobile Plans'), $true),
+        @('Microsoft.Wallet', 'Wallet', $true), @('Microsoft.YourPhone', (N 'Phone Link'), $false), @('Microsoft.OutlookForWindows', (N 'Outlook (new)'), $false),
+        @('Microsoft.Windows.DevHome', 'Dev Home', $true), @('Microsoft.Copilot', 'Copilot', $false), @('SpotifyAB.SpotifyMusic', 'Spotify', $false),
+        @('Facebook.*', 'Facebook, Instagram', $true), @('AmazonVideo.PrimeVideo', 'Prime Video', $true), @('4DF9E0F8.Netflix', 'Netflix', $false),
+        @('9E2F88E3.Twitter', 'X (Twitter)', $true), @('7EE7776C.LinkedInforWindows', 'LinkedIn', $true), @('*.Booking.com*', 'Booking.com', $true)
+    )
+}
+
+function Get-InstalledBloat {
+    $pkgs = @(Get-AppxPackage -ErrorAction SilentlyContinue | Where-Object { -not $_.IsFramework -and -not $_.NonRemovable })
+    $out = @()
+    foreach ($b in @(Get-BloatCatalog)) {
+        foreach ($p in @($pkgs | Where-Object { $_.Name -like $b[0] })) {
+            $out += [pscustomobject]@{ Package = $p.PackageFullName; Pkg = $p.Name; Family = $p.PackageFamilyName; Name = $b[1]; Usual = [bool]$b[2] }
+        }
+    }
+    return @($out | Sort-Object Name -Unique)
+}
+
+function Show-PreinstalledApps([object[]]$Sample = $null) {
+    # -Sample: made-up apps for the window's pictures (the usual ones ticked); choosing only ends the page.
+    $apps = $(if ($null -ne $Sample) { @($Sample) } else { @(Get-InstalledBloat) })
+    $tick = [bool[]]@($apps | ForEach-Object { ($null -ne $Sample) -and $_.Usual })
+    while ($true) {
+        Clear-Host
+        Write-Section 'PRE-INSTALLED APPS'
+        Write-Info 'Apps Windows or the shop put on the PC, that many people never use. They are removed for your account only, and each one can be installed again from the Microsoft Store.'
+        Write-Host ''
+        if ($apps.Count -eq 0) { Write-Ok 'None of the usual pre-installed apps is on this PC.'; [void](Read-Choice 'Press Enter to continue' -Buttons @(, @('', 'OK'))); return }
+        for ($i = 0; $i -lt $apps.Count; $i++) {
+            Write-Option "$($i + 1)" ('{0} {1}' -f $(if ($tick[$i]) { '[x]' } else { '[ ]' }), (L $apps[$i].Name))
+        }
+        $c = Read-Choice 'Number = tick or untick, U = tick the usual ones, D = remove the ticked ones, Enter = back' -Buttons @(@('D', 'Remove the ticked ones'), @('U', 'Tick the usual ones'), @('', 'Back')) -Hint 'Tick the apps you do not use, then Remove.'
+        if (-not $c -or $null -ne $Sample) { return }
+        if ($c -eq 'U') { for ($i = 0; $i -lt $apps.Count; $i++) { if ($apps[$i].Usual) { $tick[$i] = $true } }; continue }
+        if ($c -match '^\d+$' -and [int]$c -ge 1 -and [int]$c -le $apps.Count) { $tick[[int]$c - 1] = -not $tick[[int]$c - 1]; continue }
+        if ($c -ne 'D') { continue }
+        $chosen = @(for ($i = 0; $i -lt $apps.Count; $i++) { if ($tick[$i]) { $apps[$i] } })
+        if ($chosen.Count -eq 0) { continue }
+        if ($script:DryRun) { Write-Info 'Analyze-only mode: nothing was changed.'; Start-Sleep -Seconds 2; continue }
+        if (-not (Confirm-Action (L 'Remove {0} app(s)?' $chosen.Count) $true)) { continue }
+        $change = New-ChangeEntry (N 'Uninstall apps') (N 'Removed: {0}') @(, [string[]]@($chosen | ForEach-Object { $_.Name }))
+        foreach ($a in $chosen) {
+            try {
+                Remove-AppxPackage -Package $a.Package -ErrorAction Stop
+                [void]$change.Items.Add([pscustomobject]@{ Kind = 'appx'; Pkg = $a.Pkg; Family = $a.Family; Name = $a.Name })
+                Write-Ok (L 'Removed: {0}' (L $a.Name))
+            } catch { Write-Warn (L 'Not removed: {0} ({1})' (L $a.Name) $_.Exception.Message) }
+        }
+        Add-ChangeEntry $change
+        [void](Read-Choice 'Press Enter to continue' -Buttons @(, @('', 'OK')))
+        $apps = @(Get-InstalledBloat)
+        $tick = [bool[]]@($apps | ForEach-Object { $false })
+    }
+}
+
+# ==================================================================
+#  WINDOWS UPDATE: restart hours and pause  (28 > 7) - the same settings as Settings > Windows Update.
+# ==================================================================
+
+function Get-WuPause {
+    # Until when updates are paused ($null = not paused).
+    $v = (Read-RegValue $script:WuUxKey 'PauseUpdatesExpiryTime')
+    if (-not $v.Existed) { return $null }
+    $t = [datetime]::MinValue
+    if ([datetime]::TryParse("$($v.Data)", [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal, [ref]$t)) {
+        if ($t -gt [datetime]::UtcNow) { return $t.ToLocalTime() }
+    }
+    return $null
+}
+
+function Get-WuPauseValues([datetime]$Until) {
+    # What Settings > Windows Update writes when you pause: start and end, for every kind of update.
+    $now = [datetime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+    $end = $Until.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    return @(@('PauseFeatureUpdatesStartTime', $now), @('PauseFeatureUpdatesEndTime', $end), @('PauseQualityUpdatesStartTime', $now),
+             @('PauseQualityUpdatesEndTime', $end), @('PauseUpdatesStartTime', $now), @('PauseUpdatesExpiryTime', $end))
+}
+
+function Show-WindowsUpdateSettings {
+    while ($true) {
+        Write-Host ''
+        Write-Step 'Windows Update: restart hours and pause'
+        $start = (Read-RegValue $script:WuUxKey 'ActiveHoursStart'); $end = (Read-RegValue $script:WuUxKey 'ActiveHoursEnd')
+        Write-Kv 'No restart between' $(if ($start.Existed -and $end.Existed) { L '{0}:00 and {1}:00' $start.Data $end.Data } else { L 'set by Windows' })
+        $pause = Get-WuPause
+        Write-Kv 'Updates' $(if ($pause) { L 'paused until {0}' $pause.ToString('d') } else { L 'not paused' })
+        Write-Host ''
+        Write-Option '1' 'Hours when Windows must not restart' 'Windows installs updates outside these hours (18 hours at most).'
+        Write-Option '2' $(if ($pause) { N 'Pause longer' } else { N 'Pause updates (1 to 5 weeks)' }) 'Security updates wait too: do not pause for long.'
+        if ($pause) { Write-Option '3' 'Resume updates now' }
+        Write-Option '0' 'Back'
+        $c = Read-Choice -Buttons @(, @('0', 'Back'))
+        if ($c -notin @('1', '2', '3')) { return }
+        if ($script:DryRun) { Write-Info 'Analyze-only mode: nothing was changed.'; continue }
+        switch ($c) {
+            '1' {
+                $a = "$(Read-Host ('  ' + (L 'From (hour, 0 to 23)')))".Trim()
+                $b = "$(Read-Host ('  ' + (L 'To (hour, 0 to 23)')))".Trim()
+                if ($a -notmatch '^\d{1,2}$' -or $b -notmatch '^\d{1,2}$' -or [int]$a -gt 23 -or [int]$b -gt 23 -or [int]$a -eq [int]$b) { Write-Warn 'Two different hours from 0 to 23, please.'; continue }
+                $span = ([int]$b - [int]$a + 24) % 24
+                if ($span -gt 18) { Write-Warn 'Windows allows 18 hours at most.'; continue }
+                $change = New-ChangeEntry (N 'Updates') (N 'No restart between {0}:00 and {1}:00') @($a, $b)
+                Set-RegValueLogged $change $script:WuUxKey 'SmartActiveHoursState' 0
+                Set-RegValueLogged $change $script:WuUxKey 'ActiveHoursStart' ([int]$a)
+                Set-RegValueLogged $change $script:WuUxKey 'ActiveHoursEnd' ([int]$b)
+                Add-ChangeEntry $change
+                Write-Ok (L 'Done: Windows will not restart between {0}:00 and {1}:00.' $a $b)
+            }
+            '2' {
+                $w = "$(Read-Host ('  ' + (L 'How many weeks (1 to 5)?')))".Trim()
+                if ($w -notmatch '^[1-5]$') { Write-Warn 'A number from 1 to 5, please.'; continue }
+                $until = (Get-Date).Date.AddDays(7 * [int]$w)
+                $change = New-ChangeEntry (N 'Updates') (N 'Windows updates paused until {0}') @($until.ToString('yyyy-MM-dd'))
+                foreach ($v in @(Get-WuPauseValues $until)) { Set-RegValueLogged $change $script:WuUxKey $v[0] $v[1] 'String' }
+                Add-ChangeEntry $change
+                Write-Ok (L 'Done: Windows updates are paused until {0}.' $until.ToString('d'))
+            }
+            '3' {
+                $change = New-ChangeEntry (N 'Updates') (N 'Windows updates resumed')
+                foreach ($v in @(Get-WuPauseValues (Get-Date))) { Remove-RegValueLogged $change $script:WuUxKey $v[0] }
+                Add-ChangeEntry $change
+                Write-Ok 'Done: Windows Update works again.'
+            }
+        }
+    }
+}
+
+# ==================================================================
+#  HEALTH REPORT AS A PDF  (19) - the report on one page, to send to someone who helps you:
+#  no user name, no PC name, no file names. Made with Edge, which every Windows has.
+# ==================================================================
+function ConvertTo-HtmlText([string]$Text) { return [System.Net.WebUtility]::HtmlEncode("$Text") }
+
+function New-HealthReportHtml {
+    $h = { param($t) ConvertTo-HtmlText $t }
+    $rows = New-Object System.Text.StringBuilder
+    $add = { param($label, $value) [void]$rows.AppendLine(('<tr><th>{0}</th><td>{1}</td></tr>' -f (& $h (L $label)), (& $h $value))) }
+    try {
+        $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+        $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+        & $add (N 'Model') ("$($cs.Manufacturer) $($cs.Model)".Trim())
+        & $add (N 'Windows') (Get-OsText)
+        & $add (N 'Processor') ("$(@(Get-CimInstance Win32_Processor)[0].Name)".Trim())
+        & $add (N 'Memory (RAM)') (Format-Size ([double]$cs.TotalPhysicalMemory))
+        & $add (N 'Running since the last restart') (L '{0} days' ([int]((Get-Date) - $os.LastBootUpTime).TotalDays))
+    } catch { }
+    $glance = New-Object System.Text.StringBuilder
+    foreach ($i in @(Get-HealthItems)) {
+        $c = $(switch ($i.Level) { 'Good' { '#2e9e5b' } 'Warn' { '#c98a00' } 'Bad' { '#d33' } default { '#888' } })
+        [void]$glance.AppendLine(('<tr><th><span class="dot" style="background:{0}"></span>{1}</th><td>{2}</td></tr>' -f $c, (& $h (L $i.Name)), (& $h $i.Text)))
+    }
+    $drives = New-Object System.Text.StringBuilder
+    foreach ($v in @(Get-FixedVolumes)) { [void]$drives.AppendLine(('<tr><th>{0}:</th><td>{1}</td></tr>' -f $v.DriveLetter, (& $h (L '{0} free of {1}' (Format-Size $v.SizeRemaining) (Format-Size $v.Size))))) }
+    foreach ($d in @(Get-DiskFacts)) {
+        $bits = @($(if ($d.Health -eq 'Healthy') { L 'healthy' } elseif ($d.Health) { $d.Health } else { L 'unknown' }))
+        if ($null -ne $d.Wear) { $bits += (L 'wear {0} %' $d.Wear) }
+        if ($null -ne $d.Temp) { $bits += ('{0} °C' -f $d.Temp) }
+        [void]$drives.AppendLine(('<tr><th>{0}</th><td>{1}</td></tr>' -f (& $h $d.Name), (& $h ($bits -join ', '))))
+    }
+    $problems = New-Object System.Text.StringBuilder
+    $since = (Get-Date).AddDays(-30)
+    foreach ($q in @(@((N 'Blue screens'), @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-WER-SystemErrorReporting'; Id = 1001; StartTime = $since }),
+                     @((N 'Unexpected shutdowns'), @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-Power'; Id = 41; StartTime = $since }),
+                     @((N 'App crashes'), @{ LogName = 'Application'; ProviderName = 'Application Error'; Id = 1000; StartTime = $since }))) {
+        $n = @(Get-EventsSafe $q[1]).Count
+        [void]$problems.AppendLine(('<tr><th>{0}</th><td>{1}</td></tr>' -f (& $h (L $q[0])), $(if ($script:LastEventError) { & $h (L 'could not be read') } else { $n })))
+    }
+    $over = Get-PcProgressText (Get-PcProgress @(Read-PcHistory))
+    $title = & $h (L 'PC health report')
+    $css = 'body{font-family:Segoe UI,Arial,sans-serif;color:#1d2420;margin:28px 34px;font-size:12.5px}h1{font-size:22px;margin:0 0 2px;color:#1f7a4d}' +
+           '.sub{color:#667;margin-bottom:18px}h2{font-size:14px;margin:20px 0 6px;border-bottom:1px solid #d6dfd9;padding-bottom:4px}' +
+           'table{border-collapse:collapse;width:100%}th{text-align:left;font-weight:600;width:34%;padding:4px 8px 4px 0;vertical-align:top}td{padding:4px 0}' +
+           '.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:8px}.foot{margin-top:26px;color:#889;font-size:11px}'
+    $parts = @(
+        '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + $title + '</title><style>' + $css + '</style></head><body>',
+        ('<h1>{0}</h1><div class="sub">{1}</div>' -f $title, (& $h (L 'Made on {0} by YSO {1}' (Get-Date).ToString('D') $script:Version))),
+        ('<h2>{0}</h2><table>{1}</table>' -f (& $h (L 'This PC')), $rows.ToString()),
+        ('<h2>{0}</h2><table>{1}</table>' -f (& $h (L 'At a glance')), $glance.ToString()),
+        ('<h2>{0}</h2><table>{1}</table>' -f (& $h (L 'Drives')), $drives.ToString()),
+        ('<h2>{0}</h2><table>{1}</table>' -f (& $h (L 'Problems of the last 30 days')), $problems.ToString())
+    )
+    if ($over) { $parts += ('<h2>{0}</h2><p>{1}</p>' -f (& $h (L 'Over time')), (& $h $over)) }
+    $parts += ('<div class="foot">{0}</div></body></html>' -f (& $h (L 'No user name, PC name or file name is in this report.')))
+    return ($parts -join "`n")
+}
+
+function Get-EdgePath {
+    foreach ($p in @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe")) {
+        if ($p -and (Test-Path -LiteralPath $p)) { return $p }
+    }
+    return ''
+}
+
+function ConvertTo-PdfWithEdge([string]$Html, [string]$Pdf) {
+    # Edge prints the page to a PDF, without a window, with a profile of its own (deleted after).
+    $edge = Get-EdgePath
+    if (-not $edge) { return $false }
+    $tmp = [System.IO.Path]::Combine($env:TEMP, 'yso-edge-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+    $uri = ([System.Uri]$Html).AbsoluteUri
+    try {
+        $p = Start-Process -FilePath $edge -PassThru -WindowStyle Hidden -ArgumentList @('--headless=new', '--disable-gpu', '--no-first-run', '--no-pdf-header-footer',
+            "--user-data-dir=`"$tmp`"", "--print-to-pdf=`"$Pdf`"", $uri)
+        $null = $p.Handle
+        if (-not $p.WaitForExit(60000)) { try { $p.Kill() } catch { } }
+        $clock = [System.Diagnostics.Stopwatch]::StartNew()
+        while (-not (Test-Path -LiteralPath $Pdf) -and $clock.ElapsedMilliseconds -lt 10000) { Start-Sleep -Milliseconds 300 }
+    } catch { }
+    Start-Sleep -Milliseconds 500
+    Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    return (Test-Path -LiteralPath $Pdf)
+}
+
+function Get-DesktopFolder {
+    # Your Desktop (where Windows says it is: it can be in OneDrive), or the logs folder.
+    $d = [Environment]::GetFolderPath('Desktop')
+    if (-not $d -or -not (Test-Path -LiteralPath $d)) { $d = $script:LogDir }
+    return $d
+}
+
+function Save-HealthReportPdf {
+    Write-Step 'Making the report...'
+    $desktop = Get-DesktopFolder
+    $name = (L 'PC health report') + ' ' + (Get-Date).ToString('yyyy-MM-dd')
+    $html = [System.IO.Path]::Combine($env:TEMP, "$name.html")
+    [System.IO.File]::WriteAllText($html, (New-HealthReportHtml), (New-Object System.Text.UTF8Encoding $false))
+    $pdf = [System.IO.Path]::Combine($desktop, "$name.pdf")
+    if (ConvertTo-PdfWithEdge $html $pdf) {
+        Remove-Item -LiteralPath $html -Force -ErrorAction SilentlyContinue
+        Write-Ok (L 'Saved on your Desktop: {0}' ([System.IO.Path]::GetFileName($pdf)))
+        Start-Process explorer.exe -ArgumentList "/select,`"$pdf`""
+    } else {
+        $keep = [System.IO.Path]::Combine($desktop, "$name.html")
+        Move-Item -LiteralPath $html -Destination $keep -Force
+        Write-Warn 'Edge could not make the PDF: the report is saved as a web page on your Desktop. Open it, then print it to PDF (Ctrl+P).'
+        Start-Process explorer.exe -ArgumentList "/select,`"$keep`""
     }
 }
 
@@ -4247,13 +5597,13 @@ function Get-HelpTopics {
         (New-HelpTopic 'clean' 'The Clean page' 'The Clean page lists every part YSO can clean, with a sentence on what it is. Analyze shows how much each part frees. Tick what you want, then click Clean selected.' 'The ticked parts are cleaned one after the other, with a progress bar and what each one freed. The Recycle Bin and old driver versions are cleaned only if you tick them.' 'Deleted temporary files and caches do not go to the Recycle Bin: Windows and your apps make them again when they need them.')
         (New-HelpTopic '1' '' 'Deletes the temporary files of every user of the PC and of Windows. Apps leave them behind after installs, updates and crashes.' 'Only files older than 24 hours (you can change it in Settings), and never a file that is in use.' 'Not needed: apps make new temporary files when they need them.')
         (New-HelpTopic '2' '' 'Deletes the copies of web pages, images and scripts that Chrome, Edge, Brave, Vivaldi, Opera and Firefox keep, in every profile. Pages load from the internet again the first time.' 'Passwords, cookies, history, bookmarks, open tabs and extensions are not touched. If a browser is open, YSO offers to close it for a complete clean; its tabs come back when you open it again.' 'Not needed: the browser fills its cache again as you browse.')
-        (New-HelpTopic '3' '' 'Deletes error reports, crash dumps (also those in the temporary folders of Windows services, sometimes several GB), logs older than 14 days and the thumbnail cache.' 'Recent logs and dumps are kept, so a recent crash can still be looked at. The Prefetch folder is never touched: emptying it would make Windows slower.' 'Not needed. Thumbnails are made again when you open a folder.')
+        (New-HelpTopic '3' '' 'Deletes error reports, crash dumps (also those in the temporary folders of Windows services, sometimes several GB), logs older than 14 days, the thumbnail cache and the installer files graphics drivers leave behind (NVIDIA, AMD).' 'Recent logs and dumps are kept, so a recent crash can still be looked at. The Prefetch folder is never touched: emptying it would make Windows slower.' 'Not needed. Thumbnails are made again when you open a folder.')
         (New-HelpTopic '4' '' 'Deletes update files Windows has already installed, and the Delivery Optimization cache (updates shared with other PCs).' 'If updates are waiting for a restart, or Windows Update is busy, the cache is kept: restart, then run it again.' 'Not needed: Windows downloads again what it still needs.')
         (New-HelpTopic '5' '' 'Empties the Recycle Bin of every drive.' 'YSO always asks first, and shows how much it holds.' 'Cannot be undone: files emptied from the Recycle Bin are gone.')
         (New-HelpTopic '6' '' 'Deletes the compiled shaders that NVIDIA, AMD, Intel and DirectX keep. Most useful after a driver update, or when a game shows graphics glitches.' 'Games make them again on their next launch, so the first load may stutter briefly.' 'Not needed: they come back by themselves.')
-        (New-HelpTopic '7' '' 'Deletes the caches and old logs of npm, pip, VS Code, Discord, Teams, Spotify, Steam and every app built on Chromium.' 'Projects, installed packages, settings, logins and game files are not touched. For VS Code, the saved data of projects not opened for 60 days goes too (it comes back if you open them again).' 'Not needed: apps rebuild their caches.')
+        (New-HelpTopic '7' '' 'Deletes the caches and old logs of developer tools (npm, pip, NuGet, Yarn, Gradle, Maven, Rust, Go, uv, pnpm, conda, JetBrains IDEs), of apps (VS Code, Discord, Teams, Spotify, Steam, Epic, every app built on Chromium) and of creative tools (Adobe media cache, Unity, Unreal). AI models downloaded with Hugging Face are shown, and deleted only if you say yes.' 'Projects, installed packages, environments, settings, logins and game files are not touched. Downloaded libraries and media caches go only when they were not changed for 30 days (90 for Gradle and Maven). For VS Code, the saved data of projects not opened for 60 days goes too (it comes back if you open them again).' 'Not needed: apps rebuild their caches, and a project downloads again what it needs (it needs internet).')
         (New-HelpTopic '8' '' 'Runs Windows Disk Cleanup with every safe option, then cleans the component store (old versions of Windows files kept after updates). Frees a lot, and takes 10 to 30 minutes.' 'Downloads, the Recycle Bin and Windows.old are never included. Old driver versions are removed only if you say yes. Part of the cleanup finishes at the next restart.' 'Afterwards, updates installed before it can no longer be uninstalled, and removed driver versions cannot come back.')
-        (New-HelpTopic '9' '' 'Windows.old holds the previous version of Windows after a big update, so you can go back to it for 10 days. It often takes 15 to 30 GB.' 'YSO shows its size and whether going back is still possible, then asks.' 'Cannot be undone: once it is removed, you can no longer go back to the previous version of Windows.')
+        (New-HelpTopic '9' '' 'Windows.old holds the previous version of Windows after a big update, so you can go back to it for 10 days. It often takes 15 to 30 GB. The folders a Windows upgrade leaves behind ($WINDOWS.~BT, $WINDOWS.~WS, $GetCurrent) go too.' 'YSO shows the size and whether going back is still possible, then asks. While you can go back, the upgrade folders are kept, because going back needs them, and they are never touched while an upgrade is running.' 'Cannot be undone: once it is removed, you can no longer go back to the previous version of Windows.')
         (New-HelpTopic '10' '' 'hiberfil.sys can take several GB. Windows uses it for Hibernate and Fast Startup. Reduced keeps Fast Startup and halves it, Off removes it, Full is the Windows default.' 'On a laptop, Hibernate saves your work when the battery runs out: keep Reduced or Full there.' 'Undo YSO changes (32) puts the previous setting back, or choose Full here.')
         (New-HelpTopic '11' '' 'Measures the link to your router, the time it takes to reach the internet, the speed of several DNS servers and the Wi-Fi signal, and says where a problem comes from.' 'Nothing is changed.' 'Nothing to undo.')
         (New-HelpTopic '12' '' 'DNS turns site names into addresses. Your provider''s DNS can be slow; Cloudflare, Google or Quad9 are often faster, and some block dangerous sites. Network check (11) shows which one is fastest for you.' 'YSO saves your current DNS settings first, then sets the new ones on every connected adapter.' 'Option 4 on the same screen puts your previous settings back, and so does Undo YSO changes (32).')
@@ -4264,9 +5614,9 @@ function Get-HelpTopics {
         (New-HelpTopic '17' '' 'Lists the programs that start with Windows, with their publisher and how much they slow down startup. Click one to switch it on or off.' 'It works like Task Manager: the program stays installed and only stops starting by itself. Microsoft Store apps manage their own startup, in Windows Settings.' 'Click it again, or use Undo YSO changes (32).')
         (New-HelpTopic '18' '' 'Reads how long the last startups took, from Windows'' own records, and which apps, drivers and services slowed them down.' 'Nothing is changed. Only full startups are measured: Restart, or Shut down when Fast Startup is off.' 'Nothing to undo.')
         (New-HelpTopic '30' '' 'Switches off, with tick boxes: ads and suggestions in Windows, tips on the lock screen, web results (Bing) in the Start menu search, ad tracking, diagnostic data and activity history, Copilot, Recall and Click to Do, the AI features of Edge, Notepad and Paint, and ads in Edge.' 'These are the settings Windows and Edge offer for it. Some are policies: Windows or Edge then shows "managed by your organization", which is normal. Some changes show after you sign out. Defender, Windows Update and the Store are never touched.' 'Untick a line and Apply to get the Windows default back, or use Undo YSO changes (32) for the exact previous state.' @('Tick what you do not want, or click Tick the recommended ones.', 'Click Apply, read the list of changes, and confirm.', 'Sign out and back in, or let YSO restart File Explorer when it offers to.'))
-        (New-HelpTopic '31' '' 'Lists your desktop apps with their size and when they were last used. YSO starts the app''s own uninstaller, then looks for what it left behind: folders and registry keys named like it.' 'YSO never offers the folder of another installed app, a system folder, or a name another app also uses. Folders of 1 GB or more start unticked: a folder can hold your own data, like game saves or a mail profile. Runtimes and drivers get a warning.' 'The app can be installed again. Removed folders go to the Recycle Bin and registry keys are saved to a file first: Undo YSO changes (32) puts them back.' @('Find the app: sort by size or by last use, or type part of its name.', 'Click it, read what YSO shows about it, and confirm.', 'Follow the window of its uninstaller to the end.', 'Among the leftovers, untick what you want to keep, then click Remove the ticked ones.'))
-        (New-HelpTopic '32' '' 'Every setting YSO changes is written down first, with what it was before: startup programs, power plan, hibernation file, DNS, privacy settings and app leftovers. This list shows them, newest first.' 'Click one to see what it changed, then confirm: it is back exactly as it was. Cleaned files are not in this list: they are caches that come back by themselves.' 'An undone change is marked as such. The last 300 changes are kept.')
-        (New-HelpTopic '19' '' 'Everything about the PC in one report: Windows and hardware, disk space and wear, battery capacity, Windows Update, recent crashes, security and drivers. For each problem, an arrow shows the tool that helps.' 'Nothing is changed. It can make Windows'' detailed battery report, which opens in your browser.' 'Nothing to undo.')
+        (New-HelpTopic '31' '' 'Lists your desktop apps with their size and when they were last used. YSO starts the app''s own uninstaller, then looks for what it left behind: folders and registry keys named like it. W shows the apps Windows or the shop put on the PC (Candy Crush, TikTok, News...): tick the ones you do not use, and YSO removes them for your account.' 'YSO never offers the folder of another installed app, a system folder, or a name another app also uses. Folders of 1 GB or more start unticked: a folder can hold your own data, like game saves or a mail profile. Runtimes and drivers get a warning.' 'The app can be installed again. Removed folders go to the Recycle Bin and registry keys are saved to a file first: Undo YSO changes (32) puts them back. For a removed Windows app, it installs it again, or opens its page in the Microsoft Store.' @('Find the app: sort by size or by last use, or type part of its name.', 'Click it, read what YSO shows about it, and confirm.', 'Follow the window of its uninstaller to the end.', 'Among the leftovers, untick what you want to keep, then click Remove the ticked ones.'))
+        (New-HelpTopic '32' '' 'Every setting YSO changes is written down first, with what it was before: startup programs, power plan, hibernation file, DNS, privacy settings, app leftovers, Windows apps removed, right-click menu, performance mode, Windows Update hours and pause, and the space settings of Windows. This list shows them, newest first.' 'Click one to see what it changed, then confirm: it is back exactly as it was. Cleaned files are not in this list: they are caches that come back by themselves.' 'An undone change is marked as such. The last 300 changes are kept.')
+        (New-HelpTopic '19' '' 'Everything about the PC in one report: Windows and hardware, disk space and wear, battery capacity, Windows Update, recent crashes, security and drivers. For each problem, an arrow shows the tool that helps.' 'Nothing is changed. It can make Windows'' detailed battery report, which opens in your browser, and a one-page PDF of the report on your Desktop, to send to someone who helps you (no user name, PC name or file name in it).' 'Nothing to undo.')
         (New-HelpTopic '20' '' 'Shows the recent blue screens, app crashes and serious errors from Windows'' logs, and what caused them when Windows knows.' 'Nothing is changed. A few errors are normal on every PC: look for the ones that repeat, or happen when you have a problem.' 'Nothing to undo.')
         (New-HelpTopic '21' '' 'Checks the antivirus, the firewall and Windows Update. With Microsoft Defender, it can update the virus definitions and run a quick scan (5 to 15 minutes).' 'Only Defender''s own update and scan: no setting is changed.' 'Nothing to undo.')
         (New-HelpTopic '22' '' 'Lists the scheduled tasks and services that do not come from Microsoft, and whether their program is signed. Takes 10 to 60 seconds.' 'Nothing is changed. Not signed does not mean malware. To remove something, uninstall the program it belongs to.' 'Nothing to undo.')
@@ -4275,8 +5625,15 @@ function Get-HelpTopics {
         (New-HelpTopic '25' '' 'Starts Windows Memory Diagnostic, which checks the RAM for faults, a common cause of blue screens and random crashes. It runs after a restart, before Windows loads, and takes 10 to 30 minutes.' 'Save your work first. The result shows as a notification when Windows starts again, and here next time.' 'Nothing to undo.')
         (New-HelpTopic '26' '' 'Runs DISM, which repairs Windows'' store of system files (it needs internet), then SFC, which repairs the system files from that store. Takes 15 to 45 minutes.' 'Only Windows'' own files are repaired, with Windows'' own tools.' 'Nothing to undo: the repaired files are the original ones.')
         (New-HelpTopic '27' '' 'Shows which folders fill a drive, biggest first. Click a folder to open it, Back to go up, Biggest files to see the largest files, Show in Explorer to open it there.' 'Nothing is changed or deleted: it only shows. Delete what you do not need yourself, in File Explorer.' 'Nothing to undo.')
-        (New-HelpTopic '28' '' 'Finds app updates (with winget) and driver updates (with Windows Update), and shows them in one list where you tick what to install. YSO can also check on a schedule and tell you, or install safe updates by itself.' 'A restore point is made before drivers are installed. In automatic mode, big new versions (7.x to 8.x), optional drivers and the apps you exclude are left for you. Only apps in the winget catalog are checked.' 'An app can be uninstalled, then its previous version installed from its website. A driver can be rolled back in Device Manager, or with the restore point.' @('Click Check for updates now.', 'Tick what to install, then click Install the ticked updates.', 'If you want, choose Notify me or Automatic, and when it runs.'))
-        (New-HelpTopic '29' '' 'The disk of a virtual machine is one big file on your PC (.vdi for VirtualBox, .vhdx for WSL and Docker Desktop). It grows when the machine writes, but never shrinks, even when you delete files inside it. Compacting removes the empty space from the file: the file gets smaller, and nothing inside the machine changes.' 'YSO refuses a machine that is running, in saved state or with snapshots, and wants VirtualBox and Docker Desktop closed. The file is rewritten in place: a power cut or a crash during compaction can damage it.' 'Compacting cannot be undone, and does not need to be. Copy a disk you cannot lose before, so you can put it back if something goes wrong.' @('VirtualBox: compacting only removes empty blocks, and deleted files are not empty until the free space is filled with zeros. Inside the machine, run sdelete -z C: (Windows) or the dd command YSO shows (Linux), then shut the machine down from inside.', 'WSL and Docker: nothing to do inside. YSO frees the unused blocks and stops WSL by itself.', 'Copy the disk file of the machine somewhere else, an external drive for example: that is your backup.', 'Keep the PC plugged in. Open Virtual disks, check that the disk says it can be compacted, and confirm.', 'Start the machine to check that it works. Then you can delete the copy.'))
+        (New-HelpTopic '28' '' 'Finds app updates (with winget) and driver updates (with Windows Update), and shows them in one list where you tick what to install. YSO can also check on a schedule and tell you, or install safe updates by itself. Option 7 sets the hours when Windows must not restart for updates, and pauses Windows updates for 1 to 5 weeks.' 'A restore point is made before drivers are installed. In automatic mode, big new versions (7.x to 8.x), optional drivers and the apps you exclude are left for you. Only apps in the winget catalog are checked.' 'An app can be uninstalled, then its previous version installed from its website. A driver can be rolled back in Device Manager, or with the restore point. Restart hours and the pause: Undo YSO changes (32), or Resume updates now.' @('Click Check for updates now.', 'Tick what to install, then click Install the ticked updates.', 'If you want, choose Notify me or Automatic, and when it runs.'))
+        (New-HelpTopic '29' '' 'The disk of a virtual machine is one big file on your PC (.vdi for VirtualBox, .vhdx for WSL and Docker Desktop). It grows when the machine writes, but never shrinks, even when you delete files inside it. Compacting removes the empty space from the file: the file gets smaller, and nothing inside the machine changes.' 'YSO refuses a machine that is running, in saved state or with snapshots, and wants VirtualBox and Docker Desktop closed. The file is rewritten in place: a power cut or a crash during compaction can damage it.' 'Compacting cannot be undone, and does not need to be. Copy a disk you cannot lose before, so you can put it back if something goes wrong.' @('Docker: option D cleans Docker first (stopped containers, unused images and build cache; your volumes stay), so there is more to give back.', 'VirtualBox: compacting only removes empty blocks, and deleted files are not empty until the free space is filled with zeros. Inside the machine, run sdelete -z C: (Windows) or the dd command YSO shows (Linux), then shut the machine down from inside.', 'WSL and Docker: nothing to do inside. YSO frees the unused blocks and stops WSL by itself.', 'Copy the disk file of the machine somewhere else, an external drive for example: that is your backup.', 'Keep the PC plugged in. Open Virtual disks, check that the disk says it can be compacted, and confirm.', 'Start the machine to check that it works. Then you can delete the copy.'))
+        (New-HelpTopic '33' '' 'Settings of Windows itself that give space back: Compact OS (Windows compresses its own files, 2 to 4 GB), the space Windows keeps for updates (about 7 GB), the space restore points may use, OneDrive files not opened for 60 days, and a search index that grew too big.' 'Each line says what it costs before YSO asks: a little more processor work for Compact OS, a big update that may wait for free space, the oldest restore points deleted to fit the limit, OneDrive files that need internet to open, a search that finds only part of your files for a few hours.' 'Compact OS, the reserved space and the restore point limit: Undo YSO changes (32). A OneDrive file: right-click it, Always keep on this device. The index builds itself again.')
+        (New-HelpTopic '34' '' 'Shows your own files that often take space for nothing: installers and disk images in Downloads not touched for 30 days, iPhone and iPad backups, and files that are there twice (same content) in Desktop, Documents, Downloads, Pictures, Videos and Music.' 'Nothing is deleted: a click shows the file in File Explorer, and you decide there. OneDrive files that are online only are never read, so nothing is downloaded.' 'Nothing to undo. A file you delete in File Explorer goes to the Recycle Bin.')
+        (New-HelpTopic '35' '' 'Once a day, when YSO opens, it writes down how long the last startup took, the free space on the Windows drive and how many programs start with Windows. This page compares the first day with today, then shows one line a week.' 'Nothing is changed. The measures stay on this PC (pc-history.csv in C:\ProgramData\YSO). After a week, the home page shows the comparison too.' 'Nothing to undo.')
+        (New-HelpTopic '36' '' 'Shows each drive with its type, temperature, wear and hours of use, and tests the read and write speed of a drive with Windows'' own tool (winsat), with what is normal for that kind of drive.' 'The test takes about a minute per drive: it writes a test file, then deletes it. A slow result can come from an almost full disk, an old cable or USB port, or a worn drive.' 'Nothing to undo.')
+        (New-HelpTopic '37' '' 'On Windows 11, brings back the classic right-click menu (everything at once, without Show more options). It also lists the entries other programs add to the menu, so you can switch off the ones you never use: the right-click opens faster.' 'A switched-off entry is only hidden, with Windows'' own list of blocked entries: the program keeps working. Changes show after File Explorer restarts; YSO offers to restart it.' 'Click the entry again, or C again, or use Undo YSO changes (32).')
+        (New-HelpTopic '38' '' 'For older or slower PCs: switches off animations, transparency, shadows and fading menus, and makes menus open faster. Windows looks a little plainer but answers faster. Text stays smooth.' 'The same as Adjust for best performance in Windows, for your account. It shows after you sign out and back in.' 'Run it again to switch it off, or use Undo YSO changes (32).')
+        (New-HelpTopic '39' '' 'Lists the extensions of Chrome, Edge, Brave, Vivaldi, Opera and Firefox, whether each one is on, and what it may do: read and change every site, see your browsing, or little. Extensions that do not come from the store are flagged.' 'Nothing is changed. An extension that can read every site sees what you type there, passwords included: keep only the ones you know and use.' 'Nothing to undo. To remove an extension, open the extensions page of the browser.')
         (New-HelpTopic 'A' '' 'Measures how much each part of the cleaning would free. Deletes nothing.' 'Nothing is changed. Deep clean (8) usually frees more on top of it, but cannot be measured in advance.' 'Nothing to undo.')
         (New-HelpTopic 'F' '' 'Everything at once: a restore point, then temporary files, browser caches, offline copies of sites, system junk, developer and app caches, GPU caches, the Windows Update cache, DNS, deep clean, and drive optimization. The Recycle Bin and updates only if you choose them.' 'All the questions are asked at the start, then you can walk away. If Windows is waiting for a restart, restart first: some parts can only be cleaned after it.' 'The restore point (R) takes Windows and its settings back to before; your documents are not touched by it.')
         (New-HelpTopic 'R' '' 'A restore point takes Windows, its settings and your programs back to an earlier state. Your documents are not touched. Here you see yours, create one, keep only the newest, or open System Protection.' 'Deleting old restore points is asked separately, and cannot be undone.' 'To go back to a restore point: System Protection, then System Restore.')
@@ -5522,6 +6879,7 @@ function Show-UpdatesMenu {
         Write-Option '4' 'What automatic updates install'
         Write-Option '5' 'Apps never updated automatically'
         Write-Option '6' 'Update history'
+        Write-Option '7' 'Windows Update: restart hours and pause'
         Write-Option '0' 'Back'
         switch (Read-Choice) {
             '1' { Invoke-UpdateRun -Mode 'Manual' | Out-Null; Wait-Key }
@@ -5594,6 +6952,7 @@ function Show-UpdatesMenu {
                 }
             }
             '6' { Show-UpdateHistory; Wait-Key }
+            '7' { Show-WindowsUpdateSettings }
             '0' { return }
         }
     }
@@ -6510,6 +7869,35 @@ function Invoke-SelfTest {
         $j = @(Read-ChangeJournal)
         Result-Ok (L '{0} change(s) written down' $j.Count)
     }
+    Test-Check 'Space' 'More space from Windows (33)' {
+        $c = Test-CompactOs
+        $r = Get-ReservedStorageState
+        Result-Ok ('Compact OS: {0}, {1}: {2}' -f $(if ($c -eq $true) { L 'on' } elseif ($c -eq $false) { L 'off' } else { '?' }), (L 'reserved storage'), $(if ($r -eq 'Enabled') { L 'on' } elseif ($r -eq 'Disabled') { L 'off' } else { '-' }))
+    }
+    Test-Check 'Space' 'Files you might not need (34)' {
+        $d = @(Get-UserFolders @('Downloads'))
+        if ($d.Count -eq 0) { return (Result-Info (L 'no Downloads folder')) }
+        Result-Ok (L '{0} old installer(s) in Downloads' @(Get-OldInstallers $d).Count)
+    }
+    Test-Check 'Diagnose' 'My PC over time (35)' {
+        $rows = @(Read-PcHistory)
+        Result-Ok (L '{0} day(s) measured' $rows.Count)
+    }
+    Test-Check 'Diagnose' 'Disk speed & temperature (36)' {
+        $winsat = [System.IO.Path]::Combine("$env:WINDIR", 'System32\winsat.exe')
+        $d = @(Get-DiskFacts)
+        if (-not (Test-Path -LiteralPath $winsat)) { return (Result-Missing (L 'winsat.exe is not on this Windows (speed test)')) }
+        Result-Ok (L '{0} drive(s), temperature known for {1}' $d.Count @($d | Where-Object { $null -ne $_.Temp }).Count)
+    }
+    Test-Check 'Optimize' 'Right-click menu (37)' {
+        Result-Ok (L '{0} entries added by other programs' @(Get-ShellExtensions).Count)
+    }
+    Test-Check 'Optimize' 'Performance mode (38)' {
+        if (Test-PerformanceMode) { Result-Ok (L 'on') } else { Result-Ok (L 'off') }
+    }
+    Test-Check 'Apps & privacy' 'Browser extensions (39)' {
+        Result-Ok (L '{0} extension(s) found' @(Get-BrowserExtensions).Count)
+    }
     Test-Check 'Apps & privacy' 'Icon next to the clock' {
         if (Test-TrayOn) { Result-Ok (L 'on') } else { Result-Info (L 'off (Settings, O)') }
     }
@@ -6791,6 +8179,13 @@ function Invoke-MenuOption {
             '30' { Show-PrivacySettings }
             '31' { Show-Uninstaller }
             '32' { Show-UndoCenter }
+            '33' { Show-WindowsSpace }
+            '34' { Show-UnneededFiles }
+            '35' { Show-PcHistory }
+            '36' { Show-DiskSpeed }
+            '37' { Show-ContextMenuTool }
+            '38' { Show-PerformanceMode }
+            '39' { Show-BrowserExtensions }
             'A'  { Invoke-Analysis }
             'F'  { Invoke-FullMaintenance -Plan $Plan }
             'R'  { Show-RestorePoints }
@@ -6943,18 +8338,15 @@ function Show-Menu {
         (M '13' 'Flush DNS cache'),
         (M '14' 'Full network reset'),
         (M ''   ''),
-        (M '#'  'APPS & PRIVACY'),
-        (M '30' 'Privacy & ads (Windows, Edge, Copilot)'),
-        (M '31' 'Uninstall apps (and their leftovers)'),
-        (M '32' 'Undo YSO changes')
-    )
-    $right = @(
         (M '#'  'OPTIMIZE'),
         (M '15' 'Optimize drives (TRIM / defrag)'),
         (M '16' 'Power plan'),
         (M '17' 'Startup programs'),
         (M '18' 'Boot time analyzer'),
-        (M ''   ''),
+        (M '37' 'Right-click menu'),
+        (M '38' 'Performance mode (older PCs)')
+    )
+    $right = @(
         (M '#'  'DIAGNOSE & REPAIR'),
         (M '19' 'System health report'),
         (M '20' 'Crashes & errors'),
@@ -6964,11 +8356,21 @@ function Show-Menu {
         (M '24' 'Check drives for errors'),
         (M '25' 'Memory test'),
         (M '26' 'Repair Windows files (DISM + SFC)'),
+        (M '35' 'My PC over time'),
+        (M '36' 'Disk speed & temperature'),
         (M ''   ''),
         (M '#'  'SPACE & UPDATES'),
         (M '27' 'Space finder (what fills my disk?)'),
         (M '28' ((L 'Updates: apps & drivers') + " [$updState]")),
-        (M '29' 'Virtual disks (compact VMs, WSL, Docker)')
+        (M '29' 'Virtual disks (compact VMs, WSL, Docker)'),
+        (M '33' 'More space from Windows'),
+        (M '34' 'Files you might not need'),
+        (M ''   ''),
+        (M '#'  'APPS & PRIVACY'),
+        (M '30' 'Privacy & ads (Windows, Edge, Copilot)'),
+        (M '31' 'Uninstall apps (and their leftovers)'),
+        (M '39' 'Browser extensions'),
+        (M '32' 'Undo YSO changes')
     )
     $bottom = @(
         (M 'A' 'Analyze (deletes nothing)'),
@@ -8107,11 +9509,14 @@ function Get-GuiToolGroups {
             (M '4' 'Windows Update cache'), (M '5' 'Recycle Bin'), (M '6' 'GPU shader caches'), (M '7' 'Developer & app caches'),
             (M '8' 'Deep clean (Disk Cleanup)'), (M '9' 'Old Windows version (Windows.old)'), (M '10' 'Hibernation file')) }
         @{ Title = (N 'NETWORK'); Items = @((M '11' 'Network check (speed, DNS, Wi-Fi)'), (M '12' 'Change DNS servers'), (M '13' 'Flush DNS cache'), (M '14' 'Full network reset')) }
-        @{ Title = (N 'OPTIMIZE'); Items = @((M '15' 'Optimize drives (TRIM / defrag)'), (M '16' 'Power plan'), (M '17' 'Startup programs'), (M '18' 'Boot time analyzer')) }
-        @{ Title = (N 'APPS & PRIVACY'); Items = @((M '30' 'Privacy & ads (Windows, Edge, Copilot)'), (M '31' 'Uninstall apps (and their leftovers)'), (M '32' 'Undo YSO changes')) }
+        @{ Title = (N 'OPTIMIZE'); Items = @((M '15' 'Optimize drives (TRIM / defrag)'), (M '16' 'Power plan'), (M '17' 'Startup programs'), (M '18' 'Boot time analyzer'),
+            (M '37' 'Right-click menu'), (M '38' 'Performance mode (older PCs)')) }
+        @{ Title = (N 'APPS & PRIVACY'); Items = @((M '30' 'Privacy & ads (Windows, Edge, Copilot)'), (M '31' 'Uninstall apps (and their leftovers)'), (M '39' 'Browser extensions'), (M '32' 'Undo YSO changes')) }
         @{ Title = (N 'DIAGNOSE & REPAIR'); Items = @((M '19' 'System health report'), (M '20' 'Crashes & errors'), (M '21' 'Security check & Defender scan'),
-            (M '22' 'What runs automatically? (audit)'), (M '23' 'Driver problems'), (M '24' 'Check drives for errors'), (M '25' 'Memory test'), (M '26' 'Repair Windows files (DISM + SFC)')) }
-        @{ Title = (N 'SPACE & UPDATES'); Items = @((M '27' 'Space finder (what fills my disk?)'), (M '28' 'Updates: apps & drivers'), (M '29' 'Virtual disks (compact VMs, WSL, Docker)')) }
+            (M '22' 'What runs automatically? (audit)'), (M '23' 'Driver problems'), (M '24' 'Check drives for errors'), (M '25' 'Memory test'), (M '26' 'Repair Windows files (DISM + SFC)'),
+            (M '35' 'My PC over time'), (M '36' 'Disk speed & temperature')) }
+        @{ Title = (N 'SPACE & UPDATES'); Items = @((M '27' 'Space finder (what fills my disk?)'), (M '28' 'Updates: apps & drivers'), (M '29' 'Virtual disks (compact VMs, WSL, Docker)'),
+            (M '33' 'More space from Windows'), (M '34' 'Files you might not need')) }
         @{ Title = (N 'ONE-CLICK'); Items = @((M 'A' 'Analyze (deletes nothing)'), (M 'F' 'Full maintenance'), (M 'R' 'Restore points'), (M 'S' 'Weekly auto-clean'),
             (M 'H' 'Cleanup history'), (M 'T' 'Self-test (check everything)'), (M 'P' 'Report a problem'), (M 'O' 'Settings / Langue'),
             (M 'G' 'Guide: what each tool does'), (M 'L' 'Logs folder')) }
@@ -9249,6 +10654,13 @@ function Get-GuiToolInfo([string]$Key) {
         '30' = @(0xE72E, (N 'Switch off ads, tracking and AI features. Undo any time.'))
         '31' = @(0xE738, (N 'Removes an app, then what it left behind.'))
         '32' = @(0xE7A7, (N 'Puts back any setting YSO changed.'))
+        '33' = @(0xEDA2, (N 'Compact OS, restore points, OneDrive: space Windows keeps.'))
+        '34' = @(0xE8B7, (N 'Old installers, phone backups, files there twice.'))
+        '35' = @(0xE81C, (N 'Startup time and free space, since the first day.'))
+        '36' = @(0xE916, (N 'How fast and how warm each drive is.'))
+        '37' = @(0xE700, (N 'Classic menu, and entries added by other programs.'))
+        '38' = @(0xE945, (N 'Fewer effects, so an older PC feels faster.'))
+        '39' = @(0xE774, (N 'What each extension of your browsers may do.'))
         'A'  = @(0xE721, (N 'See what can be freed. Deletes nothing.'))
         'F'  = @(0xE74D, (N 'Everything at once, with a restore point first.'))
         'R'  = @(0xE777, (N 'Create one, or see the ones you have.'))
@@ -9737,6 +11149,33 @@ function Initialize-GuiSnapshot([string]$Dir) {
         { Save-GuiPng '19-undo'; $true },
         { if ($script:GuiCurrent) { Send-GuiAnswer '' }; $true },
         { -not $script:GuiCurrent -and $script:GuiJobs.Count -eq 0 },
+        { Start-GuiMoreSpaceSample; $true },
+        { $script:Ui.RunAsk.Visibility -eq 'Visible' -or -not $script:GuiCurrent },
+        { Save-GuiPng '21-more-space'; $true },
+        { if ($script:GuiCurrent) { Send-GuiAnswer '0' }; $true },
+        { -not $script:GuiCurrent -and $script:GuiJobs.Count -eq 0 },
+        { Start-GuiPcHistorySample; $true },
+        { -not $script:GuiCurrent -and $script:GuiJobs.Count -eq 0 },
+        { $script:Ui.RunScroll.ScrollToTop(); Save-GuiPng '22-pc-over-time'; $true },
+        { Start-GuiDiskSpeedSample; $true },
+        { $script:Ui.RunAsk.Visibility -eq 'Visible' -or -not $script:GuiCurrent },
+        { $script:Ui.RunScroll.ScrollToTop(); $true },
+        { Save-GuiPng '23-disk-speed'; $true },
+        { if ($script:GuiCurrent) { Send-GuiAnswer '0' }; $true },
+        { -not $script:GuiCurrent -and $script:GuiJobs.Count -eq 0 },
+        { Start-GuiContextMenuSample; $true },
+        { $script:Ui.RunAsk.Visibility -eq 'Visible' -or -not $script:GuiCurrent },
+        { Save-GuiPng '24-right-click'; $true },
+        { if ($script:GuiCurrent) { Send-GuiAnswer '' }; $true },
+        { -not $script:GuiCurrent -and $script:GuiJobs.Count -eq 0 },
+        { Start-GuiPreinstalledSample; $true },
+        { $script:Ui.RunAsk.Visibility -eq 'Visible' -or -not $script:GuiCurrent },
+        { Save-GuiPng '25-preinstalled'; $true },
+        { if ($script:GuiCurrent) { Send-GuiAnswer '' }; $true },
+        { -not $script:GuiCurrent -and $script:GuiJobs.Count -eq 0 },
+        { Start-GuiExtensionsSample; $true },
+        { -not $script:GuiCurrent -and $script:GuiJobs.Count -eq 0 },
+        { $script:Ui.RunScroll.ScrollToTop(); Save-GuiPng '26-extensions'; $true },
         { Show-GuiHelpTopic '29'; $true },
         { Save-GuiPng '20-help'; $true },
         { Start-GuiOption 'O'; $true },
@@ -9863,6 +11302,57 @@ $changes = @(
     (New-SampleChange 2 'Uninstall apps' 'Leftovers of {0} removed' @('GIMP 3.0.6')),
     (New-SampleChange 1 'Privacy & ads' 'Switched off: {0}' @(, [string[]]@('Ads and suggestions in Windows', 'Tips and fun facts on the lock screen', 'Ad tracking'))))
 Show-UndoCenter -Sample $changes
+'@
+}
+
+function Start-GuiMoreSpaceSample {
+    Start-GuiSample '33' 'more space sample' @'
+Show-WindowsSpace ([pscustomobject]@{ Compact = $false; Reserved = 'Enabled'; Shadow = [pscustomobject]@{ Max = -1L; Used = 9.4GB; Size = 476GB }
+    OneDrive = @('sample'); IdleCount = 1843; IdleBytes = 12.6GB; Index = 2.3GB })
+'@
+}
+
+function Start-GuiPcHistorySample {
+    Start-GuiSample '35' 'pc history sample' @'
+$rows = @(for ($w = 12; $w -ge 0; $w--) {
+    $k = 12 - $w
+    [pscustomobject]@{ Day = (Get-Date).AddDays(-7 * $w).ToString('yyyyMMdd'); BootSeconds = "$([math]::Round(71 - 2.6 * $k, 1))"
+        FreeBytes = "$([long](38GB + $k * 1.4GB))"; Startup = "$([math]::Max(7, 15 - $k))" }
+})
+Show-PcHistory -Sample $rows
+'@
+}
+
+function Start-GuiDiskSpeedSample {
+    Start-GuiSample '36' 'disk speed sample' @'
+Show-DiskSpeed -Sample @(
+    [pscustomobject]@{ Name = 'Samsung SSD 990 PRO 1TB'; Media = 'SSD'; Bus = 'NVMe'; Size = 1TB; Health = 'Healthy'; Temp = 43; TempMax = 71; Wear = 4; Hours = 3120 },
+    [pscustomobject]@{ Name = 'WDC WD20EZAZ-00GGJB0'; Media = 'HDD'; Bus = 'SATA'; Size = 2TB; Health = 'Healthy'; Temp = 36; TempMax = $null; Wear = $null; Hours = 18450 })
+'@
+}
+
+function Start-GuiContextMenuSample {
+    Start-GuiSample '37' 'right-click sample' @'
+function New-SampleExt($Name, $Company, $Off = $false) { [pscustomobject]@{ Clsid = '{00000000-0000-0000-0000-000000000000}'; Name = $Name; Company = $Company; Dll = 'sample'; Blocked = $Off } }
+Show-ContextMenuTool -Sample @((New-SampleExt '7-Zip' 'Igor Pavlov'), (New-SampleExt 'Dropbox' 'Dropbox, Inc.'), (New-SampleExt 'Malwarebytes' 'Malwarebytes' $true),
+    (New-SampleExt 'Notepad++' 'Don HO don.h@free.fr'), (New-SampleExt 'NVIDIA Display' 'NVIDIA Corporation' $true), (New-SampleExt 'WinRAR' 'win.rar GmbH'))
+'@
+}
+
+function Start-GuiExtensionsSample {
+    Start-GuiSample '39' 'extensions sample' @'
+function New-SampleExt($Browser, $Name, $On, $Reach, $Store = $true) { [pscustomobject]@{ Browser = $Browser; Name = $Name; On = $On; Reach = $Reach; Store = $Store } }
+Show-BrowserExtensions -Sample @((New-SampleExt 'Chrome' 'Bitwarden Password Manager' $true 'all'), (New-SampleExt 'Chrome' 'Coupon Finder' $true 'all' $false),
+    (New-SampleExt 'Chrome' 'Google Docs Offline' $true 'small'), (New-SampleExt 'Edge' 'PDF Converter Pro' $false 'browsing'),
+    (New-SampleExt 'Edge' 'uBlock Origin Lite' $true 'small'), (New-SampleExt 'Firefox' 'Dark Reader' $true 'all'))
+'@
+}
+
+function Start-GuiPreinstalledSample {
+    Start-GuiSample '31' 'pre-installed sample' @'
+function New-SampleBloat($Name, $Usual) { [pscustomobject]@{ Package = 'sample'; Pkg = 'sample'; Family = 'sample'; Name = $Name; Usual = $Usual } }
+Show-PreinstalledApps -Sample @((New-SampleBloat 'Candy Crush and other King games' $true), (New-SampleBloat 'Clipchamp' $true), (New-SampleBloat 'Microsoft News' $true),
+    (New-SampleBloat 'Microsoft To Do' $false), (New-SampleBloat 'Solitaire Collection' $false), (New-SampleBloat 'TikTok' $true), (New-SampleBloat 'Weather' $false))
 '@
 }
 
@@ -10849,7 +12339,6 @@ Defender real-time ==> Defender temps réel
 Delivery Optimization ==> Optimisation de la distribution
 Delivery Optimization cache: {0} freed ==> Cache d'Optimisation de la distribution : {0} libérés
 Developer & app caches ==> Caches développeur et applis
-Developer & app caches - npm, pip, NuGet, Yarn, Gradle, VS Code, Discord, Teams, Spotify, Steam, Epic, OneDrive logs ==> Caches développeur et applis - npm, pip, NuGet, Yarn, Gradle, VS Code, Discord, Teams, Spotify, Steam, Epic, journaux OneDrive
 DEVICES WITH PROBLEMS ==> PÉRIPHÉRIQUES EN ERREUR
 DIAGNOSE & REPAIR ==> DIAGNOSTIC ET RÉPARATION
 disabled in the firmware ==> désactivé dans le micrologiciel
@@ -11097,7 +12586,6 @@ SYSTEM ==> SYSTÈME
 System errors (7 days) ==> Erreurs système (7 jours)
 System health report ==> Rapport de santé du système
 System junk ==> Fichiers système inutiles
-System junk - error reports, crash dumps (also in the temp folders of Windows services), logs older than {0} days, thumbnail cache ==> Fichiers système inutiles - rapports d'erreurs, vidages après plantage (aussi dans les dossiers temporaires des services Windows), journaux de plus de {0} jours, cache des miniatures
 System junk (reports, dumps, old logs) ==> Fichiers inutiles (rapports, vidages, journaux)
 System Restore looks turned off. Turn it on for the system drive? ==> La Restauration du système semble désactivée. L'activer pour le disque système ?
 Tamper protection ==> Protection anti-falsification
@@ -11625,7 +13113,6 @@ Already undone ({0}). ==> Déjà annulé ({0}).
 Apply ==> Appliquer
 Apply these changes? ==> Appliquer ces changements ?
 APPS & PRIVACY ==> APPLICATIONS ET VIE PRIVÉE
-Apps from the Microsoft Store are uninstalled in Settings > Apps. ==> Les applications du Microsoft Store se désinstallent dans Paramètres > Applications.
 Apps get no advertising ID, and Windows stops tailoring ads and tips to what you do. ==> Les applications n'ont plus d'identifiant publicitaire, et Windows n'adapte plus les publicités et les conseils à ce que vous faites.
 Back on: {0} ==> Réactivé : {0}
 Back to the list ==> Retour à la liste
@@ -11697,7 +13184,6 @@ Not needed: apps make new temporary files when they need them. ==> Inutile : les
 Deletes the copies of web pages, images and scripts that Chrome, Edge, Brave, Vivaldi, Opera and Firefox keep, in every profile. Pages load from the internet again the first time. ==> Supprime les copies de pages web, d'images et de scripts que gardent Chrome, Edge, Brave, Vivaldi, Opera et Firefox, dans chaque profil. Les pages se rechargent depuis internet la première fois.
 Passwords, cookies, history, bookmarks, open tabs and extensions are not touched. If a browser is open, YSO offers to close it for a complete clean; its tabs come back when you open it again. ==> Les mots de passe, cookies, historique, favoris, onglets ouverts et extensions ne sont pas touchés. Si un navigateur est ouvert, YSO propose de le fermer pour un nettoyage complet ; ses onglets reviennent quand vous le rouvrez.
 Not needed: the browser fills its cache again as you browse. ==> Inutile : le navigateur remplit de nouveau son cache pendant que vous naviguez.
-Deletes error reports, crash dumps (also those in the temporary folders of Windows services, sometimes several GB), logs older than 14 days and the thumbnail cache. ==> Supprime les rapports d'erreurs, les fichiers de vidage après plantage (aussi ceux des dossiers temporaires des services de Windows, parfois plusieurs Go), les journaux de plus de 14 jours et le cache des miniatures.
 Recent logs and dumps are kept, so a recent crash can still be looked at. The Prefetch folder is never touched: emptying it would make Windows slower. ==> Les journaux et vidages récents sont gardés, pour qu'un plantage récent puisse encore être étudié. Le dossier Prefetch n'est jamais touché : le vider rendrait Windows plus lent.
 Not needed. Thumbnails are made again when you open a folder. ==> Inutile. Les miniatures sont recréées quand vous ouvrez un dossier.
 Deletes update files Windows has already installed, and the Delivery Optimization cache (updates shared with other PCs). ==> Supprime les fichiers de mises à jour que Windows a déjà installées, et le cache de l'Optimisation de la distribution (mises à jour partagées avec d'autres PC).
@@ -11709,14 +13195,9 @@ Cannot be undone: files emptied from the Recycle Bin are gone. ==> Impossible à
 Deletes the compiled shaders that NVIDIA, AMD, Intel and DirectX keep. Most useful after a driver update, or when a game shows graphics glitches. ==> Supprime les shaders compilés que gardent NVIDIA, AMD, Intel et DirectX. Surtout utile après une mise à jour de pilote, ou quand un jeu a des problèmes d'affichage.
 Games make them again on their next launch, so the first load may stutter briefly. ==> Les jeux les recréent au lancement suivant : le premier chargement peut saccader un peu.
 Not needed: they come back by themselves. ==> Inutile : ils reviennent tout seuls.
-Deletes the caches and old logs of npm, pip, VS Code, Discord, Teams, Spotify, Steam and every app built on Chromium. ==> Supprime les caches et les vieux journaux de npm, pip, VS Code, Discord, Teams, Spotify, Steam et de toutes les applications basées sur Chromium.
-Projects, installed packages, settings, logins and game files are not touched. For VS Code, the saved data of projects not opened for 60 days goes too (it comes back if you open them again). ==> Les projets, paquets installés, réglages, connexions et fichiers de jeux ne sont pas touchés. Pour VS Code, les données des projets pas ouverts depuis 60 jours partent aussi (elles reviennent si vous les rouvrez).
-Not needed: apps rebuild their caches. ==> Inutile : les applications reconstruisent leurs caches.
 Runs Windows Disk Cleanup with every safe option, then cleans the component store (old versions of Windows files kept after updates). Frees a lot, and takes 10 to 30 minutes. ==> Lance le Nettoyage de disque de Windows avec toutes les options sûres, puis nettoie le magasin de composants (anciennes versions de fichiers de Windows gardées après les mises à jour). Libère beaucoup, et prend 10 à 30 minutes.
 Downloads, the Recycle Bin and Windows.old are never included. Old driver versions are removed only if you say yes. Part of the cleanup finishes at the next restart. ==> Les Téléchargements, la Corbeille et Windows.old ne sont jamais inclus. Les anciennes versions de pilotes ne sont retirées que si vous dites oui. Une partie du nettoyage se termine au redémarrage suivant.
 Afterwards, updates installed before it can no longer be uninstalled, and removed driver versions cannot come back. ==> Après, les mises à jour installées avant ne peuvent plus être désinstallées, et les versions de pilotes retirées ne peuvent pas revenir.
-Windows.old holds the previous version of Windows after a big update, so you can go back to it for 10 days. It often takes 15 to 30 GB. ==> Windows.old contient la version précédente de Windows après une grosse mise à jour, pour pouvoir y revenir pendant 10 jours. Il prend souvent 15 à 30 Go.
-YSO shows its size and whether going back is still possible, then asks. ==> YSO montre sa taille et si le retour en arrière est encore possible, puis demande.
 Cannot be undone: once it is removed, you can no longer go back to the previous version of Windows. ==> Impossible à annuler : une fois retiré, vous ne pouvez plus revenir à la version précédente de Windows.
 hiberfil.sys can take several GB. Windows uses it for Hibernate and Fast Startup. Reduced keeps Fast Startup and halves it, Off removes it, Full is the Windows default. ==> hiberfil.sys peut prendre plusieurs Go. Windows s'en sert pour la mise en veille prolongée et le démarrage rapide. Réduit garde le démarrage rapide et le divise par deux, Désactivé le supprime, Complet est le réglage de Windows.
 On a laptop, Hibernate saves your work when the battery runs out: keep Reduced or Full there. ==> Sur un portable, la veille prolongée sauve votre travail quand la batterie se vide : gardez Réduit ou Complet.
@@ -11748,18 +13229,14 @@ Untick a line and Apply to get the Windows default back, or use Undo YSO changes
 Tick what you do not want, or click Tick the recommended ones. ==> Cochez ce que vous ne voulez pas, ou cliquez sur Cocher les recommandés.
 Click Apply, read the list of changes, and confirm. ==> Cliquez sur Appliquer, lisez la liste des changements, et confirmez.
 Sign out and back in, or let YSO restart File Explorer when it offers to. ==> Déconnectez-vous puis reconnectez-vous, ou laissez YSO redémarrer l'Explorateur quand il le propose.
-Lists your desktop apps with their size and when they were last used. YSO starts the app's own uninstaller, then looks for what it left behind: folders and registry keys named like it. ==> Liste vos applications de bureau avec leur taille et leur dernière utilisation. YSO lance le programme de désinstallation de l'application, puis cherche ce qu'elle a laissé : les dossiers et clés du registre qui portent son nom.
 YSO never offers the folder of another installed app, a system folder, or a name another app also uses. Folders of 1 GB or more start unticked: a folder can hold your own data, like game saves or a mail profile. Runtimes and drivers get a warning. ==> YSO ne propose jamais le dossier d'une autre application installée, un dossier du système, ni un nom qu'une autre application utilise aussi. Les dossiers de 1 Go ou plus sont décochés au départ : un dossier peut contenir vos propres données, comme des sauvegardes de jeu ou un profil de messagerie. Les runtimes et les pilotes ont un avertissement.
-The app can be installed again. Removed folders go to the Recycle Bin and registry keys are saved to a file first: Undo YSO changes (32) puts them back. ==> L'application peut être réinstallée. Les dossiers retirés vont dans la Corbeille et les clés du registre sont d'abord enregistrées dans un fichier : Annuler les modifications de YSO (32) les remet.
 Find the app: sort by size or by last use, or type part of its name. ==> Trouvez l'application : triez par taille ou par dernière utilisation, ou tapez une partie de son nom.
 Click it, read what YSO shows about it, and confirm. ==> Cliquez dessus, lisez ce que YSO en montre, et confirmez.
 Follow the window of its uninstaller to the end. ==> Suivez la fenêtre de sa désinstallation jusqu'au bout.
 Among the leftovers, untick what you want to keep, then click Remove the ticked ones. ==> Parmi les restes, décochez ce que vous voulez garder, puis cliquez sur Supprimer ce qui est coché.
-Every setting YSO changes is written down first, with what it was before: startup programs, power plan, hibernation file, DNS, privacy settings and app leftovers. This list shows them, newest first. ==> Chaque réglage modifié par YSO est d'abord noté, avec ce qu'il était avant : programmes au démarrage, mode d'alimentation, fichier de veille prolongée, DNS, réglages de vie privée et restes d'applications. Cette liste les montre, du plus récent au plus ancien.
 Click one to see what it changed, then confirm: it is back exactly as it was. Cleaned files are not in this list: they are caches that come back by themselves. ==> Cliquez sur l'un d'eux pour voir ce qu'il a changé, puis confirmez : tout revient exactement comme avant. Les fichiers nettoyés ne sont pas dans cette liste : ce sont des caches qui reviennent tout seuls.
 An undone change is marked as such. The last 300 changes are kept. ==> Une modification annulée est marquée comme telle. Les 300 dernières modifications sont gardées.
 Everything about the PC in one report: Windows and hardware, disk space and wear, battery capacity, Windows Update, recent crashes, security and drivers. For each problem, an arrow shows the tool that helps. ==> Tout le PC dans un seul rapport : Windows et matériel, espace et usure des disques, capacité de la batterie, Windows Update, plantages récents, sécurité et pilotes. Pour chaque problème, une flèche montre l'outil qui aide.
-Nothing is changed. It can make Windows' detailed battery report, which opens in your browser. ==> Rien n'est modifié. Il peut créer le rapport détaillé de batterie de Windows, qui s'ouvre dans votre navigateur.
 Shows the recent blue screens, app crashes and serious errors from Windows' logs, and what caused them when Windows knows. ==> Montre les écrans bleus, plantages d'applications et erreurs graves récents des journaux de Windows, et leur cause quand Windows la connaît.
 Nothing is changed. A few errors are normal on every PC: look for the ones that repeat, or happen when you have a problem. ==> Rien n'est modifié. Quelques erreurs sont normales sur tout PC : cherchez celles qui se répètent, ou qui arrivent quand vous avez un problème.
 Checks the antivirus, the firewall and Windows Update. With Microsoft Defender, it can update the virus definitions and run a quick scan (5 to 15 minutes). ==> Vérifie l'antivirus, le pare-feu et Windows Update. Avec Microsoft Defender, il peut mettre à jour les définitions de virus et lancer une analyse rapide (5 à 15 minutes).
@@ -11778,9 +13255,7 @@ Only Windows' own files are repaired, with Windows' own tools. ==> Seuls les fic
 Nothing to undo: the repaired files are the original ones. ==> Rien à annuler : les fichiers réparés sont ceux d'origine.
 Shows which folders fill a drive, biggest first. Click a folder to open it, Back to go up, Biggest files to see the largest files, Show in Explorer to open it there. ==> Montre quels dossiers remplissent un disque, du plus gros au plus petit. Cliquez sur un dossier pour l'ouvrir, Retour pour remonter, Plus gros fichiers pour voir les plus gros fichiers, Voir dans l'Explorateur pour l'ouvrir là.
 Nothing is changed or deleted: it only shows. Delete what you do not need yourself, in File Explorer. ==> Rien n'est modifié ni supprimé : il montre seulement. Supprimez vous-même ce dont vous n'avez pas besoin, dans l'Explorateur.
-Finds app updates (with winget) and driver updates (with Windows Update), and shows them in one list where you tick what to install. YSO can also check on a schedule and tell you, or install safe updates by itself. ==> Trouve les mises à jour d'applications (avec winget) et de pilotes (avec Windows Update), et les montre dans une seule liste où vous cochez ce qu'il faut installer. YSO peut aussi vérifier selon un horaire et vous prévenir, ou installer seul les mises à jour sûres.
 A restore point is made before drivers are installed. In automatic mode, big new versions (7.x to 8.x), optional drivers and the apps you exclude are left for you. Only apps in the winget catalog are checked. ==> Un point de restauration est créé avant l'installation de pilotes. En mode automatique, les grosses nouvelles versions (7.x vers 8.x), les pilotes facultatifs et les applications que vous excluez vous sont laissés. Seules les applications du catalogue winget sont vérifiées.
-An app can be uninstalled, then its previous version installed from its website. A driver can be rolled back in Device Manager, or with the restore point. ==> Une application peut être désinstallée, puis sa version d'avant réinstallée depuis son site. Un pilote peut être restauré dans le Gestionnaire de périphériques, ou avec le point de restauration.
 Click Check for updates now. ==> Cliquez sur Chercher les mises à jour maintenant.
 Tick what to install, then click Install the ticked updates. ==> Cochez ce qu'il faut installer, puis cliquez sur Installer les mises à jour cochées.
 If you want, choose Notify me or Automatic, and when it runs. ==> Si vous voulez, choisissez Me prévenir ou Automatique, et quand ça tourne.
@@ -11859,11 +13334,9 @@ Not removed: {0} ({1}) ==> Pas supprimé : {0} ({1})
 Nothing left behind. ==> Rien n'a été laissé.
 Nothing to change: everything is already as you chose. ==> Rien à changer : tout est déjà comme vous l'avez choisi.
 Nothing was removed. ==> Rien n'a été supprimé.
-Nothing yet. Changes made by Privacy & ads (30), Uninstall apps (31), Startup programs (17), Power plan (16), Change DNS servers (12) and Hibernation file (10) show up here. ==> Rien pour l'instant. Les modifications faites par Vie privée et publicités (30), Désinstaller des applications (31), Programmes au démarrage (17), Mode d'alimentation (16), Changer de serveurs DNS (12) et Fichier de veille prolongée (10) apparaissent ici.
 Number = tick or untick, D = remove the ticked ones, Enter = keep everything ==> Numéro = cocher ou décocher, D = supprimer ce qui est coché, Entrée = tout garder
 Number = tick or untick, R = recommended, A = apply, Enter = cancel ==> Numéro = cocher ou décocher, R = recommandés, A = appliquer, Entrée = annuler
 Number = undo it, Enter = back ==> Numéro = l'annuler, Entrée = retour
-Number = uninstall, S = biggest first, U = least used first, N = by name, or type part of a name. Enter = back ==> Numéro = désinstaller, S = les plus gros d'abord, U = les moins utilisées d'abord, N = par nom, ou tapez une partie d'un nom. Entrée = retour
 off ==> désactivé
 off (Settings, O) ==> désactivée (Réglages, O)
 on ==> activée
@@ -11937,6 +13410,337 @@ Your disk is almost full ==> Votre disque est presque plein
 YSO runs from its file ==> YSO fonctionne depuis son fichier
 YSO runs from its Microsoft Store package ==> YSO fonctionne depuis son paquet Microsoft Store
 YSO starts the app's own uninstaller: follow its window. Then YSO looks for what it left behind. ==> YSO lance le programme de désinstallation de l'application : suivez sa fenêtre. Ensuite, YSO cherche ce qu'elle a laissé.
+- menus open faster; text stays smooth ==> - les menus s'ouvrent plus vite ; le texte reste lisse
+- no animations when windows open, close or minimize, and in the taskbar ==> - plus d'animations à l'ouverture, la fermeture ou la réduction des fenêtres, ni dans la barre des tâches
+- no transparency, no shadows under icons and windows, no fading menus ==> - plus de transparence, plus d'ombres sous les icônes et les fenêtres, plus de menus en fondu
+a bit slow for this kind of drive ==> un peu lent pour ce type de disque
+A number from 1 to 5, please. ==> Un nombre de 1 à 5, s'il vous plaît.
+A switched-off entry is only hidden, with Windows' own list of blocked entries: the program keeps working. Changes show after File Explorer restarts; YSO offers to restart it. ==> Une entrée désactivée est seulement masquée, avec la liste d'entrées bloquées de Windows : le programme continue de fonctionner. Les changements apparaissent après le redémarrage de l'Explorateur de fichiers ; YSO propose de le redémarrer.
+A Windows upgrade is running: they are kept. Run this again when it is finished. ==> Une mise à niveau de Windows est en cours : ils sont gardés. Relancez ceci quand elle est terminée.
+AI models (Hugging Face) ==> Modèles d'IA (Hugging Face)
+AI models downloaded by programs that use Hugging Face: {0}. A program downloads a model again when it needs it, which can take long. ==> Modèles d'IA téléchargés par des programmes qui utilisent Hugging Face : {0}. Un programme retélécharge un modèle quand il en a besoin, ce qui peut être long.
+Already limited to {0}: nothing to do. ==> Déjà limité à {0} : rien à faire.
+Also remove the images no container uses? They download again when you need them. ==> Supprimer aussi les images qu'aucun conteneur n'utilise ? Elles se retéléchargent quand vous en avez besoin.
+An app can be uninstalled, then its previous version installed from its website. A driver can be rolled back in Device Manager, or with the restore point. Restart hours and the pause: Undo YSO changes (32), or Resume updates now. ==> Une application peut être désinstallée, puis sa version d'avant réinstallée depuis son site. Un pilote peut être restauré dans le Gestionnaire de périphériques, ou avec le point de restauration. Heures de redémarrage et pause : Annuler les modifications de YSO (32), ou Reprendre les mises à jour.
+App {0} (installed again from the Microsoft Store) ==> Application {0} (réinstallée depuis le Microsoft Store)
+Apps from the Microsoft Store are uninstalled in Settings > Apps. W shows the apps Windows put on the PC (Candy Crush, TikTok...): YSO removes those too. ==> Les applications du Microsoft Store se désinstallent dans Paramètres > Applications. W montre les applications que Windows a mises sur le PC (Candy Crush, TikTok...) : YSO les retire aussi.
+Apps Windows or the shop put on the PC, that many people never use. They are removed for your account only, and each one can be installed again from the Microsoft Store. ==> Des applications que Windows ou le magasin ont mises sur le PC, et que beaucoup de gens n'utilisent jamais. Elles sont retirées pour votre compte seulement, et chacune peut être réinstallée depuis le Microsoft Store.
+At a glance ==> En bref
+At startup ==> Au démarrage
+Back to the Windows 11 menu ==> Revenir au menu de Windows 11
+Bing Search ==> Recherche Bing
+Browser ==> Navigateur
+Browser extensions ==> Extensions de navigateur
+BROWSER EXTENSIONS ==> EXTENSIONS DE NAVIGATEUR
+Browser extensions (39) ==> Extensions de navigateur (39)
+Can use up to ==> Peut utiliser jusqu'à
+Candy Crush and other King games ==> Candy Crush et autres jeux King
+Changes show after File Explorer restarts (or after you sign out). ==> Les changements apparaissent après le redémarrage de l'Explorateur de fichiers (ou après une déconnexion).
+classic (like Windows 10): everything at once ==> classique (comme Windows 10) : tout d'un coup
+Classic menu (like Windows 10) ==> Menu classique (comme Windows 10)
+Classic menu, and entries added by other programs. ==> Menu classique, et entrées ajoutées par d'autres programmes.
+Classic right-click menu ==> Menu du clic droit classique
+Clean Docker first (unused images, containers, build cache) ==> Nettoyer Docker d'abord (images, conteneurs et cache de build inutilisés)
+Clean Docker now? ==> Nettoyer Docker maintenant ?
+Cleaning Docker ==> Nettoyage de Docker
+Click a line to see it in File Explorer. ==> Cliquez sur une ligne pour la voir dans l'Explorateur de fichiers.
+Click a line to see what it does and what it costs. ==> Cliquez sur une ligne pour voir ce qu'elle fait et ce qu'elle coûte.
+Click an entry to switch it on or off. Changes show after File Explorer restarts. ==> Cliquez sur une entrée pour l'activer ou la désactiver. Les changements apparaissent après le redémarrage de l'Explorateur de fichiers.
+Click the entry again, or C again, or use Undo YSO changes (32). ==> Recliquez sur l'entrée, ou de nouveau sur C, ou utilisez Annuler les modifications de YSO (32).
+Compact OS ==> Compact OS
+Compact OS (Windows files compressed) ==> Compact OS (fichiers de Windows compressés)
+Compact OS is on. Uncompress Windows files now? (uses 2 to 4 GB again) ==> Compact OS est activé. Décompresser les fichiers de Windows maintenant ? (reprend 2 à 4 Go)
+Compact OS, restore points, OneDrive: space Windows keeps. ==> Compact OS, points de restauration, OneDrive : l'espace que garde Windows.
+Compact OS, the reserved space and the restore point limit: Undo YSO changes (32). A OneDrive file: right-click it, Always keep on this device. The index builds itself again. ==> Compact OS, l'espace réservé et la limite des points de restauration : Annuler les modifications de YSO (32). Un fichier OneDrive : clic droit dessus, Toujours conserver sur cet appareil. L'index se reconstruit tout seul.
+compact.exe stopped with code {0}: {1} ==> compact.exe s'est arrêté avec le code {0} : {1}
+Compress Windows files (Compact OS) ==> Compresser les fichiers de Windows (Compact OS)
+Compress Windows files now? ==> Compresser les fichiers de Windows maintenant ?
+Compressing Windows files ==> Compression des fichiers de Windows
+Cost: a little more processor work when Windows loads a file (not noticeable on a recent PC). It takes 10 to 20 minutes. ==> Coût : un peu plus de travail pour le processeur quand Windows charge un fichier (imperceptible sur un PC récent). Cela prend 10 à 20 minutes.
+Cost: for a few hours, searching finds only part of your files, and indexing uses some processor time. ==> Coût : pendant quelques heures, la recherche ne trouve qu'une partie de vos fichiers, et l'indexation occupe un peu le processeur.
+Cost: when the disk is almost full, a big update may fail to install until you free some space. ==> Coût : quand le disque est presque plein, une grosse mise à jour peut ne pas s'installer tant que vous ne libérez pas de place.
+Day ==> Jour
+Delete these downloaded AI models too? ==> Supprimer aussi ces modèles d'IA téléchargés ?
+Deletes error reports, crash dumps (also those in the temporary folders of Windows services, sometimes several GB), logs older than 14 days, the thumbnail cache and the installer files graphics drivers leave behind (NVIDIA, AMD). ==> Supprime les rapports d'erreurs, les fichiers de vidage après plantage (aussi ceux des dossiers temporaires des services de Windows, parfois plusieurs Go), les journaux de plus de 14 jours, le cache des miniatures et les fichiers d'installation que laissent les pilotes graphiques (NVIDIA, AMD).
+Deletes the caches and old logs of developer tools (npm, pip, NuGet, Yarn, Gradle, Maven, Rust, Go, uv, pnpm, conda, JetBrains IDEs), of apps (VS Code, Discord, Teams, Spotify, Steam, Epic, every app built on Chromium) and of creative tools (Adobe media cache, Unity, Unreal). AI models downloaded with Hugging Face are shown, and deleted only if you say yes. ==> Supprime les caches et les vieux journaux des outils de développement (npm, pip, NuGet, Yarn, Gradle, Maven, Rust, Go, uv, pnpm, conda, IDE JetBrains), des applications (VS Code, Discord, Teams, Spotify, Steam, Epic, toutes les applications basées sur Chromium) et des outils de création (cache média Adobe, Unity, Unreal). Les modèles d'IA téléchargés avec Hugging Face sont montrés, et supprimés seulement si vous dites oui.
+Developer & app caches - npm, pip, NuGet, Yarn, Gradle, Maven, Rust, Go, uv, pnpm, conda, JetBrains, VS Code, Discord, Teams, Spotify, Steam, Epic, Adobe, Unity, Unreal, OneDrive logs ==> Caches développeur et applis - npm, pip, NuGet, Yarn, Gradle, Maven, Rust, Go, uv, pnpm, conda, JetBrains, VS Code, Discord, Teams, Spotify, Steam, Epic, Adobe, Unity, Unreal, journaux OneDrive
+Disk speed & temperature ==> Vitesse et température des disques
+DISK SPEED & TEMPERATURE ==> VITESSE ET TEMPÉRATURE DES DISQUES
+Disk speed & temperature (36) ==> Vitesse et température des disques (36)
+Docker cleaned: {0} freed inside its disk. ==> Docker nettoyé : {0} libérés dans son disque.
+Docker stopped with code {0}: {1} ==> Docker s'est arrêté avec le code {0} : {1}
+Docker: option D cleans Docker first (stopped containers, unused images and build cache; your volumes stay), so there is more to give back. ==> Docker : l'option D nettoie Docker d'abord (conteneurs arrêtés, images et cache de build inutilisés ; vos volumes restent), pour qu'il y ait plus à rendre.
+Docker: stopped containers, unused networks, unused build cache, images without a name ==> Docker : conteneurs arrêtés, réseaux inutilisés, cache de build inutilisé, images sans nom
+Done: performance mode is on after you sign out and back in. ==> Terminé : le mode performance s'active après une déconnexion puis reconnexion.
+Done: restore points can use up to {0}. ==> Terminé : les points de restauration peuvent utiliser jusqu'à {0}.
+Done: the reserved space is free now. ==> Terminé : l'espace réservé est maintenant libre.
+Done: Windows effects are back after you sign out and back in. ==> Terminé : les effets de Windows reviennent après une déconnexion puis reconnexion.
+Done: Windows files are uncompressed. ==> Terminé : les fichiers de Windows sont décompressés.
+Done: Windows is building the index again, quietly, over the next hours. ==> Terminé : Windows reconstruit l'index, discrètement, dans les prochaines heures.
+Done: Windows reserves space for updates again. ==> Terminé : Windows réserve de nouveau de la place pour les mises à jour.
+Done: Windows Update works again. ==> Terminé : Windows Update fonctionne de nouveau.
+Done: Windows updates are paused until {0}. ==> Terminé : les mises à jour de Windows sont suspendues jusqu'au {0}.
+Done: Windows will not restart between {0}:00 and {1}:00. ==> Terminé : Windows ne redémarrera pas entre {0} h et {1} h.
+Done: {0} files are online only now. OneDrive frees the space within a few minutes, while it runs. ==> Terminé : {0} fichiers sont maintenant disponibles en ligne uniquement. OneDrive libère la place en quelques minutes, pendant qu'il tourne.
+Done: {0} freed. ==> Terminé : {0} libérés.
+Drives ==> Disques
+Each line says what it costs before YSO asks: a little more processor work for Compact OS, a big update that may wait for free space, the oldest restore points deleted to fit the limit, OneDrive files that need internet to open, a search that finds only part of your files for a few hours. ==> Chaque ligne dit ce qu'elle coûte avant que YSO demande : un peu plus de travail pour le processeur avec Compact OS, une grosse mise à jour qui peut attendre de la place libre, les plus vieux points de restauration supprimés pour tenir dans la limite, des fichiers OneDrive qui demandent internet pour s'ouvrir, une recherche qui ne trouve qu'une partie de vos fichiers pendant quelques heures.
+Edge could not make the PDF: the report is saved as a web page on your Desktop. Open it, then print it to PDF (Ctrl+P). ==> Edge n'a pas pu créer le PDF : le rapport est enregistré comme page web sur votre Bureau. Ouvrez-le, puis imprimez-le en PDF (Ctrl+P).
+Entries other programs add to the menu. Each one can slow down the right-click a little; switched off, it disappears from the menu and the program keeps working. ==> Les entrées que d'autres programmes ajoutent au menu. Chacune peut ralentir un peu le clic droit ; désactivée, elle disparaît du menu et le programme continue de fonctionner.
+Every extension of your browsers, and what it may do. An extension that can read every site sees your passwords as you type them: keep only the ones you know and use. ==> Toutes les extensions de vos navigateurs, et ce qu'elles peuvent faire. Une extension qui peut lire tous les sites voit vos mots de passe quand vous les tapez : gardez seulement celles que vous connaissez et utilisez.
+Every setting YSO changes is written down first, with what it was before: startup programs, power plan, hibernation file, DNS, privacy settings, app leftovers, Windows apps removed, right-click menu, performance mode, Windows Update hours and pause, and the space settings of Windows. This list shows them, newest first. ==> Chaque réglage modifié par YSO est d'abord noté, avec ce qu'il était avant : programmes au démarrage, mode d'alimentation, fichier de veille prolongée, DNS, réglages de vie privée, restes d'applications, applications Windows retirées, menu du clic droit, mode performance, heures et pause de Windows Update, et réglages d'espace de Windows. Cette liste les montre, du plus récent au plus ancien.
+Extension ==> Extension
+fast for this kind of drive ==> rapide pour ce type de disque
+Feedback Hub ==> Hub de commentaires
+Fewer effects, so an older PC feels faster. ==> Moins d'effets, pour qu'un vieux PC paraisse plus rapide.
+Files set to "Always keep on this device" are left as they are. ==> Les fichiers réglés sur « Toujours conserver sur cet appareil » restent tels quels.
+Files that are there twice ==> Fichiers en double
+Files that are there twice: {0} could be freed ==> Fichiers en double : {0} pourraient être libérés
+Files you might not need ==> Fichiers peut-être inutiles
+FILES YOU MIGHT NOT NEED ==> FICHIERS PEUT-ÊTRE INUTILES
+Files you might not need (34) ==> Fichiers peut-être inutiles (34)
+Finds app updates (with winget) and driver updates (with Windows Update), and shows them in one list where you tick what to install. YSO can also check on a schedule and tell you, or install safe updates by itself. Option 7 sets the hours when Windows must not restart for updates, and pauses Windows updates for 1 to 5 weeks. ==> Trouve les mises à jour d'applications (avec winget) et de pilotes (avec Windows Update), et les montre dans une seule liste où vous cochez ce qu'il faut installer. YSO peut aussi vérifier selon un horaire et vous prévenir, ou installer seul les mises à jour sûres. L'option 7 règle les heures où Windows ne doit pas redémarrer pour les mises à jour, et suspend les mises à jour de Windows pendant 1 à 5 semaines.
+For comparison: NVMe SSD 1500 to 7000 MB/s, SATA SSD about 500, hard drive 100 to 200, USB stick 20 to 400. ==> Pour comparer : SSD NVMe 1500 à 7000 Mo/s, SSD SATA environ 500, disque dur 100 à 200, clé USB 20 à 400.
+For older or slower PCs: switches off animations, transparency, shadows and fading menus, and makes menus open faster. Windows looks a little plainer but answers faster. Text stays smooth. ==> Pour les PC anciens ou lents : désactive les animations, la transparence, les ombres et les menus en fondu, et fait s'ouvrir les menus plus vite. Windows paraît un peu plus sobre mais répond plus vite. Le texte reste lisse.
+For older or slower PCs: Windows looks a little plainer but answers faster. ==> Pour les PC anciens ou lents : Windows paraît un peu plus sobre mais répond plus vite.
+Free space ==> Espace libre
+Free up this space? ==> Libérer cet espace ?
+Freed, they stay in OneDrive and in File Explorer, with a cloud icon: a double-click downloads them again (it needs internet). Nothing is deleted. ==> Une fois libérés, ils restent dans OneDrive et dans l'Explorateur de fichiers, avec une icône de nuage : un double-clic les retélécharge (il faut internet). Rien n'est supprimé.
+Freeing up OneDrive files ==> Libération des fichiers OneDrive
+From (hour, 0 to 23) ==> De (heure, 0 à 23)
+Get Help ==> Obtenir de l'aide
+Gradle, Maven, Rust, uv, pnpm, Adobe, Unity, Unreal: only files not changed for 30 days (90 for the libraries Gradle and Maven downloaded). A project downloads again what it needs. ==> Gradle, Maven, Rust, uv, pnpm, Adobe, Unity, Unreal : seulement les fichiers pas modifiés depuis 30 jours (90 pour les bibliothèques téléchargées par Gradle et Maven). Un projet retélécharge ce dont il a besoin.
+hard drive ==> disque dur
+hot: check that air can flow around the PC ==> chaud : vérifiez que l'air circule autour du PC
+Hours when Windows must not restart ==> Heures où Windows ne doit pas redémarrer
+How fast and how warm each drive is. ==> La vitesse et la température de chaque disque.
+How many weeks (1 to 5)? ==> Combien de semaines (1 à 5) ?
+iPhone and iPad backups ==> Sauvegardes d'iPhone et d'iPad
+iPhone and iPad backups: {0} ==> Sauvegardes d'iPhone et d'iPad : {0}
+It is not big: no need to rebuild it. ==> Il n'est pas gros : inutile de le reconstruire.
+It is off. Switch it back on? ==> Il est désactivé. Le réactiver ?
+It shows after you sign out and back in. Undo YSO changes (32) puts everything back. ==> Cela apparaît après une déconnexion puis reconnexion. Annuler les modifications de YSO (32) remet tout comme avant.
+Kept while you can still go back to the previous Windows version: going back needs them. ==> Gardés tant que vous pouvez revenir à la version précédente de Windows : le retour en arrière en a besoin.
+Leftovers of Windows upgrades ==> Restes des mises à niveau de Windows
+Limit restore points to {0}? ==> Limiter les points de restauration à {0} ?
+Lists the extensions of Chrome, Edge, Brave, Vivaldi, Opera and Firefox, whether each one is on, and what it may do: read and change every site, see your browsing, or little. Extensions that do not come from the store are flagged. ==> Liste les extensions de Chrome, Edge, Brave, Vivaldi, Opera et Firefox, si chacune est activée, et ce qu'elle peut faire : lire et modifier tous les sites, voir votre navigation, ou peu de chose. Les extensions qui ne viennent pas du magasin sont signalées.
+Lists your desktop apps with their size and when they were last used. YSO starts the app's own uninstaller, then looks for what it left behind: folders and registry keys named like it. W shows the apps Windows or the shop put on the PC (Candy Crush, TikTok, News...): tick the ones you do not use, and YSO removes them for your account. ==> Liste vos applications de bureau avec leur taille et leur dernière utilisation. YSO lance le programme de désinstallation de l'application, puis cherche ce qu'elle a laissé : les dossiers et clés du registre qui portent son nom. W montre les applications que Windows ou le magasin ont mises sur le PC (Candy Crush, TikTok, Actualités...) : cochez celles que vous n'utilisez pas, et YSO les retire pour votre compte.
+little ==> peu de chose
+Looking at Windows... ==> Examen de Windows...
+Looking for device backups... ==> Recherche des sauvegardes d'appareils...
+Looking for files that are there twice ==> Recherche des fichiers en double
+Looking for files that are there twice (files of 1 MB or more)... ==> Recherche des fichiers en double (fichiers de 1 Mo ou plus)...
+Made by iTunes or Apple Devices: one folder per device, often tens of GB. ==> Faites par iTunes ou Appareils Apple : un dossier par appareil, souvent des dizaines de Go.
+Made on {0} by YSO {1} ==> Créé le {0} par YSO {1}
+Making the report... ==> Création du rapport...
+Maps ==> Cartes
+May ==> Peut
+Measured once a day, when YSO opens: how long the last startup took, the free space on the Windows drive, and how many programs start with Windows. ==> Mesuré une fois par jour, à l'ouverture de YSO : la durée du dernier démarrage, l'espace libre sur le disque de Windows, et le nombre de programmes qui démarrent avec Windows.
+Memory (RAM) ==> Mémoire (RAM)
+Menu ==> Menu
+Messaging ==> Messagerie
+Microsoft News ==> Microsoft Actualités
+Mobile Plans ==> Forfaits mobiles
+Model ==> Modèle
+Money ==> Finance
+More space from Windows ==> Plus d'espace venant de Windows
+MORE SPACE FROM WINDOWS ==> PLUS D'ESPACE VENANT DE WINDOWS
+More space from Windows (33) ==> Plus d'espace venant de Windows (33)
+Movies & TV ==> Films et TV
+My PC over time ==> Mon PC dans le temps
+MY PC OVER TIME ==> MON PC DANS LE TEMPS
+My PC over time (35) ==> Mon PC dans le temps (35)
+no Downloads folder ==> pas de dossier Téléchargements
+No extension found. ==> Aucune extension trouvée.
+no limit ==> aucune limite
+No program adds entries to the right-click menu. ==> Aucun programme n'ajoute d'entrées au menu du clic droit.
+No restart between ==> Pas de redémarrage entre
+No restart between {0}:00 and {1}:00 ==> Pas de redémarrage entre {0} h et {1} h
+No user name, PC name or file name is in this report. ==> Ce rapport ne contient aucun nom d'utilisateur, nom de PC ni nom de fichier.
+None of the usual pre-installed apps is on this PC. ==> Aucune des applications préinstallées habituelles n'est sur ce PC.
+Not available on this Windows. ==> Pas disponible sur ce Windows.
+not from the store ==> ne vient pas du magasin
+Not needed: apps rebuild their caches, and a project downloads again what it needs (it needs internet). ==> Inutile : les applications reconstruisent leurs caches, et un projet retélécharge ce dont il a besoin (il faut internet).
+not paused ==> pas suspendues
+Nothing found. ==> Rien trouvé.
+Nothing is changed. An extension that can read every site sees what you type there, passwords included: keep only the ones you know and use. ==> Rien n'est modifié. Une extension qui peut lire tous les sites voit ce que vous y tapez, mots de passe compris : gardez seulement celles que vous connaissez et utilisez.
+Nothing is changed. It can make Windows' detailed battery report, which opens in your browser, and a one-page PDF of the report on your Desktop, to send to someone who helps you (no user name, PC name or file name in it). ==> Rien n'est modifié. Il peut créer le rapport détaillé de batterie de Windows, qui s'ouvre dans votre navigateur, et un PDF d'une page du rapport sur votre Bureau, à envoyer à quelqu'un qui vous aide (sans nom d'utilisateur, nom de PC ni nom de fichier).
+Nothing is changed. The measures stay on this PC (pc-history.csv in C:\ProgramData\YSO). After a week, the home page shows the comparison too. ==> Rien n'est modifié. Les mesures restent sur ce PC (pc-history.csv dans C:\ProgramData\YSO). Après une semaine, la page d'accueil montre aussi la comparaison.
+Nothing is deleted: a click shows the file in File Explorer, and you decide there. OneDrive files that are online only are never read, so nothing is downloaded. ==> Rien n'est supprimé : un clic montre le fichier dans l'Explorateur de fichiers, et vous décidez là. Les fichiers OneDrive disponibles en ligne uniquement ne sont jamais lus, donc rien n'est téléchargé.
+Nothing measured yet: come back tomorrow. ==> Rien de mesuré pour l'instant : revenez demain.
+Nothing to free: every file was opened recently, or is online only already. ==> Rien à libérer : chaque fichier a été ouvert récemment, ou est déjà en ligne uniquement.
+Nothing to undo. A file you delete in File Explorer goes to the Recycle Bin. ==> Rien à annuler. Un fichier que vous supprimez dans l'Explorateur de fichiers va dans la Corbeille.
+Nothing to undo. To remove an extension, open the extensions page of the browser. ==> Rien à annuler. Pour supprimer une extension, ouvrez la page des extensions du navigateur.
+Nothing yet. Settings changed by YSO show up here: privacy, apps removed, startup programs, power plan, DNS servers, hibernation, right-click menu, performance mode, Windows Update hours and pause, space settings of Windows. ==> Rien pour l'instant. Les réglages modifiés par YSO apparaissent ici : vie privée, applications retirées, programmes au démarrage, mode d'alimentation, serveurs DNS, veille prolongée, menu du clic droit, mode performance, heures et pause de Windows Update, réglages d'espace de Windows.
+Now ==> Actuellement
+Number = show it in File Explorer, Enter = back ==> Numéro = le montrer dans l'Explorateur de fichiers, Entrée = retour
+Number = switch it on or off, C = classic menu, R = restart File Explorer, Enter = back ==> Numéro = activer ou désactiver, C = menu classique, R = redémarrer l'Explorateur de fichiers, Entrée = retour
+Number = tick or untick, U = tick the usual ones, D = remove the ticked ones, Enter = back ==> Numéro = cocher ou décocher, U = cocher les habituelles, D = retirer ce qui est coché, Entrée = retour
+Number = uninstall, S = biggest first, U = least used first, N = by name, W = apps Windows put on the PC, or type part of a name. Enter = back ==> Numéro = désinstaller, S = les plus grosses d'abord, U = les moins utilisées d'abord, N = par nom, W = applications mises par Windows, ou tapez une partie d'un nom. Entrée = retour
+off (Windows effects) ==> désactivé (effets de Windows)
+Off already. ==> Déjà désactivé.
+Off. Usually gives back 2 to 4 GB. ==> Désactivé. Rend en général 2 à 4 Go.
+Old installers and disk images in Downloads ==> Anciens installeurs et images disque dans Téléchargements
+Old installers and disk images in Downloads: {0} ==> Anciens installeurs et images disque dans Téléchargements : {0}
+Old installers, phone backups, files there twice. ==> Anciens installeurs, sauvegardes de téléphone, fichiers en double.
+On already. ==> Déjà activé.
+On Windows 11, brings back the classic right-click menu (everything at once, without Show more options). It also lists the entries other programs add to the menu, so you can switch off the ones you never use: the right-click opens faster. ==> Sur Windows 11, ramène le menu du clic droit classique (tout d'un coup, sans Afficher d'autres options). Il liste aussi les entrées que d'autres programmes ajoutent au menu, pour désactiver celles dont vous ne vous servez jamais : le clic droit s'ouvre plus vite.
+On: about 7 GB kept free for updates. ==> Activé : environ 7 Go gardés libres pour les mises à jour.
+Once a day, when YSO opens, it writes down how long the last startup took, the free space on the Windows drive and how many programs start with Windows. This page compares the first day with today, then shows one line a week. ==> Une fois par jour, à l'ouverture, YSO note la durée du dernier démarrage, l'espace libre sur le disque de Windows et le nombre de programmes qui démarrent avec Windows. Cette page compare le premier jour avec aujourd'hui, puis montre une ligne par semaine.
+OneDrive files freed up ==> Fichiers OneDrive libérés
+OneDrive files not opened for 60 days ==> Fichiers OneDrive pas ouverts depuis 60 jours
+OneDrive is not set up on this PC. ==> OneDrive n'est pas configuré sur ce PC.
+Outlook (new) ==> Outlook (nouveau)
+Over time ==> Dans le temps
+Pause longer ==> Suspendre plus longtemps
+Pause updates (1 to 5 weeks) ==> Suspendre les mises à jour (1 à 5 semaines)
+paused until {0} ==> suspendues jusqu'au {0}
+PC health report ==> Rapport de santé du PC
+People ==> Contacts
+Performance mode ==> Mode performance
+PERFORMANCE MODE ==> MODE PERFORMANCE
+Performance mode (38) ==> Mode performance (38)
+Performance mode (older PCs) ==> Mode performance (PC anciens)
+Performance mode off ==> Mode performance désactivé
+Performance mode on ==> Mode performance activé
+Phone Link ==> Mobile connecté
+Powered on ==> Allumé pendant
+Pre-installed apps ==> Applications préinstallées
+PRE-INSTALLED APPS ==> APPLICATIONS PRÉINSTALLÉES
+Problems of the last 30 days ==> Problèmes des 30 derniers jours
+Programs you installed long ago leave their installer behind (.exe, .msi, .iso). ==> Les programmes installés il y a longtemps laissent leur installeur derrière eux (.exe, .msi, .iso).
+Projects, installed packages, environments, settings, logins and game files are not touched. Downloaded libraries and media caches go only when they were not changed for 30 days (90 for Gradle and Maven). For VS Code, the saved data of projects not opened for 60 days goes too (it comes back if you open them again). ==> Les projets, paquets installés, environnements, réglages, connexions et fichiers de jeux ne sont pas touchés. Les bibliothèques téléchargées et les caches média partent seulement s'ils n'ont pas été modifiés depuis 30 jours (90 pour Gradle et Maven). Pour VS Code, les données des projets pas ouverts depuis 60 jours partent aussi (elles reviennent si vous les rouvrez).
+Read ==> Lecture
+read and change every site ==> lire et modifier tous les sites
+Reading Downloads... ==> Lecture de Téléchargements...
+Reading... ==> Lecture...
+Rebuild the search index now? ==> Reconstruire l'index de recherche maintenant ?
+Remove them now? ==> Les supprimer maintenant ?
+Remove {0} app(s)? ==> Retirer {0} application(s) ?
+reserved storage ==> stockage réservé
+Restart File Explorer now ==> Redémarrer l'Explorateur de fichiers
+Restore point space ==> Espace des points de restauration
+Restore points limited to {0} ==> Points de restauration limités à {0}
+Resume updates now ==> Reprendre les mises à jour
+Right-click menu ==> Menu du clic droit
+RIGHT-CLICK MENU ==> MENU DU CLIC DROIT
+Right-click menu (37) ==> Menu du clic droit (37)
+Run it again to switch it off, or use Undo YSO changes (32). ==> Relancez-le pour le désactiver, ou utilisez Annuler les modifications de YSO (32).
+Running since the last restart ==> En marche depuis le dernier redémarrage
+Same content in two places (Desktop, Documents, Downloads, Pictures, Videos, Music). Can take a few minutes. ==> Même contenu à deux endroits (Bureau, Documents, Téléchargements, Images, Vidéos, Musique). Peut prendre quelques minutes.
+Save a one-page PDF of this report on your Desktop (to send to someone who helps you)? ==> Enregistrer un PDF d'une page de ce rapport sur votre Bureau (à envoyer à quelqu'un qui vous aide) ?
+Saved on your Desktop: {0} ==> Enregistré sur votre Bureau : {0}
+Search index ==> Index de recherche
+Security updates wait too: do not pause for long. ==> Les mises à jour de sécurité attendent aussi : ne suspendez pas longtemps.
+see your browsing (tabs, history...) ==> voir votre navigation (onglets, historique...)
+set by Windows ==> choisies par Windows
+Settings of Windows itself that give space back: Compact OS (Windows compresses its own files, 2 to 4 GB), the space Windows keeps for updates (about 7 GB), the space restore points may use, OneDrive files not opened for 60 days, and a search index that grew too big. ==> Des réglages de Windows lui-même qui rendent de la place : Compact OS (Windows compresse ses propres fichiers, 2 à 4 Go), l'espace que Windows garde pour les mises à jour (environ 7 Go), l'espace que peuvent prendre les points de restauration, les fichiers OneDrive pas ouverts depuis 60 jours, et un index de recherche devenu trop gros.
+Settings of Windows that give space back. Each one says what it costs; YSO asks before changing anything, and Undo YSO changes (32) puts the settings back. ==> Des réglages de Windows qui rendent de la place. Chacun dit ce qu'il coûte ; YSO demande avant de changer quoi que ce soit, et Annuler les modifications de YSO (32) remet les réglages.
+Shows each drive with its type, temperature, wear and hours of use, and tests the read and write speed of a drive with Windows' own tool (winsat), with what is normal for that kind of drive. ==> Montre chaque disque avec son type, sa température, son usure et ses heures d'utilisation, et teste la vitesse de lecture et d'écriture d'un disque avec l'outil de Windows (winsat), avec ce qui est normal pour ce type de disque.
+Shows your own files that often take space for nothing: installers and disk images in Downloads not touched for 30 days, iPhone and iPad backups, and files that are there twice (same content) in Desktop, Documents, Downloads, Pictures, Videos and Music. ==> Montre vos propres fichiers qui prennent souvent de la place pour rien : installeurs et images disque dans Téléchargements pas touchés depuis 30 jours, sauvegardes d'iPhone et d'iPad, et fichiers en double (même contenu) dans Bureau, Documents, Téléchargements, Images, Vidéos et Musique.
+since {0}: {1} ==> depuis le {0} : {1}
+Since {0}: {1}. ==> Depuis le {0} : {1}.
+Size now ==> Taille actuelle
+slow for this kind of drive: an almost full disk, an old cable or port, or a worn drive ==> lent pour ce type de disque : disque presque plein, vieux câble ou port, ou disque usé
+Space for restore points ==> Espace pour les points de restauration
+Space for restore points on {0} ==> Espace pour les points de restauration sur {0}
+Space reserved for updates: off ==> Espace réservé aux mises à jour : désactivé
+Space reserved for updates: on ==> Espace réservé aux mises à jour : activé
+Space reserved for Windows updates ==> Espace réservé aux mises à jour de Windows
+Start Docker Desktop first: Docker only cleans itself while it runs. ==> Lancez d'abord Docker Desktop : Docker ne se nettoie que pendant qu'il tourne.
+Startup time and free space, since the first day. ==> Durée de démarrage et espace libre, depuis le premier jour.
+startup {0:N0} s ({1:N0} s before) ==> démarrage {0:N0} s ({1:N0} s avant)
+Startup: only full startups are measured (Restart, or Shut down when Fast Startup is off). ==> Démarrage : seuls les démarrages complets sont mesurés (Redémarrer, ou Arrêter quand le démarrage rapide est désactivé).
+State ==> État
+Switch off the space reserved for updates? ==> Désactiver l'espace réservé aux mises à jour ?
+Switch performance mode off (Windows effects back)? ==> Désactiver le mode performance (retour des effets de Windows) ?
+Switch performance mode on? ==> Activer le mode performance ?
+System junk - error reports, crash dumps (also in the temp folders of Windows services), logs older than {0} days, thumbnail cache, graphics driver installer leftovers ==> Fichiers système inutiles - rapports d'erreurs, vidages après plantage (aussi dans les dossiers temporaires des services Windows), journaux de plus de {0} jours, cache des miniatures, restes d'installation des pilotes graphiques
+System Protection is off on the Windows drive: restore points use no space. Restore points (R) can switch it on. ==> La protection du système est désactivée sur le disque de Windows : les points de restauration ne prennent pas de place. Points de restauration (R) peut l'activer.
+System Protection is off: no space used. ==> Protection du système désactivée : aucune place utilisée.
+Teams (personal, built into Windows 11) ==> Teams (personnel, intégré à Windows 11)
+Temperature ==> Température
+Test the speed of {0}: ({1} free) ==> Tester la vitesse de {0}: ({1} libres)
+Testing the speed of {0}: ==> Test de vitesse de {0}:
+The app can be installed again. Removed folders go to the Recycle Bin and registry keys are saved to a file first: Undo YSO changes (32) puts them back. For a removed Windows app, it installs it again, or opens its page in the Microsoft Store. ==> L'application peut être réinstallée. Les dossiers retirés vont dans la Corbeille et les clés du registre sont d'abord enregistrées dans un fichier : Annuler les modifications de YSO (32) les remet. Pour une application Windows retirée, il la réinstalle, ou ouvre sa page dans le Microsoft Store.
+The same as Adjust for best performance in Windows, for your account. It shows after you sign out and back in. ==> La même chose que Ajuster afin d'obtenir les meilleures performances dans Windows, pour votre compte. Cela apparaît après une déconnexion puis reconnexion.
+The speed test uses Windows' own tool (winsat): about a minute per drive. It writes a test file, then deletes it. ==> Le test de vitesse utilise l'outil de Windows (winsat) : environ une minute par disque. Il écrit un fichier de test, puis le supprime.
+The test takes about a minute per drive: it writes a test file, then deletes it. A slow result can come from an almost full disk, an old cable or USB port, or a worn drive. ==> Le test prend environ une minute par disque : il écrit un fichier de test, puis le supprime. Un résultat lent peut venir d'un disque presque plein, d'un vieux câble ou port USB, ou d'un disque usé.
+They use more than that now: Windows deletes the oldest restore points to fit. ==> Ils prennent plus que cela actuellement : Windows supprime les plus vieux points de restauration pour tenir.
+This PC ==> Ce PC
+This takes 10 to 20 minutes. ==> Cela prend 10 à 20 minutes.
+This Windows has no reserved storage. ==> Ce Windows n'a pas de stockage réservé.
+Tick the apps you do not use, then Remove. ==> Cochez les applications que vous n'utilisez pas, puis Retirer.
+Tick the usual ones ==> Cocher les habituelles
+Tips ==> Astuces
+To (hour, 0 to 23) ==> À (heure, 0 à 23)
+To delete a backup the Apple way: Apple Devices (or iTunes) > Manage backups. ==> Pour supprimer une sauvegarde à la manière d'Apple : Appareils Apple (ou iTunes) > Gérer les sauvegardes.
+To give this space back to Windows: quit Docker Desktop (icon next to the clock, Quit), then compact its disk here. ==> Pour rendre cette place à Windows : quittez Docker Desktop (icône près de l'horloge, Quit), puis compactez son disque ici.
+To remove one: open the browser, then its extensions page (Chrome: chrome://extensions, Edge: edge://extensions, Firefox: about:addons). ==> Pour en supprimer une : ouvrez le navigateur, puis sa page des extensions (Chrome : chrome://extensions, Edge : edge://extensions, Firefox : about:addons).
+Too soon to compare: YSO needs a week of measures. ==> Trop tôt pour comparer : YSO a besoin d'une semaine de mesures.
+Two different hours from 0 to 23, please. ==> Deux heures différentes de 0 à 23, s'il vous plaît.
+Up to {0} ({1} used now). ==> Jusqu'à {0} ({1} utilisés actuellement).
+Upgrade leftovers ==> Restes de mise à niveau
+Upgrade leftovers removed: {0} freed ==> Restes de mise à niveau supprimés : {0} libérés
+Used now ==> Utilisé actuellement
+Usually gives back 2 to 4 GB. ==> Rend en général 2 à 4 Go.
+vssadmin stopped with code {0}: {1} ==> vssadmin s'est arrêté avec le code {0} : {1}
+warm ==> tiède
+Wear ==> Usure
+Weather ==> Météo
+What each extension of your browsers may do. ==> Ce que peut faire chaque extension de vos navigateurs.
+Windows 11 (the rest under "Show more options") ==> Windows 11 (le reste sous « Afficher d'autres options »)
+Windows 11 right-click menu back ==> Retour du menu du clic droit de Windows 11
+Windows allows 18 hours at most. ==> Windows accepte 18 heures au plus.
+Windows compresses its own program files, like a zip file it opens by itself. It usually gives back 2 to 4 GB. ==> Windows compresse ses propres fichiers de programme, comme un fichier zip qu'il ouvre tout seul. Cela rend en général 2 à 4 Go.
+Windows does not change it while updates are being installed: restart, then try again. ==> Windows ne le change pas pendant l'installation de mises à jour : redémarrez, puis réessayez.
+Windows does not give the details of the drives here. ==> Windows ne donne pas le détail des disques ici.
+Windows files compressed (Compact OS) ==> Fichiers de Windows compressés (Compact OS)
+Windows files uncompressed ==> Fichiers de Windows décompressés
+Windows installs updates outside these hours (18 hours at most). ==> Windows installe les mises à jour en dehors de ces heures (18 heures au plus).
+Windows keeps about 7 GB aside so that updates can always install. Switched off, that space is yours. ==> Windows garde environ 7 Go de côté pour que les mises à jour puissent toujours s'installer. Désactivé, cet espace est à vous.
+Windows keeps an index of your files so that searching is fast. Sometimes it grows far too big; rebuilt, it is usually much smaller. ==> Windows garde un index de vos fichiers pour que la recherche soit rapide. Parfois il devient beaucoup trop gros ; reconstruit, il est en général bien plus petit.
+Windows protects part of them: Deep clean (8) removes the rest. ==> Windows en protège une partie : Nettoyage en profondeur (8) supprime le reste.
+Windows refused: {0} ==> Windows a refusé : {0}
+Windows search index ==> Index de recherche de Windows
+Windows Update: restart hours and pause ==> Windows Update : heures de redémarrage et pause
+Windows updates paused until {0} ==> Mises à jour de Windows suspendues jusqu'au {0}
+Windows updates resumed ==> Mises à jour de Windows reprises
+Windows' speed test (winsat) did not run on this PC. ==> Le test de vitesse de Windows (winsat) n'a pas pu tourner sur ce PC.
+Windows.old holds the previous version of Windows after a big update, so you can go back to it for 10 days. It often takes 15 to 30 GB. The folders a Windows upgrade leaves behind ($WINDOWS.~BT, $WINDOWS.~WS, $GetCurrent) go too. ==> Windows.old contient la version précédente de Windows après une grosse mise à jour, pour pouvoir y revenir pendant 10 jours. Il prend souvent 15 à 30 Go. Les dossiers qu'une mise à niveau de Windows laisse derrière elle ($WINDOWS.~BT, $WINDOWS.~WS, $GetCurrent) partent aussi.
+winsat.exe is not on this Windows (speed test) ==> winsat.exe n'est pas sur ce Windows (test de vitesse)
+Write ==> Écriture
+Writing... ==> Écriture...
+Your own files that often take space for nothing. YSO only shows them: you decide, in File Explorer. ==> Vos propres fichiers qui prennent souvent de la place pour rien. YSO ne fait que les montrer : vous décidez, dans l'Explorateur de fichiers.
+Your volumes (the data of your containers) stay. ==> Vos volumes (les données de vos conteneurs) restent.
+YSO can limit it to {0} (5 % of the drive). That is enough for several restore points. ==> YSO peut le limiter à {0} (5 % du disque). C'est assez pour plusieurs points de restauration.
+YSO deletes nothing here. Click a line to see the file in File Explorer, and delete it there if you do not need it. ==> YSO ne supprime rien ici. Cliquez sur une ligne pour voir le fichier dans l'Explorateur de fichiers, et supprimez-le là si vous n'en avez pas besoin.
+YSO shows the size and whether going back is still possible, then asks. While you can go back, the upgrade folders are kept, because going back needs them, and they are never touched while an upgrade is running. ==> YSO montre la taille et si le retour en arrière est encore possible, puis demande. Tant que vous pouvez revenir en arrière, les dossiers de mise à niveau sont gardés, car le retour en a besoin, et ils ne sont jamais touchés pendant une mise à niveau.
+{0:N0} hours ==> {0:N0} heures
+{0:N0} MB/s ==> {0:N0} Mo/s
+{0:N0} MB/s ({1}) ==> {0:N0} Mo/s ({1})
+{0:N0} s ==> {0:N0} s
+{0} (max {1}) ==> {0} (max {1})
+{0} back in the right-click menu ==> {0} remis dans le menu du clic droit
+{0} copies ==> {0} copies
+{0} day(s) measured ==> {0} jour(s) mesuré(s)
+{0} drive(s), temperature known for {1} ==> {0} disque(s), température connue pour {1}
+{0} entries added by other programs ==> {0} entrées ajoutées par d'autres programmes
+{0} extension(s) are switched off: if you do not use them, remove them. ==> {0} extension(s) désactivée(s) : si vous ne vous en servez pas, supprimez-les.
+{0} extension(s) found ==> {0} extension(s) trouvée(s)
+{0} fewer programs at startup ==> {0} programmes de moins au démarrage
+{0} files ({1}) are on this PC but were not opened or changed for 60 days. ==> {0} fichiers ({1}) sont sur ce PC mais n'ont pas été ouverts ni modifiés depuis 60 jours.
+{0} files could not be changed (open in a program?). ==> {0} fichiers n'ont pas pu être modifiés (ouverts dans un programme ?).
+{0} files, {1} on this PC. ==> {0} fichiers, {1} sur ce PC.
+{0} free of {1} ==> {0} libres sur {1}
+{0} less free space ==> {0} d'espace libre en moins
+{0} more free space ==> {0} d'espace libre en plus
+{0} more programs at startup ==> {0} programmes de plus au démarrage
+{0} now. Worth rebuilding when it is over 1 GB. ==> {0} actuellement. Utile de le reconstruire au-delà de 1 Go.
+{0} of {1} ==> {0} sur {1}
+{0} old installer(s) in Downloads ==> {0} ancien(s) installeur(s) dans Téléchargements
+{0} removed from the right-click menu ==> {0} retiré du menu du clic droit
+{0}:00 and {1}:00 ==> {0} h et {1} h
 '@
     $h = New-Object System.Collections.Hashtable ([StringComparer]::Ordinal)
     foreach ($line in ($pairs -split "`r?`n")) {

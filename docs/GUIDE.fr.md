@@ -31,9 +31,12 @@ Ce que fait chaque outil, ce qu'il change, et comment l'annuler. Le même guide 
   - [16. Mode d'alimentation](#16-mode-dalimentation)
   - [17. Programmes au démarrage](#17-programmes-au-démarrage)
   - [18. Analyse du temps de démarrage](#18-analyse-du-temps-de-démarrage)
+  - [37. Menu du clic droit](#37-menu-du-clic-droit)
+  - [38. Mode performance (PC anciens)](#38-mode-performance-pc-anciens)
 - [Applications et vie privée](#applications-et-vie-privée)
   - [30. Vie privée, publicités (Windows, Edge, Copilot)](#30-vie-privée-publicités-windows-edge-copilot)
   - [31. Désinstaller des applications (et leurs restes)](#31-désinstaller-des-applications-et-leurs-restes)
+  - [39. Extensions de navigateur](#39-extensions-de-navigateur)
   - [32. Annuler les modifications de YSO](#32-annuler-les-modifications-de-yso)
 - [Diagnostic et réparation](#diagnostic-et-réparation)
   - [19. Rapport de santé du système](#19-rapport-de-santé-du-système)
@@ -44,10 +47,14 @@ Ce que fait chaque outil, ce qu'il change, et comment l'annuler. Le même guide 
   - [24. Vérifier les disques](#24-vérifier-les-disques)
   - [25. Test de mémoire](#25-test-de-mémoire)
   - [26. Réparer les fichiers Windows (DISM + SFC)](#26-réparer-les-fichiers-windows-dism--sfc)
+  - [35. Mon PC dans le temps](#35-mon-pc-dans-le-temps)
+  - [36. Vitesse et température des disques](#36-vitesse-et-température-des-disques)
 - [Espace & mises à jour](#espace--mises-à-jour)
   - [27. Explorateur d'espace (qui remplit le disque ?)](#27-explorateur-despace-qui-remplit-le-disque-)
   - [28. Mises à jour : applis & pilotes](#28-mises-à-jour--applis--pilotes)
   - [29. Disques virtuels (compacter VM, WSL, Docker)](#29-disques-virtuels-compacter-vm-wsl-docker)
+  - [33. Plus d'espace venant de Windows](#33-plus-despace-venant-de-windows)
+  - [34. Fichiers peut-être inutiles](#34-fichiers-peut-être-inutiles)
 - [En un clic](#en-un-clic)
   - [A. Analyser (ne supprime rien)](#a-analyser-ne-supprime-rien)
   - [F. Entretien complet](#f-entretien-complet)
@@ -115,7 +122,7 @@ Supprime les copies de pages web, d'images et de scripts que gardent Chrome, Edg
 
 ### 3. Fichiers inutiles (rapports, vidages, journaux)
 
-Supprime les rapports d'erreurs, les fichiers de vidage après plantage (aussi ceux des dossiers temporaires des services de Windows, parfois plusieurs Go), les journaux de plus de 14 jours et le cache des miniatures.
+Supprime les rapports d'erreurs, les fichiers de vidage après plantage (aussi ceux des dossiers temporaires des services de Windows, parfois plusieurs Go), les journaux de plus de 14 jours, le cache des miniatures et les fichiers d'installation que laissent les pilotes graphiques (NVIDIA, AMD).
 
 **Ce qui change.** Les journaux et vidages récents sont gardés, pour qu'un plantage récent puisse encore être étudié. Le dossier Prefetch n'est jamais touché : le vider rendrait Windows plus lent.
 
@@ -147,11 +154,11 @@ Supprime les shaders compilés que gardent NVIDIA, AMD, Intel et DirectX. Surtou
 
 ### 7. Caches développeur et applis
 
-Supprime les caches et les vieux journaux de npm, pip, VS Code, Discord, Teams, Spotify, Steam et de toutes les applications basées sur Chromium.
+Supprime les caches et les vieux journaux des outils de développement (npm, pip, NuGet, Yarn, Gradle, Maven, Rust, Go, uv, pnpm, conda, IDE JetBrains), des applications (VS Code, Discord, Teams, Spotify, Steam, Epic, toutes les applications basées sur Chromium) et des outils de création (cache média Adobe, Unity, Unreal). Les modèles d'IA téléchargés avec Hugging Face sont montrés, et supprimés seulement si vous dites oui.
 
-**Ce qui change.** Les projets, paquets installés, réglages, connexions et fichiers de jeux ne sont pas touchés. Pour VS Code, les données des projets pas ouverts depuis 60 jours partent aussi (elles reviennent si vous les rouvrez).
+**Ce qui change.** Les projets, paquets installés, environnements, réglages, connexions et fichiers de jeux ne sont pas touchés. Les bibliothèques téléchargées et les caches média partent seulement s'ils n'ont pas été modifiés depuis 30 jours (90 pour Gradle et Maven). Pour VS Code, les données des projets pas ouverts depuis 60 jours partent aussi (elles reviennent si vous les rouvrez).
 
-**Pour annuler.** Inutile : les applications reconstruisent leurs caches.
+**Pour annuler.** Inutile : les applications reconstruisent leurs caches, et un projet retélécharge ce dont il a besoin (il faut internet).
 
 ### 8. Nettoyage approfondi (Nettoyage de disque)
 
@@ -163,9 +170,9 @@ Lance le Nettoyage de disque de Windows avec toutes les options sûres, puis net
 
 ### 9. Ancienne version de Windows (Windows.old)
 
-Windows.old contient la version précédente de Windows après une grosse mise à jour, pour pouvoir y revenir pendant 10 jours. Il prend souvent 15 à 30 Go.
+Windows.old contient la version précédente de Windows après une grosse mise à jour, pour pouvoir y revenir pendant 10 jours. Il prend souvent 15 à 30 Go. Les dossiers qu'une mise à niveau de Windows laisse derrière elle ($WINDOWS.~BT, $WINDOWS.~WS, $GetCurrent) partent aussi.
 
-**Ce qui change.** YSO montre sa taille et si le retour en arrière est encore possible, puis demande.
+**Ce qui change.** YSO montre la taille et si le retour en arrière est encore possible, puis demande. Tant que vous pouvez revenir en arrière, les dossiers de mise à niveau sont gardés, car le retour en a besoin, et ils ne sont jamais touchés pendant une mise à niveau.
 
 **Pour annuler.** Impossible à annuler : une fois retiré, vous ne pouvez plus revenir à la version précédente de Windows.
 
@@ -245,6 +252,22 @@ Lit la durée des derniers démarrages dans les relevés de Windows, et quelles 
 
 **Pour annuler.** Rien à annuler.
 
+### 37. Menu du clic droit
+
+Sur Windows 11, ramène le menu du clic droit classique (tout d'un coup, sans Afficher d'autres options). Il liste aussi les entrées que d'autres programmes ajoutent au menu, pour désactiver celles dont vous ne vous servez jamais : le clic droit s'ouvre plus vite.
+
+**Ce qui change.** Une entrée désactivée est seulement masquée, avec la liste d'entrées bloquées de Windows : le programme continue de fonctionner. Les changements apparaissent après le redémarrage de l'Explorateur de fichiers ; YSO propose de le redémarrer.
+
+**Pour annuler.** Recliquez sur l'entrée, ou de nouveau sur C, ou utilisez Annuler les modifications de YSO (32).
+
+### 38. Mode performance (PC anciens)
+
+Pour les PC anciens ou lents : désactive les animations, la transparence, les ombres et les menus en fondu, et fait s'ouvrir les menus plus vite. Windows paraît un peu plus sobre mais répond plus vite. Le texte reste lisse.
+
+**Ce qui change.** La même chose que Ajuster afin d'obtenir les meilleures performances dans Windows, pour votre compte. Cela apparaît après une déconnexion puis reconnexion.
+
+**Pour annuler.** Relancez-le pour le désactiver, ou utilisez Annuler les modifications de YSO (32).
+
 ## Applications et vie privée
 
 ### 30. Vie privée, publicités (Windows, Edge, Copilot)
@@ -263,11 +286,11 @@ Désactive, avec des cases à cocher : les publicités et suggestions de Windows
 
 ### 31. Désinstaller des applications (et leurs restes)
 
-Liste vos applications de bureau avec leur taille et leur dernière utilisation. YSO lance le programme de désinstallation de l'application, puis cherche ce qu'elle a laissé : les dossiers et clés du registre qui portent son nom.
+Liste vos applications de bureau avec leur taille et leur dernière utilisation. YSO lance le programme de désinstallation de l'application, puis cherche ce qu'elle a laissé : les dossiers et clés du registre qui portent son nom. W montre les applications que Windows ou le magasin ont mises sur le PC (Candy Crush, TikTok, Actualités...) : cochez celles que vous n'utilisez pas, et YSO les retire pour votre compte.
 
 **Ce qui change.** YSO ne propose jamais le dossier d'une autre application installée, un dossier du système, ni un nom qu'une autre application utilise aussi. Les dossiers de 1 Go ou plus sont décochés au départ : un dossier peut contenir vos propres données, comme des sauvegardes de jeu ou un profil de messagerie. Les runtimes et les pilotes ont un avertissement.
 
-**Pour annuler.** L'application peut être réinstallée. Les dossiers retirés vont dans la Corbeille et les clés du registre sont d'abord enregistrées dans un fichier : Annuler les modifications de YSO (32) les remet.
+**Pour annuler.** L'application peut être réinstallée. Les dossiers retirés vont dans la Corbeille et les clés du registre sont d'abord enregistrées dans un fichier : Annuler les modifications de YSO (32) les remet. Pour une application Windows retirée, il la réinstalle, ou ouvre sa page dans le Microsoft Store.
 
 **Étape par étape:**
 
@@ -276,9 +299,17 @@ Liste vos applications de bureau avec leur taille et leur dernière utilisation.
 3. Suivez la fenêtre de sa désinstallation jusqu'au bout.
 4. Parmi les restes, décochez ce que vous voulez garder, puis cliquez sur Supprimer ce qui est coché.
 
+### 39. Extensions de navigateur
+
+Liste les extensions de Chrome, Edge, Brave, Vivaldi, Opera et Firefox, si chacune est activée, et ce qu'elle peut faire : lire et modifier tous les sites, voir votre navigation, ou peu de chose. Les extensions qui ne viennent pas du magasin sont signalées.
+
+**Ce qui change.** Rien n'est modifié. Une extension qui peut lire tous les sites voit ce que vous y tapez, mots de passe compris : gardez seulement celles que vous connaissez et utilisez.
+
+**Pour annuler.** Rien à annuler. Pour supprimer une extension, ouvrez la page des extensions du navigateur.
+
 ### 32. Annuler les modifications de YSO
 
-Chaque réglage modifié par YSO est d'abord noté, avec ce qu'il était avant : programmes au démarrage, mode d'alimentation, fichier de veille prolongée, DNS, réglages de vie privée et restes d'applications. Cette liste les montre, du plus récent au plus ancien.
+Chaque réglage modifié par YSO est d'abord noté, avec ce qu'il était avant : programmes au démarrage, mode d'alimentation, fichier de veille prolongée, DNS, réglages de vie privée, restes d'applications, applications Windows retirées, menu du clic droit, mode performance, heures et pause de Windows Update, et réglages d'espace de Windows. Cette liste les montre, du plus récent au plus ancien.
 
 **Ce qui change.** Cliquez sur l'un d'eux pour voir ce qu'il a changé, puis confirmez : tout revient exactement comme avant. Les fichiers nettoyés ne sont pas dans cette liste : ce sont des caches qui reviennent tout seuls.
 
@@ -290,7 +321,7 @@ Chaque réglage modifié par YSO est d'abord noté, avec ce qu'il était avant :
 
 Tout le PC dans un seul rapport : Windows et matériel, espace et usure des disques, capacité de la batterie, Windows Update, plantages récents, sécurité et pilotes. Pour chaque problème, une flèche montre l'outil qui aide.
 
-**Ce qui change.** Rien n'est modifié. Il peut créer le rapport détaillé de batterie de Windows, qui s'ouvre dans votre navigateur.
+**Ce qui change.** Rien n'est modifié. Il peut créer le rapport détaillé de batterie de Windows, qui s'ouvre dans votre navigateur, et un PDF d'une page du rapport sur votre Bureau, à envoyer à quelqu'un qui vous aide (sans nom d'utilisateur, nom de PC ni nom de fichier).
 
 **Pour annuler.** Rien à annuler.
 
@@ -350,6 +381,22 @@ Lance DISM, qui répare la réserve de fichiers système de Windows (il faut int
 
 **Pour annuler.** Rien à annuler : les fichiers réparés sont ceux d'origine.
 
+### 35. Mon PC dans le temps
+
+Une fois par jour, à l'ouverture, YSO note la durée du dernier démarrage, l'espace libre sur le disque de Windows et le nombre de programmes qui démarrent avec Windows. Cette page compare le premier jour avec aujourd'hui, puis montre une ligne par semaine.
+
+**Ce qui change.** Rien n'est modifié. Les mesures restent sur ce PC (pc-history.csv dans C:\ProgramData\YSO). Après une semaine, la page d'accueil montre aussi la comparaison.
+
+**Pour annuler.** Rien à annuler.
+
+### 36. Vitesse et température des disques
+
+Montre chaque disque avec son type, sa température, son usure et ses heures d'utilisation, et teste la vitesse de lecture et d'écriture d'un disque avec l'outil de Windows (winsat), avec ce qui est normal pour ce type de disque.
+
+**Ce qui change.** Le test prend environ une minute par disque : il écrit un fichier de test, puis le supprime. Un résultat lent peut venir d'un disque presque plein, d'un vieux câble ou port USB, ou d'un disque usé.
+
+**Pour annuler.** Rien à annuler.
+
 ## Espace & mises à jour
 
 ### 27. Explorateur d'espace (qui remplit le disque ?)
@@ -362,11 +409,11 @@ Montre quels dossiers remplissent un disque, du plus gros au plus petit. Cliquez
 
 ### 28. Mises à jour : applis & pilotes
 
-Trouve les mises à jour d'applications (avec winget) et de pilotes (avec Windows Update), et les montre dans une seule liste où vous cochez ce qu'il faut installer. YSO peut aussi vérifier selon un horaire et vous prévenir, ou installer seul les mises à jour sûres.
+Trouve les mises à jour d'applications (avec winget) et de pilotes (avec Windows Update), et les montre dans une seule liste où vous cochez ce qu'il faut installer. YSO peut aussi vérifier selon un horaire et vous prévenir, ou installer seul les mises à jour sûres. L'option 7 règle les heures où Windows ne doit pas redémarrer pour les mises à jour, et suspend les mises à jour de Windows pendant 1 à 5 semaines.
 
 **Ce qui change.** Un point de restauration est créé avant l'installation de pilotes. En mode automatique, les grosses nouvelles versions (7.x vers 8.x), les pilotes facultatifs et les applications que vous excluez vous sont laissés. Seules les applications du catalogue winget sont vérifiées.
 
-**Pour annuler.** Une application peut être désinstallée, puis sa version d'avant réinstallée depuis son site. Un pilote peut être restauré dans le Gestionnaire de périphériques, ou avec le point de restauration.
+**Pour annuler.** Une application peut être désinstallée, puis sa version d'avant réinstallée depuis son site. Un pilote peut être restauré dans le Gestionnaire de périphériques, ou avec le point de restauration. Heures de redémarrage et pause : Annuler les modifications de YSO (32), ou Reprendre les mises à jour.
 
 **Étape par étape:**
 
@@ -384,11 +431,28 @@ Le disque d'une machine virtuelle est un seul gros fichier sur votre PC (.vdi po
 
 **Étape par étape:**
 
-1. VirtualBox : le compactage ne retire que les blocs vides, et les fichiers supprimés ne sont pas vides tant que l'espace libre n'est pas rempli de zéros. Dans la machine, lancez sdelete -z C: (Windows) ou la commande dd que YSO affiche (Linux), puis éteignez la machine depuis l'intérieur.
-2. WSL et Docker : rien à faire à l'intérieur. YSO libère les blocs inutilisés et arrête WSL lui-même.
-3. Copiez le fichier disque de la machine ailleurs, sur un disque externe par exemple : c'est votre sauvegarde.
-4. Gardez le PC branché. Ouvrez Disques virtuels, vérifiez que le disque peut être compacté, et confirmez.
-5. Démarrez la machine pour vérifier qu'elle marche. Ensuite, vous pouvez supprimer la copie.
+1. Docker : l'option D nettoie Docker d'abord (conteneurs arrêtés, images et cache de build inutilisés ; vos volumes restent), pour qu'il y ait plus à rendre.
+2. VirtualBox : le compactage ne retire que les blocs vides, et les fichiers supprimés ne sont pas vides tant que l'espace libre n'est pas rempli de zéros. Dans la machine, lancez sdelete -z C: (Windows) ou la commande dd que YSO affiche (Linux), puis éteignez la machine depuis l'intérieur.
+3. WSL et Docker : rien à faire à l'intérieur. YSO libère les blocs inutilisés et arrête WSL lui-même.
+4. Copiez le fichier disque de la machine ailleurs, sur un disque externe par exemple : c'est votre sauvegarde.
+5. Gardez le PC branché. Ouvrez Disques virtuels, vérifiez que le disque peut être compacté, et confirmez.
+6. Démarrez la machine pour vérifier qu'elle marche. Ensuite, vous pouvez supprimer la copie.
+
+### 33. Plus d'espace venant de Windows
+
+Des réglages de Windows lui-même qui rendent de la place : Compact OS (Windows compresse ses propres fichiers, 2 à 4 Go), l'espace que Windows garde pour les mises à jour (environ 7 Go), l'espace que peuvent prendre les points de restauration, les fichiers OneDrive pas ouverts depuis 60 jours, et un index de recherche devenu trop gros.
+
+**Ce qui change.** Chaque ligne dit ce qu'elle coûte avant que YSO demande : un peu plus de travail pour le processeur avec Compact OS, une grosse mise à jour qui peut attendre de la place libre, les plus vieux points de restauration supprimés pour tenir dans la limite, des fichiers OneDrive qui demandent internet pour s'ouvrir, une recherche qui ne trouve qu'une partie de vos fichiers pendant quelques heures.
+
+**Pour annuler.** Compact OS, l'espace réservé et la limite des points de restauration : Annuler les modifications de YSO (32). Un fichier OneDrive : clic droit dessus, Toujours conserver sur cet appareil. L'index se reconstruit tout seul.
+
+### 34. Fichiers peut-être inutiles
+
+Montre vos propres fichiers qui prennent souvent de la place pour rien : installeurs et images disque dans Téléchargements pas touchés depuis 30 jours, sauvegardes d'iPhone et d'iPad, et fichiers en double (même contenu) dans Bureau, Documents, Téléchargements, Images, Vidéos et Musique.
+
+**Ce qui change.** Rien n'est supprimé : un clic montre le fichier dans l'Explorateur de fichiers, et vous décidez là. Les fichiers OneDrive disponibles en ligne uniquement ne sont jamais lus, donc rien n'est téléchargé.
+
+**Pour annuler.** Rien à annuler. Un fichier que vous supprimez dans l'Explorateur de fichiers va dans la Corbeille.
 
 ## En un clic
 

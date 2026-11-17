@@ -44,7 +44,26 @@ New-F "$L/pip/Cache/http-v2/a/b" $false 30
 New-F "$L/NuGet/v3-cache/x/pkg.dat" $false 20
 New-F "$prof/.nuget/packages/newtonsoft.json/13.0.1/lib.dll" $false 40   # installed packages: keep
 New-F "$prof/.gradle/caches/build-cache-1/abc" $false 10
-New-F "$prof/.gradle/caches/modules-2/files-2.1/dep.jar" $false 10        # dependencies: keep
+New-F "$prof/.gradle/caches/modules-2/files-2.1/dep.jar" $false 10        # dependencies used lately: keep
+New-F "$prof/.gradle/caches/modules-2/files-2.1/olddep.jar" $true 10 ((Get-Date).AddDays(-120))   # not changed for 4 months
+New-F "$prof/.gradle/caches/modules-2/metadata-2.106/descriptors/x.bin" $true 4 ((Get-Date).AddDays(-120))   # Gradle's own index: keep
+New-F "$prof/.gradle/caches/transforms-4/abc/t.jar" $true 10 ((Get-Date).AddDays(-40))
+New-F "$prof/.m2/repository/org/lib/1.0/lib-1.0.jar" $true 10 ((Get-Date).AddDays(-120))
+New-F "$prof/.m2/repository/org/lib/2.0/lib-2.0.jar" $true 10 ((Get-Date).AddDays(-40))   # under 90 days: keep
+New-F "$prof/.m2/settings.xml" $true 1 ((Get-Date).AddDays(-400))                          # settings: keep
+New-F "$prof/.cargo/registry/cache/index.crates.io-1/serde-1.0.crate" $true 10 ((Get-Date).AddDays(-40))
+New-F "$prof/.cargo/registry/src/index.crates.io-1/serde-1.0/lib.rs" $true 4 ((Get-Date).AddDays(-40))
+New-F "$prof/.cargo/bin/cargo.exe" $true 10 ((Get-Date).AddDays(-400))                      # the tools themselves: keep
+New-F "$L/go-build/ab/abcdef-a" $false 10
+New-F "$L/uv/cache/wheels-v1/x.whl" $true 10 ((Get-Date).AddDays(-40))
+New-F "$L/pnpm/store/v3/files/00/abc" $true 10 ((Get-Date).AddDays(-40))
+New-F "$prof/miniconda3/pkgs/numpy-1.26-py311.conda" $false 20
+New-F "$prof/miniconda3/pkgs/numpy-1.26-py311/lib/numpy.py" $false 4       # unpacked package an environment uses: keep
+New-F "$L/JetBrains/PyCharm2024.1/caches/content.dat" $false 10
+New-F "$R/JetBrains/PyCharm2024.1/options/ide.general.xml" $false           # settings: keep
+New-F "$R/Adobe/Common/Media Cache Files/clip.cfa" $true 30 ((Get-Date).AddDays(-40))
+New-F "$R/Adobe/Common/Media Cache Files/recent.cfa" $false 30               # used this month: keep
+New-F "$L/UnrealEngine/Common/DerivedDataCache/a/b.udd" $true 10 ((Get-Date).AddDays(-40))
 New-F "$prof/.gradle/daemon/8.5/daemon-1.out.log" $false
 New-F "$prof/.gradle/daemon/8.5/registry.bin" $false                      # keep (not a log)
 New-F "$R/Code/Cache/Cache_Data/x" $false 10
@@ -121,12 +140,20 @@ $keep = @("$L/Temp/new1.tmp", "$L/Google/Chrome/User Data/Default/Cookies", "$L/
     "$L/Mozilla/Firefox/Profiles/ab12.default-release/places.sqlite", "$L/Microsoft/Windows/Explorer/iconcache_16.db", 'Precious/important.docx',
     "$R/npm/node_modules/typescript/package.json", "$prof/.nuget/packages/newtonsoft.json/13.0.1/lib.dll", "$prof/.gradle/caches/modules-2/files-2.1/dep.jar",
     "$prof/.gradle/daemon/8.5/registry.bin", "$R/Code/User/settings.json", "$R/discord/Local Storage/leveldb/000003.log",
+    "$prof/.gradle/caches/modules-2/metadata-2.106/descriptors/x.bin", "$prof/.m2/repository/org/lib/2.0/lib-2.0.jar", "$prof/.m2/settings.xml",
+    "$prof/.cargo/bin/cargo.exe", "$prof/miniconda3/pkgs/numpy-1.26-py311/lib/numpy.py", "$R/JetBrains/PyCharm2024.1/options/ide.general.xml",
+    "$R/Adobe/Common/Media Cache Files/recent.cfa",
     "$L/Packages/MSTeams_8wekyb3d8bbwe/LocalCache/Microsoft/MSTeams/EBWebView/Default/Cookies",
     "$L/EpicGamesLauncher/Saved/Config/Windows/GameUserSettings.ini", 'Windows/Logs/CBS/CBS.log', 'Windows/Prefetch/APP.EXE-1234.pf')
 $gone = @("$L/Temp/old1.tmp", "$L/Temp/thirty_hours.tmp", "$L/Temp/oldsub/deep/old2.tmp", "$L/Google/Chrome/User Data/Default/Cache/Cache_Data/f_000001",
     "$L/Mozilla/Firefox/Profiles/ab12.default-release/cache2/entries/XYZ", "$L/Microsoft/Windows/Explorer/thumbcache_1024.db", "$L/CrashDumps/app.exe.1234.dmp",
     "$L/npm-cache/_cacache/content-v2/sha512/aa/bb", "$L/pip/Cache/http-v2/a/b", "$L/NuGet/v3-cache/x/pkg.dat", "$prof/.gradle/caches/build-cache-1/abc",
-    "$prof/.gradle/daemon/8.5/daemon-1.out.log", "$R/Code/Cache/Cache_Data/x", "$R/Code/CachedData/abc123/chrome/js/y", "$R/discord/Cache/Cache_Data/d",
+    "$prof/.gradle/daemon/8.5/daemon-1.out.log", "$prof/.gradle/caches/modules-2/files-2.1/olddep.jar", "$prof/.gradle/caches/transforms-4/abc/t.jar",
+    "$prof/.m2/repository/org/lib/1.0/lib-1.0.jar", "$prof/.cargo/registry/cache/index.crates.io-1/serde-1.0.crate",
+    "$prof/.cargo/registry/src/index.crates.io-1/serde-1.0/lib.rs", "$L/go-build/ab/abcdef-a", "$L/uv/cache/wheels-v1/x.whl",
+    "$L/pnpm/store/v3/files/00/abc", "$prof/miniconda3/pkgs/numpy-1.26-py311.conda", "$L/JetBrains/PyCharm2024.1/caches/content.dat",
+    "$R/Adobe/Common/Media Cache Files/clip.cfa", "$L/UnrealEngine/Common/DerivedDataCache/a/b.udd",
+    "$R/Code/Cache/Cache_Data/x", "$R/Code/CachedData/abc123/chrome/js/y", "$R/discord/Cache/Cache_Data/d",
     "$L/Packages/MSTeams_8wekyb3d8bbwe/LocalCache/Microsoft/MSTeams/EBWebView/Default/Cache/Cache_Data/t", "$L/Spotify/Data/a1/b2.file",
     "$L/EpicGamesLauncher/Saved/webcache_4147/c", "$L/D3DSCache/x/y.bin", 'Windows/Temp/oldwin.tmp', 'Windows/Logs/CBS/CbsPersist_old.cab',
     'Windows/SoftwareDistribution/Download/upd/pkg.cab', 'ProgramData/Microsoft/Windows/WER/ReportArchive/r1/Report.wer')

@@ -31,9 +31,12 @@ What each tool does, what it changes, and how to undo it. The same guide is in Y
   - [16. Power plan](#16-power-plan)
   - [17. Startup programs](#17-startup-programs)
   - [18. Boot time analyzer](#18-boot-time-analyzer)
+  - [37. Right-click menu](#37-right-click-menu)
+  - [38. Performance mode (older PCs)](#38-performance-mode-older-pcs)
 - [Apps & privacy](#apps--privacy)
   - [30. Privacy & ads (Windows, Edge, Copilot)](#30-privacy--ads-windows-edge-copilot)
   - [31. Uninstall apps (and their leftovers)](#31-uninstall-apps-and-their-leftovers)
+  - [39. Browser extensions](#39-browser-extensions)
   - [32. Undo YSO changes](#32-undo-yso-changes)
 - [Diagnose & repair](#diagnose--repair)
   - [19. System health report](#19-system-health-report)
@@ -44,10 +47,14 @@ What each tool does, what it changes, and how to undo it. The same guide is in Y
   - [24. Check drives for errors](#24-check-drives-for-errors)
   - [25. Memory test](#25-memory-test)
   - [26. Repair Windows files (DISM + SFC)](#26-repair-windows-files-dism--sfc)
+  - [35. My PC over time](#35-my-pc-over-time)
+  - [36. Disk speed & temperature](#36-disk-speed--temperature)
 - [Space & updates](#space--updates)
   - [27. Space finder (what fills my disk?)](#27-space-finder-what-fills-my-disk)
   - [28. Updates: apps & drivers](#28-updates-apps--drivers)
   - [29. Virtual disks (compact VMs, WSL, Docker)](#29-virtual-disks-compact-vms-wsl-docker)
+  - [33. More space from Windows](#33-more-space-from-windows)
+  - [34. Files you might not need](#34-files-you-might-not-need)
 - [One-click](#one-click)
   - [A. Analyze (deletes nothing)](#a-analyze-deletes-nothing)
   - [F. Full maintenance](#f-full-maintenance)
@@ -115,7 +122,7 @@ Deletes the copies of web pages, images and scripts that Chrome, Edge, Brave, Vi
 
 ### 3. System junk (reports, dumps, old logs)
 
-Deletes error reports, crash dumps (also those in the temporary folders of Windows services, sometimes several GB), logs older than 14 days and the thumbnail cache.
+Deletes error reports, crash dumps (also those in the temporary folders of Windows services, sometimes several GB), logs older than 14 days, the thumbnail cache and the installer files graphics drivers leave behind (NVIDIA, AMD).
 
 **What changes.** Recent logs and dumps are kept, so a recent crash can still be looked at. The Prefetch folder is never touched: emptying it would make Windows slower.
 
@@ -147,11 +154,11 @@ Deletes the compiled shaders that NVIDIA, AMD, Intel and DirectX keep. Most usef
 
 ### 7. Developer & app caches
 
-Deletes the caches and old logs of npm, pip, VS Code, Discord, Teams, Spotify, Steam and every app built on Chromium.
+Deletes the caches and old logs of developer tools (npm, pip, NuGet, Yarn, Gradle, Maven, Rust, Go, uv, pnpm, conda, JetBrains IDEs), of apps (VS Code, Discord, Teams, Spotify, Steam, Epic, every app built on Chromium) and of creative tools (Adobe media cache, Unity, Unreal). AI models downloaded with Hugging Face are shown, and deleted only if you say yes.
 
-**What changes.** Projects, installed packages, settings, logins and game files are not touched. For VS Code, the saved data of projects not opened for 60 days goes too (it comes back if you open them again).
+**What changes.** Projects, installed packages, environments, settings, logins and game files are not touched. Downloaded libraries and media caches go only when they were not changed for 30 days (90 for Gradle and Maven). For VS Code, the saved data of projects not opened for 60 days goes too (it comes back if you open them again).
 
-**To undo it.** Not needed: apps rebuild their caches.
+**To undo it.** Not needed: apps rebuild their caches, and a project downloads again what it needs (it needs internet).
 
 ### 8. Deep clean (Disk Cleanup)
 
@@ -163,9 +170,9 @@ Runs Windows Disk Cleanup with every safe option, then cleans the component stor
 
 ### 9. Old Windows version (Windows.old)
 
-Windows.old holds the previous version of Windows after a big update, so you can go back to it for 10 days. It often takes 15 to 30 GB.
+Windows.old holds the previous version of Windows after a big update, so you can go back to it for 10 days. It often takes 15 to 30 GB. The folders a Windows upgrade leaves behind ($WINDOWS.~BT, $WINDOWS.~WS, $GetCurrent) go too.
 
-**What changes.** YSO shows its size and whether going back is still possible, then asks.
+**What changes.** YSO shows the size and whether going back is still possible, then asks. While you can go back, the upgrade folders are kept, because going back needs them, and they are never touched while an upgrade is running.
 
 **To undo it.** Cannot be undone: once it is removed, you can no longer go back to the previous version of Windows.
 
@@ -245,6 +252,22 @@ Reads how long the last startups took, from Windows' own records, and which apps
 
 **To undo it.** Nothing to undo.
 
+### 37. Right-click menu
+
+On Windows 11, brings back the classic right-click menu (everything at once, without Show more options). It also lists the entries other programs add to the menu, so you can switch off the ones you never use: the right-click opens faster.
+
+**What changes.** A switched-off entry is only hidden, with Windows' own list of blocked entries: the program keeps working. Changes show after File Explorer restarts; YSO offers to restart it.
+
+**To undo it.** Click the entry again, or C again, or use Undo YSO changes (32).
+
+### 38. Performance mode (older PCs)
+
+For older or slower PCs: switches off animations, transparency, shadows and fading menus, and makes menus open faster. Windows looks a little plainer but answers faster. Text stays smooth.
+
+**What changes.** The same as Adjust for best performance in Windows, for your account. It shows after you sign out and back in.
+
+**To undo it.** Run it again to switch it off, or use Undo YSO changes (32).
+
 ## Apps & privacy
 
 ### 30. Privacy & ads (Windows, Edge, Copilot)
@@ -263,11 +286,11 @@ Switches off, with tick boxes: ads and suggestions in Windows, tips on the lock 
 
 ### 31. Uninstall apps (and their leftovers)
 
-Lists your desktop apps with their size and when they were last used. YSO starts the app's own uninstaller, then looks for what it left behind: folders and registry keys named like it.
+Lists your desktop apps with their size and when they were last used. YSO starts the app's own uninstaller, then looks for what it left behind: folders and registry keys named like it. W shows the apps Windows or the shop put on the PC (Candy Crush, TikTok, News...): tick the ones you do not use, and YSO removes them for your account.
 
 **What changes.** YSO never offers the folder of another installed app, a system folder, or a name another app also uses. Folders of 1 GB or more start unticked: a folder can hold your own data, like game saves or a mail profile. Runtimes and drivers get a warning.
 
-**To undo it.** The app can be installed again. Removed folders go to the Recycle Bin and registry keys are saved to a file first: Undo YSO changes (32) puts them back.
+**To undo it.** The app can be installed again. Removed folders go to the Recycle Bin and registry keys are saved to a file first: Undo YSO changes (32) puts them back. For a removed Windows app, it installs it again, or opens its page in the Microsoft Store.
 
 **Step by step:**
 
@@ -276,9 +299,17 @@ Lists your desktop apps with their size and when they were last used. YSO starts
 3. Follow the window of its uninstaller to the end.
 4. Among the leftovers, untick what you want to keep, then click Remove the ticked ones.
 
+### 39. Browser extensions
+
+Lists the extensions of Chrome, Edge, Brave, Vivaldi, Opera and Firefox, whether each one is on, and what it may do: read and change every site, see your browsing, or little. Extensions that do not come from the store are flagged.
+
+**What changes.** Nothing is changed. An extension that can read every site sees what you type there, passwords included: keep only the ones you know and use.
+
+**To undo it.** Nothing to undo. To remove an extension, open the extensions page of the browser.
+
 ### 32. Undo YSO changes
 
-Every setting YSO changes is written down first, with what it was before: startup programs, power plan, hibernation file, DNS, privacy settings and app leftovers. This list shows them, newest first.
+Every setting YSO changes is written down first, with what it was before: startup programs, power plan, hibernation file, DNS, privacy settings, app leftovers, Windows apps removed, right-click menu, performance mode, Windows Update hours and pause, and the space settings of Windows. This list shows them, newest first.
 
 **What changes.** Click one to see what it changed, then confirm: it is back exactly as it was. Cleaned files are not in this list: they are caches that come back by themselves.
 
@@ -290,7 +321,7 @@ Every setting YSO changes is written down first, with what it was before: startu
 
 Everything about the PC in one report: Windows and hardware, disk space and wear, battery capacity, Windows Update, recent crashes, security and drivers. For each problem, an arrow shows the tool that helps.
 
-**What changes.** Nothing is changed. It can make Windows' detailed battery report, which opens in your browser.
+**What changes.** Nothing is changed. It can make Windows' detailed battery report, which opens in your browser, and a one-page PDF of the report on your Desktop, to send to someone who helps you (no user name, PC name or file name in it).
 
 **To undo it.** Nothing to undo.
 
@@ -350,6 +381,22 @@ Runs DISM, which repairs Windows' store of system files (it needs internet), the
 
 **To undo it.** Nothing to undo: the repaired files are the original ones.
 
+### 35. My PC over time
+
+Once a day, when YSO opens, it writes down how long the last startup took, the free space on the Windows drive and how many programs start with Windows. This page compares the first day with today, then shows one line a week.
+
+**What changes.** Nothing is changed. The measures stay on this PC (pc-history.csv in C:\ProgramData\YSO). After a week, the home page shows the comparison too.
+
+**To undo it.** Nothing to undo.
+
+### 36. Disk speed & temperature
+
+Shows each drive with its type, temperature, wear and hours of use, and tests the read and write speed of a drive with Windows' own tool (winsat), with what is normal for that kind of drive.
+
+**What changes.** The test takes about a minute per drive: it writes a test file, then deletes it. A slow result can come from an almost full disk, an old cable or USB port, or a worn drive.
+
+**To undo it.** Nothing to undo.
+
 ## Space & updates
 
 ### 27. Space finder (what fills my disk?)
@@ -362,11 +409,11 @@ Shows which folders fill a drive, biggest first. Click a folder to open it, Back
 
 ### 28. Updates: apps & drivers
 
-Finds app updates (with winget) and driver updates (with Windows Update), and shows them in one list where you tick what to install. YSO can also check on a schedule and tell you, or install safe updates by itself.
+Finds app updates (with winget) and driver updates (with Windows Update), and shows them in one list where you tick what to install. YSO can also check on a schedule and tell you, or install safe updates by itself. Option 7 sets the hours when Windows must not restart for updates, and pauses Windows updates for 1 to 5 weeks.
 
 **What changes.** A restore point is made before drivers are installed. In automatic mode, big new versions (7.x to 8.x), optional drivers and the apps you exclude are left for you. Only apps in the winget catalog are checked.
 
-**To undo it.** An app can be uninstalled, then its previous version installed from its website. A driver can be rolled back in Device Manager, or with the restore point.
+**To undo it.** An app can be uninstalled, then its previous version installed from its website. A driver can be rolled back in Device Manager, or with the restore point. Restart hours and the pause: Undo YSO changes (32), or Resume updates now.
 
 **Step by step:**
 
@@ -384,11 +431,28 @@ The disk of a virtual machine is one big file on your PC (.vdi for VirtualBox, .
 
 **Step by step:**
 
-1. VirtualBox: compacting only removes empty blocks, and deleted files are not empty until the free space is filled with zeros. Inside the machine, run sdelete -z C: (Windows) or the dd command YSO shows (Linux), then shut the machine down from inside.
-2. WSL and Docker: nothing to do inside. YSO frees the unused blocks and stops WSL by itself.
-3. Copy the disk file of the machine somewhere else, an external drive for example: that is your backup.
-4. Keep the PC plugged in. Open Virtual disks, check that the disk says it can be compacted, and confirm.
-5. Start the machine to check that it works. Then you can delete the copy.
+1. Docker: option D cleans Docker first (stopped containers, unused images and build cache; your volumes stay), so there is more to give back.
+2. VirtualBox: compacting only removes empty blocks, and deleted files are not empty until the free space is filled with zeros. Inside the machine, run sdelete -z C: (Windows) or the dd command YSO shows (Linux), then shut the machine down from inside.
+3. WSL and Docker: nothing to do inside. YSO frees the unused blocks and stops WSL by itself.
+4. Copy the disk file of the machine somewhere else, an external drive for example: that is your backup.
+5. Keep the PC plugged in. Open Virtual disks, check that the disk says it can be compacted, and confirm.
+6. Start the machine to check that it works. Then you can delete the copy.
+
+### 33. More space from Windows
+
+Settings of Windows itself that give space back: Compact OS (Windows compresses its own files, 2 to 4 GB), the space Windows keeps for updates (about 7 GB), the space restore points may use, OneDrive files not opened for 60 days, and a search index that grew too big.
+
+**What changes.** Each line says what it costs before YSO asks: a little more processor work for Compact OS, a big update that may wait for free space, the oldest restore points deleted to fit the limit, OneDrive files that need internet to open, a search that finds only part of your files for a few hours.
+
+**To undo it.** Compact OS, the reserved space and the restore point limit: Undo YSO changes (32). A OneDrive file: right-click it, Always keep on this device. The index builds itself again.
+
+### 34. Files you might not need
+
+Shows your own files that often take space for nothing: installers and disk images in Downloads not touched for 30 days, iPhone and iPad backups, and files that are there twice (same content) in Desktop, Documents, Downloads, Pictures, Videos and Music.
+
+**What changes.** Nothing is deleted: a click shows the file in File Explorer, and you decide there. OneDrive files that are online only are never read, so nothing is downloaded.
+
+**To undo it.** Nothing to undo. A file you delete in File Explorer goes to the Recycle Bin.
 
 ## One-click
 
