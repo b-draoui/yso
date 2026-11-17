@@ -1450,6 +1450,11 @@ function Get-AppCacheTargets {
         $targets += @{ Path = "$main\appcache\librarycache" }                                   # game pictures, downloaded again
         $targets += @{ Path = "$main\dumps" }                                                   # Steam crash dumps
         $targets += @{ Path = "$main\logs"; Days = [double]$script:Settings.LogMinAgeDays }      # keeps recent logs
+        foreach ($lib in $steam) {
+            # downloads and updates stopped for a week: Steam downloads them again when you resume them
+            $targets += @{ Path = "$(Esc $lib)\steamapps\downloading"; Days = 7 }
+            $targets += @{ Path = "$(Esc $lib)\steamapps\temp"; Days = 7 }
+        }
     }
     return $targets
 }

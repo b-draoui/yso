@@ -42,6 +42,7 @@ YSO digs deeper and does more. Seven new tools (39 in all), cleaning that reache
 
 ### Deeper cleaning
 - **Developer & app caches (7)**: Maven, Rust (cargo), Go, uv, pnpm, conda archives, JetBrains IDEs, Adobe media cache, Unity and Unreal. Downloaded libraries and media caches go only when they were not changed for 30 days (90 for Gradle and Maven libraries). Projects, environments and settings are never touched.
+- **Steam**: downloads and updates stopped for a week. Steam downloads them again when you resume them.
 - **AI models downloaded with Hugging Face** are shown with their size, and deleted only if you say yes (No by default).
 - **System junk (3)**: the installer files NVIDIA and AMD drivers leave on the disk.
 - **Old Windows version (9)**: the folders Windows upgrades leave behind ($WINDOWS.~BT, $WINDOWS.~WS, $GetCurrent). They are kept while you can still go back to the previous version, and while an upgrade runs. C:\ESD stays.
@@ -54,7 +55,7 @@ YSO digs deeper and does more. Seven new tools (39 in all), cleaning that reache
 - **Undo YSO changes (32)** knows every new setting.
 
 ### Tests
-- 864 automated checks in 28 groups on Linux. A new group for tools 33 to 39: every setting put back exactly, nothing deleted by the tools that only show, copies found only when the content is the same, verdicts on speed and temperature, extensions read from the browsers' own files, and a PDF report without names.
+- 867 automated checks in 28 groups on Linux. A new group for tools 33 to 39: every setting put back exactly, nothing deleted by the tools that only show, copies found only when the content is the same, verdicts on speed and temperature, extensions read from the browsers' own files, and a PDF report without names.
 - The window draws 26 pages in English and French on Windows, the new ones with sample data.
 
 **[Every screen of YSO 1.0.2, in English and French](https://github.com/b-draoui/yso/blob/main/docs/SCREENSHOTS.md)**

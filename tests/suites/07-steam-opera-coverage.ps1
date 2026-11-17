@@ -28,10 +28,11 @@ Check ($roots.Count -eq 2) 'the library is still listed, once'
 
 # --- Opera One layout (profile in a Default subfolder, in Roaming and Local)
 $gone = @("$R/Opera Software/Opera Stable/Default/Code Cache/js/a", "$R/Opera Software/Opera Stable/Default/GPUCache/b",
-          "$L/Opera Software/Opera Stable/Default/Cache/Cache_Data/c", "$steamMain/dumps/crash.dmp", "$steamMain/logs/old.txt")
+          "$L/Opera Software/Opera Stable/Default/Cache/Cache_Data/c", "$steamMain/dumps/crash.dmp", "$steamMain/logs/old.txt",
+          "$steamLib/steamapps/downloading/440/stopped.pak", "$steamMain/steamapps/temp/1234/x.tmp")
 $keep = @("$R/Opera Software/Opera Stable/Default/Cookies", "$R/Opera Software/Opera Stable/Default/Local Storage/leveldb/1.log",
-          "$steamMain/logs/today.txt", "$steamLib/steamapps/common/Game/game.pak")
-foreach ($f in $gone) { New-F $f 4 $(if ($f -like '*old.txt') { 30 } else { 0 }) }
+          "$steamMain/logs/today.txt", "$steamLib/steamapps/common/Game/game.pak", "$steamLib/steamapps/downloading/570/today.pak")
+foreach ($f in $gone) { New-F $f 4 $(if ($f -like '*old.txt' -or $f -like '*downloading*' -or $f -like '*temp*') { 30 } else { 0 }) }
 foreach ($f in $keep) { New-F $f }
 $script:DryRun = $false
 Clear-BrowserCaches -NoPrompt 6>$null; Clear-DevAppCaches -NoPrompt 6>$null
