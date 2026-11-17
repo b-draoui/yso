@@ -236,20 +236,22 @@ Set-Content -LiteralPath "$ext1/manifest.json" -Value '{ "name": "__MSG_appName_
 Set-Content -LiteralPath "$ext1/_locales/en/messages.json" -Value '{ "appName": { "message": "Coupon Finder" } }'
 Set-Content -LiteralPath "$ext2/manifest.json" -Value '{ "name": "Dark Reader Lite", "version": "3.0", "permissions": ["storage"] }'
 Set-Content -LiteralPath "$theme/manifest.json" -Value '{ "name": "Ocean theme", "version": "1", "theme": { "colors": { "frame": [0, 0, 0] } } }'
-Set-Content -LiteralPath "$chrome/Secure Preferences" -Value '{ "extensions": { "settings": { "iiiijjjjkkkkllllmmmmnnnnoooopppp": { "state": 0, "from_webstore": true }, "aaaabbbbccccddddeeeeffffgggghhhh": { "state": 1, "from_webstore": false } } } }'
+$comp = "$chrome/Extensions/yyyyzzzzaaaabbbbccccddddeeeeffff/1.0_0"; New-Item -ItemType Directory -Force $comp | Out-Null
+Set-Content -LiteralPath "$comp/manifest.json" -Value '{ "name": "Browser part", "version": "1.0", "permissions": ["<all_urls>"] }'
+Set-Content -LiteralPath "$chrome/Secure Preferences" -Value '{ "extensions": { "settings": { "iiiijjjjkkkkllllmmmmnnnnoooopppp": { "state": 0, "location": 1 }, "aaaabbbbccccddddeeeeffffgggghhhh": { "state": 1, "location": 4 }, "yyyyzzzzaaaabbbbccccddddeeeeffff": { "location": 5 } } } }'
 $ff = "$u/AppData/Roaming/Mozilla/Firefox/Profiles/abcd.default-release"
 New-Item -ItemType Directory -Force $ff | Out-Null
 Set-Content -LiteralPath "$ff/extensions.json" -Value '{ "addons": [ { "type": "extension", "location": "app-profile", "active": true, "signedState": 2, "defaultLocale": { "name": "uBlock Origin" }, "userPermissions": { "permissions": ["storage"], "origins": ["<all_urls>"] } }, { "type": "extension", "location": "app-system-defaults", "active": true, "defaultLocale": { "name": "Firefox Screenshots" } }, { "type": "theme", "location": "app-profile", "active": true, "defaultLocale": { "name": "Dark" } } ] }'
 $script:Profiles = @($u)
 $list = @(Get-BrowserExtensions)
 $names = @($list | ForEach-Object { "$($_.Browser):$($_.Name)" })
-Check ($list.Count -eq 3) "Chrome and Firefox extensions found; themes and Firefox's own add-ons left out ($($names -join ', '))"
+Check ($list.Count -eq 3) "Chrome and Firefox extensions found; themes, parts of the browser and Firefox's own add-ons left out ($($names -join ', '))"
 $cf = @($list | Where-Object { $_.Name -eq 'Coupon Finder' })[0]
 Check ($cf -and $cf.Reach -eq 'all' -and $cf.On -and -not $cf.Store) 'name read from its translations; it can read every site, and does not come from the store'
 $dr = @($list | Where-Object { $_.Name -eq 'Dark Reader Lite' })[0]
 Check ($dr -and -not $dr.On -and $dr.Reach -eq 'small') 'switched off in Chrome: shown as off'
 $ub = @($list | Where-Object { $_.Browser -eq 'Firefox' })[0]
-Check ($ub.Name -eq 'uBlock Origin' -and $ub.Reach -eq 'all' -and $ub.On) 'Firefox: name, state and what it may do'
+Check ($ub.Name -eq 'uBlock Origin' -and $ub.Reach -eq 'all' -and $ub.On -and $ub.Store) 'Firefox: name, state, what it may do, signed by Mozilla'
 $before = @(Get-ChildItem -LiteralPath $u -Recurse -File).Count
 Show-BrowserExtensions | Out-Null
 Check ($before -eq @(Get-ChildItem -LiteralPath $u -Recurse -File).Count) 'only shown: nothing is changed'

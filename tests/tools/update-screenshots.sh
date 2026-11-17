@@ -29,6 +29,12 @@ for lang in en fr; do
 18-leftovers leftovers
 19-undo undo
 20-help help
+21-more-space more-space
+22-pc-over-time pc-over-time
+23-disk-speed disk-speed
+24-right-click right-click
+25-preinstalled preinstalled
+26-extensions extensions
 MAP
 done
 git log -1 --format='pictures from %s' origin/ci-pictures

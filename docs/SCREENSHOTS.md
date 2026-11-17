@@ -1,6 +1,6 @@
 # YSO 1.0.2 screenshots
 
-Every screen of YSO, in English and [in French](#français). The pictures are drawn by the automated tests on Windows Server 2025 each time the code changes, so they always show the current version. Lists that need real apps, machines or past changes (the update list, the virtual disks, the apps to uninstall, the list of changes) are filled with sample data, and the space finder scans a small folder.
+Every screen of YSO, in English and [in French](#français). The pictures are drawn by the automated tests on Windows Server 2025 each time the code changes, so they always show the current version. Lists that need real apps, machines, measures or past changes (the update list, the virtual disks, the apps to uninstall, the list of changes, and the new pages of 1.0.2) are filled with sample data, and the space finder scans a small folder.
 
 [Back to the README](../README.md)
 
@@ -55,6 +55,36 @@ Each app with its size and when it was last used. YSO runs the app's own uninsta
 Every setting YSO changes is written down first. Click one to put it back as it was.
 
 ![Undo YSO changes: each change with its date, the tool that made it and what changed; an undone one is marked](screenshots/undo.png)
+
+## More space from Windows
+Settings of Windows that give space back, each with what it gives and what it costs. YSO asks before each one.
+
+![More space from Windows: Compact OS, the space reserved for updates, restore points, OneDrive files not opened for 60 days and the search index, each with a sentence on what it gives back](screenshots/more-space.png)
+
+## My PC over time
+The startup time, the free space and the programs at startup, measured once a day and compared with the first day.
+
+![My PC over time: since the first measure, the startup is 31 s faster, with more free space and fewer programs at startup; then one line a week](screenshots/pc-over-time.png)
+
+## Disk speed & temperature
+Each drive with its temperature, wear and hours of use, and a speed test with what is normal for that kind of drive.
+
+![Disk speed and temperature: an NVMe SSD and a hard drive with their temperature, wear, hours and health, then a button to test the speed of each drive](screenshots/disk-speed.png)
+
+## Right-click menu
+The entries other programs add to the right-click menu, each switched on or off.
+
+![Right-click menu: each entry with the company that made it and ON or OFF, with buttons to restart File Explorer and go back](screenshots/right-click.png)
+
+## Pre-installed apps
+The apps Windows put on the PC. "Tick the usual ones" ticks the ones most people never use.
+
+![Pre-installed apps: Candy Crush, Clipchamp, Microsoft News and TikTok ticked; To Do, Solitaire and Weather not ticked; buttons to remove the ticked ones](screenshots/preinstalled.png)
+
+## Browser extensions
+Every extension, on or off, and what it may do. The ones that can read every site, or do not come from the store, are in yellow.
+
+![Browser extensions: each extension with its browser, its state and what it may do, read and change every site in yellow](screenshots/extensions.png)
 
 ## Help
 Each tool explained: what it does, what it changes, how to undo it, and step by step when needed. The same texts as the [user guide](GUIDE.md).
@@ -130,6 +160,30 @@ Tous les écrans de YSO en français. Les images sont faites par les tests autom
 **Annuler les modifications de YSO** : chaque réglage modifié par YSO est noté ; un clic le remet comme avant.
 
 ![Annuler les modifications de YSO : chaque modification avec sa date, l'outil et ce qui a changé](screenshots/fr/undo.png)
+
+**Plus d'espace venant de Windows** : des réglages de Windows qui rendent de la place, chacun avec ce qu'il rend et ce qu'il coûte.
+
+![Plus d'espace venant de Windows : Compact OS, l'espace réservé, les points de restauration, OneDrive et l'index de recherche](screenshots/fr/more-space.png)
+
+**Mon PC dans le temps** : la durée de démarrage, l'espace libre et les programmes au démarrage, comparés au premier jour.
+
+![Mon PC dans le temps : la comparaison avec la première mesure, puis une ligne par semaine](screenshots/fr/pc-over-time.png)
+
+**Vitesse et température des disques** : température, usure, heures d'utilisation et test de vitesse.
+
+![Vitesse et température des disques : un SSD NVMe et un disque dur, puis le test de vitesse](screenshots/fr/disk-speed.png)
+
+**Menu du clic droit** : les entrées ajoutées par d'autres programmes, chacune activée ou désactivée.
+
+![Menu du clic droit : chaque entrée avec son éditeur et ON ou OFF](screenshots/fr/right-click.png)
+
+**Applications préinstallées** : les applications que Windows a mises sur le PC.
+
+![Applications préinstallées : les habituelles cochées, et le bouton pour retirer ce qui est coché](screenshots/fr/preinstalled.png)
+
+**Extensions de navigateur** : chaque extension et ce qu'elle peut faire.
+
+![Extensions de navigateur : chaque extension avec son navigateur, son état et ce qu'elle peut faire](screenshots/fr/extensions.png)
 
 **Aide** : chaque outil expliqué, ce qu'il fait, ce qu'il change et comment l'annuler. Les mêmes textes que le [guide](GUIDE.fr.md).
 

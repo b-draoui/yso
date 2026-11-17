@@ -4437,13 +4437,13 @@ function Test-CompactOs {
         if (-not ('YsoNative.YsoWof' -as [type])) {
             Add-Type -Namespace 'YsoNative' -Name 'YsoWof' -MemberDefinition @'
 [DllImport("wofutil.dll", CharSet = CharSet.Unicode)]
-public static extern int WofIsExternalFile(string FilePath, out int IsExternalFile, out uint Provider, System.IntPtr ExternalFileInfo, ref uint BufferLength);
+public static extern int WofIsExternalFile(string FilePath, out int IsExternalFile, out uint Provider, System.IntPtr ExternalFileInfo, System.IntPtr BufferLength);
 '@ -ErrorAction Stop
         }
         foreach ($f in @("$env:WINDIR\System32\cmd.exe", "$env:WINDIR\System32\kernel32.dll", "$env:WINDIR\explorer.exe")) {
             if (-not (Test-Path -LiteralPath $f)) { continue }
-            $ext = 0; $prov = [uint32]0; $len = [uint32]0
-            $hr = [YsoNative.YsoWof]::WofIsExternalFile($f, [ref]$ext, [ref]$prov, [System.IntPtr]::Zero, [ref]$len)
+            $ext = 0; $prov = [uint32]0
+            $hr = [YsoNative.YsoWof]::WofIsExternalFile($f, [ref]$ext, [ref]$prov, [System.IntPtr]::Zero, [System.IntPtr]::Zero)
             if ($hr -eq 0 -and $ext -ne 0) { return $true }
         }
         return $false
@@ -4523,11 +4523,11 @@ function Show-WindowsSpace($Sample = $null) {
         Write-Host ''
         Write-Option '1' 'Compress Windows files (Compact OS)' $(if ($compact -eq $true) { L 'On already.' } elseif ($compact -eq $false) { L 'Off. Usually gives back 2 to 4 GB.' } else { L 'Usually gives back 2 to 4 GB.' })
         Write-Option '2' 'Space reserved for Windows updates' $(if ($reserved -eq 'Enabled') { L 'On: about 7 GB kept free for updates.' } elseif ($reserved -eq 'Disabled') { L 'Off already.' } else { L 'Not available on this Windows.' })
-        Write-Option '3' 'Space for restore points' $(if ($shadow) { L 'Up to {0} ({1} used now).' $(if ($shadow.Max -lt 0) { L 'no limit' } else { Format-Size $shadow.Max }) (Format-Size $shadow.Used) } else { L 'System Protection is off: no space used.' })
+        Write-Option '3' 'Space for restore points' $(if (-not $shadow) { L 'System Protection is off: no space used.' } elseif ($shadow.Max -lt 0) { L 'No limit ({0} used now).' (Format-Size $shadow.Used) } else { L 'Up to {0} ({1} used now).' (Format-Size $shadow.Max) (Format-Size $shadow.Used) })
         Write-Option '4' 'OneDrive files not opened for 60 days' $(if ($od.Count -eq 0) { L 'OneDrive is not set up on this PC.' } else { L '{0} files, {1} on this PC.' $idle.Count (Format-Size $idleBytes) })
         Write-Option '5' 'Windows search index' (L '{0} now. Worth rebuilding when it is over 1 GB.' (Format-Size $index))
         Write-Option '0' 'Back'
-        $c = Read-Choice -Buttons @(, @('0', 'Back')) -Hint 'Click a line to see what it does and what it costs.'
+        $c = Read-Choice -Hint 'Click a line to see what it does and what it costs.'
         if ($null -ne $Sample) { return }
         Write-Host ''
         switch ($c) {
@@ -4626,8 +4626,9 @@ function Invoke-OneDriveFreeUp([object[]]$Files, [long]$Bytes) {
         $n++
         if (($n % 50) -eq 1) { Write-YsoProgress -Activity (L 'Freeing up OneDrive files') -Status (L '{0} of {1}' $n $Files.Count) -Percent (100 * $n / $Files.Count) }
         try {
-            # "Free up space" of File Explorer: unpinned (0x100000), not pinned (0x80000)
-            $a = ([int]$f.Attributes -bor 0x100000) -band (-bnot 0x80000)
+            # "Free up space" of File Explorer: unpinned (0x100000), not pinned (0x80000). The bits Windows
+            # sets by itself (folder, compressed, encrypted, sparse, reparse point) are not passed back.
+            $a = (([int]$f.Attributes -bor 0x100000) -band (-bnot 0x80000)) -band (-bnot 0x4E50)
             [System.IO.File]::SetAttributes($f.FullName, [System.IO.FileAttributes]$a)
             $done++
         } catch { $failed++ }
@@ -4823,7 +4824,7 @@ function Show-UnneededFiles {
         Write-Option '2' 'iPhone and iPad backups' 'Made by iTunes or Apple Devices: one folder per device, often tens of GB.'
         Write-Option '3' 'Files that are there twice' 'Same content in two places (Desktop, Documents, Downloads, Pictures, Videos, Music). Can take a few minutes.'
         Write-Option '0' 'Back'
-        $c = Read-Choice -Buttons @(, @('0', 'Back'))
+        $c = Read-Choice
         switch ($c) {
             '1' {
                 Write-Step 'Reading Downloads...'
@@ -5029,7 +5030,7 @@ function Show-DiskSpeed([object[]]$Sample = $null) {
     $i = 0
     foreach ($v in $vols) { $i++; Write-Option "$i" (L 'Test the speed of {0}: ({1} free)' $v.DriveLetter (Format-Size $v.SizeRemaining)) }
     Write-Option '0' 'Back'
-    $c = Read-Choice -Buttons @(, @('0', 'Back'))
+    $c = Read-Choice
     if ($null -ne $Sample -or $c -notmatch '^\d+$' -or [int]$c -lt 1 -or [int]$c -gt $vols.Count) { return }
     $v = $vols[[int]$c - 1]
     $speed = Test-DiskSpeed "$($v.DriveLetter)"
@@ -5246,7 +5247,10 @@ function Get-ChromiumProfiles {
             }
         }
         foreach ($o in @("$R\Opera Software\Opera Stable", "$R\Opera Software\Opera GX Stable")) {
-            if (Test-Path -LiteralPath $o) { $out += [pscustomobject]@{ Browser = $(if ($o -like '*GX*') { 'Opera GX' } else { 'Opera' }); Dir = $o } }
+            if (-not (Test-Path -LiteralPath $o)) { continue }
+            # recent versions keep the profile in a Default folder, older ones directly in Opera Stable
+            $dir = $(if (Test-Path -LiteralPath "$o\Default\Extensions") { "$o\Default" } else { $o })
+            $out += [pscustomobject]@{ Browser = $(if ($o -like '*GX*') { 'Opera GX' } else { 'Opera' }); Dir = $dir }
         }
     }
     return $out
@@ -5274,13 +5278,17 @@ function Get-BrowserExtensions {
             foreach ($cs in @($m.content_scripts)) { $perm += @($cs.matches) }
             $st = $null
             if ($settings) { $st = $settings.PSObject.Properties[$idDir.Name] }
+            # where it comes from: 1 a store, 2/3/6 added by another program, 4 a folder (unpacked),
+            # 8 the command line, 5/10 a part of the browser itself (not shown)
+            $loc = $(if ($st -and $st.Value.PSObject.Properties['location']) { [int]$st.Value.location } else { 1 })
+            if ($loc -eq 5 -or $loc -eq 10) { continue }
             $on = $true
             if ($st) {
                 $v = $st.Value
                 if ($v.PSObject.Properties['state'] -and "$($v.state)" -eq '0') { $on = $false }
                 if ($v.PSObject.Properties['disable_reasons'] -and @($v.disable_reasons | Where-Object { "$_" -ne '0' -and "$_" -ne '' }).Count) { $on = $false }
             }
-            $store = $(if ($st -and $st.Value.PSObject.Properties['from_webstore']) { [bool]$st.Value.from_webstore } else { $true })
+            $store = (@(2, 3, 4, 6, 8) -notcontains $loc)
             $out.Add([pscustomobject]@{ Browser = $pr.Browser; Name = (Get-ChromiumExtensionName $ver.FullName $m); On = $on; Reach = (Get-ExtensionReach $perm); Store = $store })
         }
     }
@@ -5294,7 +5302,8 @@ function Get-BrowserExtensions {
             foreach ($a in @($j.addons)) {
                 if ("$($a.type)" -ne 'extension' -or "$($a.location)" -ne 'app-profile') { continue }
                 $perm = @(@($a.userPermissions.permissions) + @($a.userPermissions.origins) | Where-Object { $_ })
-                $out.Add([pscustomobject]@{ Browser = 'Firefox'; Name = "$($a.defaultLocale.name)"; On = [bool]$a.active; Reach = (Get-ExtensionReach $perm); Store = ("$($a.signedState)" -ne '0') })
+                $signed = 0; [void][int]::TryParse("$($a.signedState)", [ref]$signed)   # 2 = signed by Mozilla (addons.mozilla.org)
+                $out.Add([pscustomobject]@{ Browser = 'Firefox'; Name = "$($a.defaultLocale.name)"; On = [bool]$a.active; Reach = (Get-ExtensionReach $perm); Store = ($signed -gt 0) })
             }
         }
     }
@@ -5308,7 +5317,7 @@ function Show-BrowserExtensions([object[]]$Sample = $null) {
     $list = $(if ($null -ne $Sample) { @($Sample) } else { @(Get-BrowserExtensions) })
     Write-Host ''
     if ($list.Count -eq 0) { Write-Ok 'No extension found.'; return }
-    Write-Host ('       ' + (L 'Browser').PadRight(10) + (L 'Extension').PadRight(40) + (L 'State').PadRight(8) + (L 'May')) -ForegroundColor DarkGray
+    Write-Host ('       ' + (L 'Browser').PadRight(10) + (L 'Extension').PadRight(40) + (L 'State').PadRight(8) + (L 'What it may do')) -ForegroundColor DarkGray
     foreach ($e in $list) {
         Write-Host ('       ' + $e.Browser.PadRight(10)) -NoNewline -ForegroundColor DarkGray
         Write-Host ((Get-Truncated $e.Name 38).PadRight(40)) -NoNewline
@@ -5433,7 +5442,7 @@ function Show-WindowsUpdateSettings {
         Write-Option '2' $(if ($pause) { N 'Pause longer' } else { N 'Pause updates (1 to 5 weeks)' }) 'Security updates wait too: do not pause for long.'
         if ($pause) { Write-Option '3' 'Resume updates now' }
         Write-Option '0' 'Back'
-        $c = Read-Choice -Buttons @(, @('0', 'Back'))
+        $c = Read-Choice
         if ($c -notin @('1', '2', '3')) { return }
         if ($script:DryRun) { Write-Info 'Analyze-only mode: nothing was changed.'; continue }
         switch ($c) {
@@ -5542,7 +5551,7 @@ function ConvertTo-PdfWithEdge([string]$Html, [string]$Pdf) {
     $tmp = [System.IO.Path]::Combine($env:TEMP, 'yso-edge-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
     $uri = ([System.Uri]$Html).AbsoluteUri
     try {
-        $p = Start-Process -FilePath $edge -PassThru -WindowStyle Hidden -ArgumentList @('--headless=new', '--disable-gpu', '--no-first-run', '--no-pdf-header-footer',
+        $p = Start-Process -FilePath $edge -PassThru -WindowStyle Hidden -ArgumentList @('--headless=new', '--disable-gpu', '--no-first-run', '--no-pdf-header-footer', '--do-not-de-elevate',
             "--user-data-dir=`"$tmp`"", "--print-to-pdf=`"$Pdf`"", $uri)
         $null = $p.Handle
         if (-not $p.WaitForExit(60000)) { try { $p.Kill() } catch { } }
@@ -13534,7 +13543,6 @@ Made by iTunes or Apple Devices: one folder per device, often tens of GB. ==> Fa
 Made on {0} by YSO {1} ==> Créé le {0} par YSO {1}
 Making the report... ==> Création du rapport...
 Maps ==> Cartes
-May ==> Peut
 Measured once a day, when YSO opens: how long the last startup took, the free space on the Windows drive, and how many programs start with Windows. ==> Mesuré une fois par jour, à l'ouverture de YSO : la durée du dernier démarrage, l'espace libre sur le disque de Windows, et le nombre de programmes qui démarrent avec Windows.
 Memory (RAM) ==> Mémoire (RAM)
 Menu ==> Menu
@@ -13553,6 +13561,7 @@ My PC over time (35) ==> Mon PC dans le temps (35)
 no Downloads folder ==> pas de dossier Téléchargements
 No extension found. ==> Aucune extension trouvée.
 no limit ==> aucune limite
+No limit ({0} used now). ==> Aucune limite ({0} utilisés actuellement).
 No program adds entries to the right-click menu. ==> Aucun programme n'ajoute d'entrées au menu du clic droit.
 No restart between ==> Pas de redémarrage entre
 No restart between {0}:00 and {1}:00 ==> Pas de redémarrage entre {0} h et {1} h
@@ -13688,6 +13697,7 @@ vssadmin stopped with code {0}: {1} ==> vssadmin s'est arrêté avec le code {0}
 warm ==> tiède
 Wear ==> Usure
 Weather ==> Météo
+What it may do ==> Ce qu'elle peut faire
 What each extension of your browsers may do. ==> Ce que peut faire chaque extension de vos navigateurs.
 Windows 11 (the rest under "Show more options") ==> Windows 11 (le reste sous « Afficher d'autres options »)
 Windows 11 right-click menu back ==> Retour du menu du clic droit de Windows 11

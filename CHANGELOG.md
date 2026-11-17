@@ -1,5 +1,64 @@
 # Changelog
 
+## 1.0.2 - 2026-11-17
+YSO digs deeper and does more. Seven new tools (39 in all), cleaning that reaches developer, creative and AI caches, and new options in the health report, the updates and the uninstaller.
+
+![More space from Windows: Compact OS, the space reserved for updates, restore points, OneDrive files and the search index, each with what it gives back](https://raw.githubusercontent.com/b-draoui/yso/main/docs/screenshots/more-space.png)
+
+### New tool: More space from Windows (33)
+- Settings of Windows itself that give space back, each with what it costs before YSO asks:
+  - **Compact OS**: Windows compresses its own files, usually 2 to 4 GB.
+  - **Reserved storage**: the 7 GB or so Windows keeps for updates.
+  - **Restore points**: limited to 5 % of the drive (at least 5 GB) when they have no limit.
+  - **OneDrive files** not opened for 60 days become online only. Nothing is deleted, and files set to "Always keep on this device" are left alone.
+  - **Search index**: rebuilt when it is over 1 GB.
+- Compact OS, reserved storage and the restore point limit are written down: Undo YSO changes puts them back.
+
+### New tool: Files you might not need (34)
+- Old installers and disk images in Downloads, **iPhone and iPad backups** (with the device name), and **files that are there twice**. Same size, then the first 64 KB, then the whole file: only real copies are shown.
+- YSO deletes nothing here. A click shows the file in File Explorer, and you decide there. OneDrive files that are online only are never read.
+
+### New tool: My PC over time (35)
+- Once a day, when YSO opens, it writes down the startup time, the free space and the number of programs at startup.
+- The page compares the first day with today ("startup 42 s (62 s before), 10 GB more free space, 7 fewer programs at startup"), then shows one line a week. After a week, the home page shows it too.
+
+![My PC over time: since the first measure, then one line a week with the startup time, the free space and the programs at startup](https://raw.githubusercontent.com/b-draoui/yso/main/docs/screenshots/pc-over-time.png)
+
+### New tool: Disk speed & temperature (36)
+- Each drive with its kind (NVMe, SSD, hard drive, USB), temperature, wear and hours of use.
+- A read and write speed test with Windows' own tool (winsat), with what is normal for that kind of drive. A 900 MB/s NVMe is "a bit slow"; a 150 MB/s hard drive is fast.
+
+### New tool: Right-click menu (37)
+- On Windows 11, the **classic right-click menu** (everything at once, no "Show more options").
+- The entries other programs add to the menu, each switched on or off with Windows' own list of blocked entries. The program keeps working. YSO offers to restart File Explorer.
+
+### New tool: Performance mode (38)
+- For older PCs: no animations, transparency, shadows or fading menus, and faster menus. Text stays smooth. The same as Windows' "Adjust for best performance", for your account, and Undo puts it back.
+
+### New tool: Browser extensions (39)
+- Every extension of Chrome, Edge, Brave, Vivaldi, Opera and Firefox, on or off, and what it may do: read and change every site, see your browsing, or little. Extensions that do not come from the store are flagged. Only shown: removing one is done in the browser.
+
+![Browser extensions: each extension with its browser, its state and what it may do](https://raw.githubusercontent.com/b-draoui/yso/main/docs/screenshots/extensions.png)
+
+### Deeper cleaning
+- **Developer & app caches (7)**: Maven, Rust (cargo), Go, uv, pnpm, conda archives, JetBrains IDEs, Adobe media cache, Unity and Unreal. Downloaded libraries and media caches go only when they were not changed for 30 days (90 for Gradle and Maven libraries). Projects, environments and settings are never touched.
+- **AI models downloaded with Hugging Face** are shown with their size, and deleted only if you say yes (No by default).
+- **System junk (3)**: the installer files NVIDIA and AMD drivers leave on the disk.
+- **Old Windows version (9)**: the folders Windows upgrades leave behind ($WINDOWS.~BT, $WINDOWS.~WS, $GetCurrent). They are kept while you can still go back to the previous version, and while an upgrade runs. C:\ESD stays.
+- **Virtual disks (29)**: **D** cleans Docker first (stopped containers, unused images and build cache; your volumes stay), so compacting gives more back. Each disk shows the most it can grow to.
+
+### In existing tools
+- **Health report (19)**: a one-page **PDF** on your Desktop, to send to someone who helps you. No user name, PC name or file name in it. Without Edge, it is saved as a web page to print.
+- **Updates (28 > 7)**: the hours when Windows must not restart, and a **pause of Windows updates** for 1 to 5 weeks, like Settings does it. Undo puts them back.
+- **Uninstall apps (31 > W)**: the **apps Windows put on the PC** (Candy Crush, TikTok, News, Clipchamp...). "Tick the usual ones" never touches the Store, Photos, Calculator, Notepad, Paint, Terminal, Xbox or drivers' apps. Undo installs an app again, or opens its page in the Microsoft Store.
+- **Undo YSO changes (32)** knows every new setting.
+
+### Tests
+- 864 automated checks in 28 groups on Linux. A new group for tools 33 to 39: every setting put back exactly, nothing deleted by the tools that only show, copies found only when the content is the same, verdicts on speed and temperature, extensions read from the browsers' own files, and a PDF report without names.
+- The window draws 26 pages in English and French on Windows, the new ones with sample data.
+
+**[Every screen of YSO 1.0.2, in English and French](https://github.com/b-draoui/yso/blob/main/docs/SCREENSHOTS.md)**
+
 ## 1.0.1 - 2026-11-08
 The window reads like an app, not like a terminal. Four new tools: virtual disks, privacy and ads, uninstalling apps with their leftovers, and undoing any change YSO made. An optional icon next to the clock warns you before problems, and YSO is ready for the Microsoft Store.
 
