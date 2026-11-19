@@ -1,5 +1,85 @@
 # Changelog
 
+## 1.0.3 - 2026-11-19
+The PC passport: the precise state of each part of the PC, with a score out of 100, tests that check every result, and a detailed PDF for a repair shop or a buyer. And more maintenance: how long Windows still gets security updates, the Secure Boot certificates, the signs of a scam, your browsers, and deeper cleaning.
+
+![PC passport: the score of the PC and of each part, with the grade and what decides it](https://raw.githubusercontent.com/b-draoui/yso/main/docs/screenshots/passport.png)
+
+### New tool: PC passport (40)
+Each part gets a score out of 100 and a grade, A to D: drives, battery, processor, memory, graphics card, screen, and the rest (keyboard, sound, ports, Wi-Fi). Three levels, and each one says how long it takes:
+
+- **Quick (about 2 minutes)** only reads. What each part reports about itself:
+  - **Drives**: the NVMe health log read byte by byte (life used, spare space and its threshold, data read and written, hours, power cycles, unsafe shutdowns, media errors, critical warnings), or the SMART attributes of a SATA drive (life left, reallocated, pending and unreadable sectors).
+  - **Battery**: capacity now against capacity when new, charge cycles, and whether its gauge needs a reset.
+  - **Processor**: model, cores, microcode. Intel Core 13th and 14th gen desktop chips are checked for the microcode that fixes their instability (0x12F or later).
+  - **Memory**: each stick, its rated and actual speed, and the result of Windows Memory Diagnostic.
+  - **Graphics card**: temperature, fan and limits from Windows itself (D3DKMT), or from nvidia-smi on NVIDIA cards.
+  - **Screen** (maker, model, year), **TPM**, **Secure Boot**, network adapters.
+  - **Windows' logs of the last 90 days**: corrected and fatal hardware errors (WHEA 17, 18, 19, 47), graphics driver resets, blue screens, Windows' stability index.
+- **Complete (about 20 minutes)** adds the tests:
+  - **The processor under load for 10 minutes on every core**, each core pinned and repeating computations whose result is known in advance (SHA-256, floating point, integers). One wrong result means a faulty core, and the processor gets D whatever else it scores. The speed is followed the whole time: how much of it the processor keeps after 10 minutes says how well it is cooled.
+  - **A read of each drive**: 512 places over the whole disk, without the cache. Nothing is written. Unreadable places and very slow areas are counted.
+  - **Guided tests**: plain colours for dead pixels, stains and light leaks; every key of the keyboard; the touchpad (click, right-click, scroll); a beep in each speaker, in an order YSO picks at random, so "both work" cannot be guessed; the microphone records 3 seconds; the webcam; each USB port; Wi-Fi and Bluetooth; the charger. Each one can be skipped.
+- **Complete with the deep test (about 50 minutes)** adds:
+  - **The Blender Benchmark**, the official tool of Blender Open Data, on the processor and on the graphics card, three times each. The median of each scene is compared with the median of the public results of the same model with the same Blender version.
+  - **memtest_vulkan** checks the video memory for 5 minutes, and the graphics card's temperature and fan are watched during both tests.
+  - YSO asks before downloading them (a few hundred MB from download.blender.org and GitHub). The launcher's signature is checked, and memtest_vulkan is checked against the checksum GitHub publishes for it.
+
+**How the score is made.** No consumer processor or graphics card counts its own wear, not even with the maker's tools. So YSO measures what wear causes, with four factors for the processor and the graphics card:
+
+| Factor | Weight | What decides it |
+|---|---|---|
+| Performance against the same model | 40 | Blender Benchmark against the median of the same model: every point from 95 % of the median, none at 55 % |
+| Exact computations | 25 | One wrong result on one core, or video memory errors: grade D |
+| Cooling | 20 | The share of its speed the part keeps after 10 minutes of load, and how far its limits drop |
+| Stability | 15 | Hardware errors and graphics driver resets in Windows' logs over 90 days |
+
+When the hardware gives a percentage itself (battery health, SSD life left), that percentage is the score. Grades: A from 85, B from 70, C from 50, D below. The battery follows Back Market's threshold for computers (85 %), SSDs their life left (A from 90 %). The grade of the PC is the grade of its weakest part, as refurbishers do; its score is the weighted mean of the parts (drives and battery 20 each, processor and memory 15 each, graphics card, screen and the rest 10 each). The PDF shows every factor, where each value comes from (measured, the maker's estimate, YSO's rule, a test) and every raw value.
+
+**How precise it is.** About 5 points either way for one passport. Two PCs of the same model differ by a few percent, and two runs on the same PC by 2 to 5 %. Between two passports of the same PC, the margin is 2 to 3 points: each passport is kept on the PC, and the next one shows what changed since the first (battery, life left of each drive, data written, the processor's speed with the same Blender). A counter that went back is flagged: the part was changed or its counter reset.
+
+**The PDF.** On your Desktop, in English or French, with the JSON file of every measure and its fingerprint. "For a professional" has the full serial numbers; "for a listing" keeps only their last 4 characters. Neither has your user name or the PC name. The limits are written in it: the exact processor temperature needs a kernel driver, which YSO does not install; a test that passes does not prove that a rare fault never happens; the owner made the report, nobody certified it.
+
+The reference results come from the public Blender Open Data (CC0), turned into one median per model, version and scene by a weekly workflow of this repository (`data/blender-medians.json`). Without a reference for a model, the score is measured but not compared.
+
+### Security check (21)
+- **Windows support**: until when this version of Windows gets security updates, from Microsoft's lifecycle dates (Home and Pro, Enterprise and Education, LTSC). Windows 11 24H2 Home and Pro got their last update in October 2026: YSO says so and points to the newer version. Windows 10 22H2 is covered until October 12, 2027 only if the PC is enrolled in Extended Security Updates. The home page warns when the end is less than 90 days away or past.
+- **Secure Boot certificates**: Microsoft's 2011 certificates expired in 2026. YSO says whether the 2023 ones are in the firmware, whether Windows is installing them, or whether a BIOS update is needed.
+- **Signs of a scam or hijack**, each one explained, since each can also be normal:
+  - **Remote access apps** (AnyDesk, TeamViewer, RustDesk, ScreenConnect and about 20 others), installed, running or starting with Windows.
+  - **Commands pasted in Win+R** that download and run something: what fake "I am not a robot" pages ask people to do (ClickFix).
+  - **The hosts file**: a site sent to another address, or security and update sites blocked. A plain ad blocker list is told apart.
+  - **A proxy** set for your account.
+
+### Health report (19)
+- How long this Windows gets security updates, and **Windows' stability index** (Reliability Monitor).
+- **What woke the PC** in the last 7 days, and how to stop a mouse or network card from doing it.
+- **Memory**: running slower than it is made for, or one stick alone (a second identical one doubles the bandwidth).
+- On laptops with modern standby, the **sleep report**: what used the battery while the PC was asleep.
+
+### Browsers (39, formerly Browser extensions)
+- The **default search engine** of each Chrome, Edge, Brave, Vivaldi and Opera profile, flagged when it is not a known one.
+- The **sites allowed to send notifications**, where the "you have a virus" pop-ups near the clock come from, and where to stop them.
+- The **policies a program set**: extensions installed by force, a search engine, home page or proxy you cannot change ("Managed by your organization").
+
+### Privacy & ads (30)
+- **Unwanted apps that come with downloads**: Microsoft Defender and Edge block the toolbars, coupon add-ons, coin miners and ad injectors bundled with free programs. Recommended. Undo puts it back.
+
+### Deeper cleaning
+- **More space from Windows (33)**, five new lines:
+  - **Old copies of Windows updates (WinSxS)**: measured first (about a minute), then cleaned. Locking in the installed updates (ResetBase) is a separate question, No by default.
+  - **Old driver versions**, each one listed with the newest version that replaced it.
+  - **Parts of Windows you do not use**, with tick boxes: Math Input Panel, Steps Recorder, WordPad, XPS Viewer, and the handwriting, text recognition and speech of languages you do not use. Your languages, English (US) and spelling are always kept. Undo downloads a part again from Windows Update.
+  - **Accounts nobody used for 6 months**: never the account in use, one that is signed in, Windows' own accounts or an administrator. YSO shows the size and last use of each one and asks one by one, No by default.
+  - **The Windows Installer cache**: its size, shown only, with why its files must not be deleted by hand.
+- **Files you might not need (34)**, three new lines:
+  - **Build folders of code projects**: node_modules, target, .next and .nuxt, bin and obj, .gradle, only next to the file that makes them a project (package.json, Cargo.toml, a .csproj...). Those of projects not changed for 90 days are ticked; the project's own tool makes them again. AppData and hidden folders are never read.
+  - **WhatsApp photos and videos** and the **Telegram cache** of the PC apps, shown only, with how to empty them the app's way.
+
+### Tests
+- 948 automated checks in 29 groups on Linux. A new group for the passport and the new maintenance items: the NVMe and SMART logs read from made-up bytes, the grades and their thresholds, a wrong computation that sends the processor to D, a desktop without battery, the PDF with and without full serial numbers, what changed since the first passport, Blender's JSON against a median, the Windows lifecycle dates, ClickFix commands, the hosts file, the DISM analysis, unused languages, and code build folders found and ticked by age.
+- The window draws 27 pages in English and French on Windows, the passport with a sample PC.
+
 ## 1.0.2 - 2026-11-17
 YSO digs deeper and does more. Seven new tools (39 in all), cleaning that reaches developer, creative and AI caches, and new options in the health report, the updates and the uninstaller.
 

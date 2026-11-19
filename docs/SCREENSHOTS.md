@@ -1,6 +1,6 @@
-# YSO 1.0.2 screenshots
+# YSO 1.0.3 screenshots
 
-Every screen of YSO, in English and [in French](#français). The pictures are drawn by the automated tests on Windows Server 2025 each time the code changes, so they always show the current version. Lists that need real apps, machines, measures or past changes (the update list, the virtual disks, the apps to uninstall, the list of changes, and the new pages of 1.0.2) are filled with sample data, and the space finder scans a small folder.
+Every screen of YSO, in English and [in French](#français). The pictures are drawn by the automated tests on Windows Server 2025 each time the code changes, so they always show the current version. Lists that need real apps, machines, measures or past changes (the update list, the virtual disks, the apps to uninstall, the list of changes, the PC passport, and the pages added in 1.0.2) are filled with sample data, and the space finder scans a small folder.
 
 [Back to the README](../README.md)
 
@@ -56,10 +56,15 @@ Every setting YSO changes is written down first. Click one to put it back as it 
 
 ![Undo YSO changes: each change with its date, the tool that made it and what changed; an undone one is marked](screenshots/undo.png)
 
-## More space from Windows
-Settings of Windows that give space back, each with what it gives and what it costs. YSO asks before each one.
+## PC passport
+The score of the PC and of each part, out of 100, with its grade and what decides it. The grade of the PC is the grade of its weakest part. The margin is written under it.
 
-![More space from Windows: Compact OS, the space reserved for updates, restore points, OneDrive files not opened for 60 days and the search index, each with a sentence on what it gives back](screenshots/more-space.png)
+![PC passport: the score of the PC (93/100, grade B, limited by the screen), then each part with its score, grade and the measure that decides it](screenshots/passport.png)
+
+## More space from Windows
+Settings and leftovers of Windows that give space back, each with what it gives, what it costs and whether it can be undone. YSO asks before each one.
+
+![More space from Windows: Compact OS, the space reserved for updates, restore points, OneDrive files, the search index, old copies of Windows updates, old drivers, unused parts of Windows, unused accounts and the Windows Installer cache, each with a sentence on what it gives back](screenshots/more-space.png)
 
 ## My PC over time
 The startup time, the free space and the programs at startup, measured once a day and compared with the first day.
@@ -81,10 +86,10 @@ The apps Windows put on the PC. "Tick the usual ones" ticks the ones most people
 
 ![Pre-installed apps: Candy Crush, Clipchamp, Microsoft News and TikTok ticked; To Do, Solitaire and Weather not ticked; buttons to remove the ticked ones](screenshots/preinstalled.png)
 
-## Browser extensions
-Every extension, on or off, and what it may do. The ones that can read every site, or do not come from the store, are in yellow.
+## Browsers
+Every extension, on or off, and what it may do. Then the search engine, the sites allowed to send notifications and the policies a program set. The ones that can read every site, or do not come from the store, are in yellow.
 
-![Browser extensions: each extension with its browser, its state and what it may do, read and change every site in yellow](screenshots/extensions.png)
+![Browsers: each extension with its browser, its state and what it may do, read and change every site in yellow](screenshots/extensions.png)
 
 ## Help
 Each tool explained: what it does, what it changes, how to undo it, and step by step when needed. The same texts as the [user guide](GUIDE.md).
@@ -117,7 +122,7 @@ Every tool with an icon and one sentence that says what it does.
 
 ## Français
 
-Tous les écrans de YSO en français. Les images sont faites par les tests automatiques sur Windows Server 2025 à chaque changement du code. Les listes qui demandent de vraies applis, de vraies machines ou des modifications passées (mises à jour, disques virtuels, applications à désinstaller, liste des modifications) contiennent des exemples.
+Tous les écrans de YSO en français. Les images sont faites par les tests automatiques sur Windows Server 2025 à chaque changement du code. Les listes qui demandent de vraies applis, de vraies machines ou des modifications passées (mises à jour, disques virtuels, applications à désinstaller, liste des modifications) contiennent des exemples, comme le passeport du PC.
 
 **Accueil** : l'état du PC, et pour chaque carte le bouton qui aide.
 
@@ -161,9 +166,13 @@ Tous les écrans de YSO en français. Les images sont faites par les tests autom
 
 ![Annuler les modifications de YSO : chaque modification avec sa date, l'outil et ce qui a changé](screenshots/fr/undo.png)
 
-**Plus d'espace venant de Windows** : des réglages de Windows qui rendent de la place, chacun avec ce qu'il rend et ce qu'il coûte.
+**Passeport du PC** : la note du PC et de chaque composant sur 100, avec son niveau et ce qui la décide. Le niveau du PC est celui de son composant le plus faible.
 
-![Plus d'espace venant de Windows : Compact OS, l'espace réservé, les points de restauration, OneDrive et l'index de recherche](screenshots/fr/more-space.png)
+![Passeport du PC : la note du PC, puis chaque composant avec sa note, son niveau et la mesure qui la décide](screenshots/fr/passport.png)
+
+**Plus d'espace venant de Windows** : des réglages et des restes de Windows qui rendent de la place, chacun avec ce qu'il rend, ce qu'il coûte et s'il peut être annulé.
+
+![Plus d'espace venant de Windows : Compact OS, l'espace réservé, les points de restauration, OneDrive, l'index de recherche, les anciennes mises à jour, les anciens pilotes, les composants inutilisés, les comptes inutilisés et le cache de Windows Installer](screenshots/fr/more-space.png)
 
 **Mon PC dans le temps** : la durée de démarrage, l'espace libre et les programmes au démarrage, comparés au premier jour.
 
@@ -181,9 +190,9 @@ Tous les écrans de YSO en français. Les images sont faites par les tests autom
 
 ![Applications préinstallées : les habituelles cochées, et le bouton pour retirer ce qui est coché](screenshots/fr/preinstalled.png)
 
-**Extensions de navigateur** : chaque extension et ce qu'elle peut faire.
+**Navigateurs** : chaque extension et ce qu'elle peut faire, puis le moteur de recherche, les sites autorisés à envoyer des notifications et les stratégies définies par un programme.
 
-![Extensions de navigateur : chaque extension avec son navigateur, son état et ce qu'elle peut faire](screenshots/fr/extensions.png)
+![Navigateurs : chaque extension avec son navigateur, son état et ce qu'elle peut faire](screenshots/fr/extensions.png)
 
 **Aide** : chaque outil expliqué, ce qu'il fait, ce qu'il change et comment l'annuler. Les mêmes textes que le [guide](GUIDE.fr.md).
 
