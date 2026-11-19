@@ -1,0 +1,34 @@
+name: Blender medians
+
+# The reference results of the PC passport (40): the median Blender Benchmark score of each processor
+# and graphics card, made every week from the public Blender Open Data snapshot (CC0) and committed
+# as data/blender-medians.json, which YSO downloads during the deep test.
+on:
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['tests/tools/build-blender-medians.py']
+
+permissions:
+  contents: read
+
+jobs:
+  medians:
+    name: Build the medians from Blender Open Data
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      - name: Build data/blender-medians.json
+        run: python3 tests/tools/build-blender-medians.py data/blender-medians.json
+      - name: Commit it when it changed
+        run: |
+          if git diff --quiet -- data/blender-medians.json; then echo "No change."; exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/blender-medians.json
+          git commit -m "Blender Open Data medians, $(date -u +%Y-%m-%d)"
+          git push origin HEAD:main

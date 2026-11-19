@@ -104,8 +104,9 @@ $g = @(Get-PrivacyGroups)
 Check (@($g | Where-Object { $_.Id -eq 'recall' }).Count -eq 1) 'and offered on 24H2'
 $vals = @($g | ForEach-Object { $_.Values } )
 Check (@($vals | Where-Object { @($_).Count -ne 4 -or "$($_[2])" -notmatch '^[01]$' -or "$($_[0])" -notmatch '^HK(CU|LM):\\' }).Count -eq 0) "every value: key, name, 0 or 1, default ($($vals.Count) values)"
-Check (@($vals | Where-Object { "$($_[0])\$($_[1])" -match 'Defender|WindowsUpdate|WindowsStore|Spynet' }).Count -eq 0) 'nothing about Defender, Windows Update or the Store'
-Check ((@($g | Where-Object { $_.Recommended } | ForEach-Object { $_.Id }) -join ',') -eq 'ads,lock,bing,tracking') 'the recommended ones: ads, lock screen, Bing, ad tracking'
+Check (@($vals | Where-Object { "$($_[0])\$($_[1])" -match 'Defender|WindowsUpdate|WindowsStore|Spynet' -and $_[1] -ne 'PUAProtection' }).Count -eq 0) 'nothing about Defender (but blocking unwanted apps), Windows Update or the Store'
+Check ((@($vals | Where-Object { "$($_[0])" -match 'Defender' } | ForEach-Object { "$($_[1])=$($_[2])" }) -join ',') -eq 'PUAProtection=1') 'of Defender, only PUAProtection = 1 (block unwanted apps)'
+Check ((@($g | Where-Object { $_.Recommended } | ForEach-Object { $_.Id }) -join ',') -eq 'ads,lock,bing,tracking,pua') 'the recommended ones: ads, lock screen, Bing, ad tracking, unwanted apps'
 $script:Reg.Clear()
 $cdm = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'
 Set-FakeReg $cdm 'SoftLandingEnabled' 1
@@ -130,7 +131,7 @@ $script:Reg.Clear(); Remove-Item -LiteralPath $script:JournalPath -Force
 Answer @('R', 'A', 'y', 'n')
 [void](Show-PrivacySettings 6>&1)
 $on = @($g | Where-Object { Test-PrivacyGroup $_ } | ForEach-Object { $_.Id }) -join ','
-Check ($on -eq 'ads,lock,bing,tracking') "Tick the recommended ones: exactly those ($on)"
+Check ($on -eq 'ads,lock,bing,tracking,pua') "Tick the recommended ones: exactly those ($on)"
 $r = Undo-ChangeEntry @(Read-ChangeJournal)[-1]
 Check ($r.Failed -eq 0 -and $script:Reg.Count -eq 0) 'and Undo leaves the registry exactly as it was'
 $script:DryRun = $true

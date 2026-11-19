@@ -36,7 +36,7 @@ What each tool does, what it changes, and how to undo it. The same guide is in Y
 - [Apps & privacy](#apps--privacy)
   - [30. Privacy & ads (Windows, Edge, Copilot)](#30-privacy--ads-windows-edge-copilot)
   - [31. Uninstall apps (and their leftovers)](#31-uninstall-apps-and-their-leftovers)
-  - [39. Browser extensions](#39-browser-extensions)
+  - [39. Browsers (extensions, search)](#39-browsers-extensions-search)
   - [32. Undo YSO changes](#32-undo-yso-changes)
 - [Diagnose & repair](#diagnose--repair)
   - [19. System health report](#19-system-health-report)
@@ -49,6 +49,7 @@ What each tool does, what it changes, and how to undo it. The same guide is in Y
   - [26. Repair Windows files (DISM + SFC)](#26-repair-windows-files-dism--sfc)
   - [35. My PC over time](#35-my-pc-over-time)
   - [36. Disk speed & temperature](#36-disk-speed--temperature)
+  - [40. PC passport (health of each part)](#40-pc-passport-health-of-each-part)
 - [Space & updates](#space--updates)
   - [27. Space finder (what fills my disk?)](#27-space-finder-what-fills-my-disk)
   - [28. Updates: apps & drivers](#28-updates-apps--drivers)
@@ -88,9 +89,9 @@ YSO looks after Windows: it frees space, checks the health of the PC, installs u
 
 ### What YSO never touches
 
-YSO never deletes your passwords, cookies, browsing history, bookmarks, site data, messages, Downloads, Documents, browser extensions or game files. Files in use are skipped, recent temporary files are kept (24 hours by default), folder links are never followed, and system folders are refused.
+YSO never deletes your passwords, cookies, browsing history, bookmarks, site data, messages, Downloads, Documents, browser extensions or game files. The only files of yours it can delete are the build folders of code projects you tick yourself (34). Files in use are skipped, recent temporary files are kept (24 hours by default), folder links are never followed, and system folders are refused.
 
-**What changes.** What cannot be undone is always asked separately: emptying the Recycle Bin, old driver versions, Windows.old, old restore points, a network reset. Full maintenance and driver updates create a restore point first.
+**What changes.** What cannot be undone is always asked separately: emptying the Recycle Bin, old driver versions, old copies of Windows updates, Windows.old, old restore points, the files of an account not used for 6 months, a network reset. Full maintenance and driver updates create a restore point first.
 
 **To undo it.** In Settings (O) you can list folders YSO must never touch. Started with -DryRun, YSO is in analyze-only mode: it shows everything and changes nothing. Each session is written to C:\ProgramData\YSO\Logs.
 
@@ -272,9 +273,9 @@ For older or slower PCs: switches off animations, transparency, shadows and fadi
 
 ### 30. Privacy & ads (Windows, Edge, Copilot)
 
-Switches off, with tick boxes: ads and suggestions in Windows, tips on the lock screen, web results (Bing) in the Start menu search, ad tracking, diagnostic data and activity history, Copilot, Recall and Click to Do, the AI features of Edge, Notepad and Paint, and ads in Edge.
+Switches off, with tick boxes: ads and suggestions in Windows, tips on the lock screen, web results (Bing) in the Start menu search, ad tracking, unwanted apps that come with downloads (Defender and Edge block them), diagnostic data and activity history, Copilot, Recall and Click to Do, the AI features of Edge, Notepad and Paint, and ads in Edge.
 
-**What changes.** These are the settings Windows and Edge offer for it. Some are policies: Windows or Edge then shows "managed by your organization", which is normal. Some changes show after you sign out. Defender, Windows Update and the Store are never touched.
+**What changes.** These are the settings Windows and Edge offer for it. Some are policies: Windows or Edge then shows "managed by your organization", which is normal. Some changes show after you sign out. Windows Update and the Store are never touched; of Defender, only the blocking of unwanted apps.
 
 **To undo it.** Untick a line and Apply to get the Windows default back, or use Undo YSO changes (32) for the exact previous state.
 
@@ -299,13 +300,13 @@ Lists your desktop apps with their size and when they were last used. YSO starts
 3. Follow the window of its uninstaller to the end.
 4. Among the leftovers, untick what you want to keep, then click Remove the ticked ones.
 
-### 39. Browser extensions
+### 39. Browsers (extensions, search)
 
-Lists the extensions of Chrome, Edge, Brave, Vivaldi, Opera and Firefox, whether each one is on, and what it may do: read and change every site, see your browsing, or little. Extensions that do not come from the store are flagged.
+Looks at your browsers: the extensions of Chrome, Edge, Brave, Vivaldi, Opera and Firefox and what each one may do, the default search engine, the sites allowed to send notifications, and the policies a program set (extensions installed by force, a search engine or home page you cannot change).
 
-**What changes.** Nothing is changed. An extension that can read every site sees what you type there, passwords included: keep only the ones you know and use.
+**What changes.** Nothing is changed. An extension that can read every site sees what you type there, passwords included. Pop-ups near the clock that say "you have a virus" usually come from a site allowed to send notifications. An unknown search engine or policy often comes from adware.
 
-**To undo it.** Nothing to undo. To remove an extension, open the extensions page of the browser.
+**To undo it.** Nothing to undo. Remove an extension or a notification site from the browser's own settings; YSO says where.
 
 ### 32. Undo YSO changes
 
@@ -319,9 +320,9 @@ Every setting YSO changes is written down first, with what it was before: startu
 
 ### 19. System health report
 
-Everything about the PC in one report: Windows and hardware, disk space and wear, battery capacity, Windows Update, recent crashes, security and drivers. For each problem, an arrow shows the tool that helps.
+Everything about the PC in one report: Windows and how long it gets security updates, hardware, disk space and wear, battery capacity, Windows Update, recent crashes, Windows' stability index, what woke the PC from sleep, security and drivers. It also says when the memory runs slower than it is made for, or when one memory stick works alone. For each problem, an arrow shows the tool that helps.
 
-**What changes.** Nothing is changed. It can make Windows' detailed battery report, which opens in your browser, and a one-page PDF of the report on your Desktop, to send to someone who helps you (no user name, PC name or file name in it).
+**What changes.** Nothing is changed. It can make Windows' detailed battery report and, on laptops with modern standby, the sleep report (what used the battery while asleep); both open in your browser. It can also save a one-page PDF of the report on your Desktop, to send to someone who helps you (no user name, PC name or file name in it).
 
 **To undo it.** Nothing to undo.
 
@@ -335,9 +336,9 @@ Shows the recent blue screens, app crashes and serious errors from Windows' logs
 
 ### 21. Security check & Defender scan
 
-Checks the antivirus, the firewall and Windows Update. With Microsoft Defender, it can update the virus definitions and run a quick scan (5 to 15 minutes).
+Checks the antivirus, the firewall, Windows Update, how long this version of Windows gets security updates, and the Secure Boot certificates (the 2011 ones expired in 2026). Then it looks for what scams and malware leave behind: remote access apps (AnyDesk, TeamViewer...), commands pasted in Win+R that download something (fake "I am not a robot" pages), a hosts file that blocks security sites or sends a site elsewhere, and a proxy. With Microsoft Defender, it can update the virus definitions and run a quick scan (5 to 15 minutes).
 
-**What changes.** Only Defender's own update and scan: no setting is changed.
+**What changes.** Only Defender's own update and scan: no setting is changed. Each finding can also be normal (a remote app you use, a proxy at work): what matters is whether you set it up yourself.
 
 **To undo it.** Nothing to undo.
 
@@ -397,6 +398,21 @@ Shows each drive with its type, temperature, wear and hours of use, and tests th
 
 **To undo it.** Nothing to undo.
 
+### 40. PC passport (health of each part)
+
+The precise state of each part of the PC, with a score out of 100 and a grade (A to D): drives, battery, processor, memory, graphics card, screen and devices. Each score comes from measures, not from a guess: what the part reports about itself (the drive's wear, the battery's capacity), the hardware errors Windows recorded in 90 days, and tests that load the part and check every result.
+
+**What changes.** Quick (2 minutes) only reads. Complete (20 minutes) adds the processor under load for 10 minutes with every computation checked core by core, a read of each drive and guided tests (screen, keyboard, sound, microphone, webcam, ports). Deep (50 minutes) adds the Blender Benchmark, compared with the median of the same model on Blender Open Data, and a test of the video memory (memtest_vulkan); it downloads them first. No chip measures its own wear, so a score has a margin: about 5 points for one passport, 2 to 3 points between two passports of the same PC. Each passport stays on this PC and can be saved as a PDF on your Desktop: full serial numbers for a professional, shortened ones for a listing.
+
+**To undo it.** Nothing to undo: the tests change nothing. The tools the deep test downloads (a few hundred MB) are kept for the next one.
+
+**Step by step:**
+
+1. Plug a laptop in and close your other apps.
+2. Choose Quick, Complete or Deep, and answer the guided tests.
+3. Save the PDF for a professional or for a listing.
+4. Run a passport again in a few months: it shows what changed since the first one.
+
 ## Space & updates
 
 ### 27. Space finder (what fills my disk?)
@@ -440,19 +456,19 @@ The disk of a virtual machine is one big file on your PC (.vdi for VirtualBox, .
 
 ### 33. More space from Windows
 
-Settings of Windows itself that give space back: Compact OS (Windows compresses its own files, 2 to 4 GB), the space Windows keeps for updates (about 7 GB), the space restore points may use, OneDrive files not opened for 60 days, and a search index that grew too big.
+Settings and leftovers of Windows that give space back: Compact OS (Windows compresses its own files, 2 to 4 GB), the space Windows keeps for updates (about 7 GB), the space restore points may use, OneDrive files not opened for 60 days, a search index that grew too big, old copies of Windows updates (WinSxS), old driver versions, parts of Windows you do not use, accounts nobody used for 6 months, and the size of the Windows Installer cache.
 
-**What changes.** Each line says what it costs before YSO asks: a little more processor work for Compact OS, a big update that may wait for free space, the oldest restore points deleted to fit the limit, OneDrive files that need internet to open, a search that finds only part of your files for a few hours.
+**What changes.** Each line says what it costs before YSO asks: a little more processor work for Compact OS, a big update that may wait for free space, the oldest restore points deleted to fit the limit, OneDrive files that need internet to open, a search that finds only part of your files for a few hours, updates and drivers you can no longer go back to. For an unused account, YSO asks one by one and shows its size and last use. The Installer cache is only shown: Windows needs it.
 
-**To undo it.** Compact OS, the reserved space and the restore point limit: Undo YSO changes (32). A OneDrive file: right-click it, Always keep on this device. The index builds itself again.
+**To undo it.** Compact OS, the reserved space, the restore point limit and the parts of Windows: Undo YSO changes (32). A OneDrive file: right-click it, Always keep on this device. The index builds itself again. Old updates, old drivers and an account's files cannot be put back.
 
 ### 34. Files you might not need
 
-Shows your own files that often take space for nothing: installers and disk images in Downloads not touched for 30 days, iPhone and iPad backups, and files that are there twice (same content) in Desktop, Documents, Downloads, Pictures, Videos and Music.
+Shows your own files that often take space for nothing: installers and disk images in Downloads not touched for 30 days, iPhone and iPad backups, files that are there twice (same content) in Desktop, Documents, Downloads, Pictures, Videos and Music, build folders of code projects (node_modules, target, bin and obj...), the photos and videos of WhatsApp for PC and the cache of Telegram for PC.
 
-**What changes.** Nothing is deleted: a click shows the file in File Explorer, and you decide there. OneDrive files that are online only are never read, so nothing is downloaded.
+**What changes.** Only the build folders can be deleted here, with tick boxes: those of projects not changed for 90 days are ticked, and the project's own tool (npm install, cargo build, dotnet build...) makes them again. Everything else is shown only: a click opens it in File Explorer, and you decide there. OneDrive files that are online only are never read.
 
-**To undo it.** Nothing to undo. A file you delete in File Explorer goes to the Recycle Bin.
+**To undo it.** A build folder comes back the next time you build the project. A file you delete in File Explorer goes to the Recycle Bin.
 
 ## One-click
 

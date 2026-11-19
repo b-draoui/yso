@@ -36,7 +36,7 @@ Ce que fait chaque outil, ce qu'il change, et comment l'annuler. Le même guide 
 - [Applications et vie privée](#applications-et-vie-privée)
   - [30. Vie privée, publicités (Windows, Edge, Copilot)](#30-vie-privée-publicités-windows-edge-copilot)
   - [31. Désinstaller des applications (et leurs restes)](#31-désinstaller-des-applications-et-leurs-restes)
-  - [39. Extensions de navigateur](#39-extensions-de-navigateur)
+  - [39. Navigateurs (extensions, recherche)](#39-navigateurs-extensions-recherche)
   - [32. Annuler les modifications de YSO](#32-annuler-les-modifications-de-yso)
 - [Diagnostic et réparation](#diagnostic-et-réparation)
   - [19. Rapport de santé du système](#19-rapport-de-santé-du-système)
@@ -49,6 +49,7 @@ Ce que fait chaque outil, ce qu'il change, et comment l'annuler. Le même guide 
   - [26. Réparer les fichiers Windows (DISM + SFC)](#26-réparer-les-fichiers-windows-dism--sfc)
   - [35. Mon PC dans le temps](#35-mon-pc-dans-le-temps)
   - [36. Vitesse et température des disques](#36-vitesse-et-température-des-disques)
+  - [40. Passeport du PC (santé de chaque composant)](#40-passeport-du-pc-santé-de-chaque-composant)
 - [Espace & mises à jour](#espace--mises-à-jour)
   - [27. Explorateur d'espace (qui remplit le disque ?)](#27-explorateur-despace-qui-remplit-le-disque-)
   - [28. Mises à jour : applis & pilotes](#28-mises-à-jour--applis--pilotes)
@@ -88,9 +89,9 @@ YSO entretient Windows : il libère de l'espace, vérifie la santé du PC, insta
 
 ### Ce que YSO ne touche jamais
 
-YSO ne supprime jamais vos mots de passe, cookies, historique, favoris, données de sites, messages, Téléchargements, Documents, extensions de navigateur ni fichiers de jeux. Les fichiers utilisés sont ignorés, les fichiers temporaires récents sont gardés (24 heures par défaut), les liens de dossiers ne sont jamais suivis, et les dossiers du système sont refusés.
+YSO ne supprime jamais vos mots de passe, cookies, historique de navigation, favoris, données de sites, messages, Téléchargements, Documents, extensions de navigateur ni fichiers de jeux. Les seuls fichiers à vous qu'il peut supprimer sont les dossiers de build des projets de code que vous cochez vous-même (34). Les fichiers utilisés sont sautés, les fichiers temporaires récents sont gardés (24 heures par défaut), les liens de dossiers ne sont jamais suivis, et les dossiers système sont refusés.
 
-**Ce qui change.** Ce qui ne peut pas être annulé est toujours demandé à part : vider la Corbeille, les anciennes versions de pilotes, Windows.old, les anciens points de restauration, la réinitialisation du réseau. L'Entretien complet et les mises à jour de pilotes créent d'abord un point de restauration.
+**Ce qui change.** Ce qui ne peut pas être annulé est toujours demandé à part : vider la Corbeille, les anciennes versions de pilotes, les anciennes copies des mises à jour de Windows, Windows.old, les anciens points de restauration, les fichiers d'un compte inutilisé depuis 6 mois, une réinitialisation réseau. La maintenance complète et les mises à jour de pilotes créent d'abord un point de restauration.
 
 **Pour annuler.** Dans les Paramètres (O), vous pouvez donner des dossiers que YSO ne doit jamais toucher. Lancé avec -DryRun, YSO est en mode analyse seule : il montre tout et ne change rien. Chaque session est notée dans C:\ProgramData\YSO\Logs.
 
@@ -272,9 +273,9 @@ Pour les PC anciens ou lents : désactive les animations, la transparence, les o
 
 ### 30. Vie privée, publicités (Windows, Edge, Copilot)
 
-Désactive, avec des cases à cocher : les publicités et suggestions de Windows, les conseils de l'écran de verrouillage, les résultats web (Bing) dans la recherche du menu Démarrer, le suivi publicitaire, les données de diagnostic et l'historique des activités, Copilot, Recall et Click to Do, les fonctions IA d'Edge, du Bloc-notes et de Paint, et les publicités d'Edge.
+Désactive, avec des cases à cocher : les pubs et suggestions de Windows, les astuces de l'écran de verrouillage, les résultats web (Bing) dans la recherche du menu Démarrer, le suivi publicitaire, les applis indésirables qui viennent avec les téléchargements (Defender et Edge les bloquent), les données de diagnostic et l'historique d'activités, Copilot, Recall et Cliquer pour faire, les fonctions d'IA d'Edge, du Bloc-notes et de Paint, et les pubs d'Edge.
 
-**Ce qui change.** Ce sont les réglages que Windows et Edge prévoient pour cela. Certains sont des stratégies : Windows ou Edge affiche alors « géré par votre organisation », c'est normal. Certains changements apparaissent après une déconnexion. Defender, Windows Update et le Store ne sont jamais touchés.
+**Ce qui change.** Ce sont les réglages que Windows et Edge proposent pour cela. Certains sont des stratégies : Windows ou Edge affiche alors « géré par votre organisation », ce qui est normal. Certains changements apparaissent après la déconnexion. Windows Update et le Store ne sont jamais touchés ; de Defender, seulement le blocage des applis indésirables.
 
 **Pour annuler.** Décochez une ligne puis Appliquer pour revenir au réglage de Windows, ou utilisez Annuler les modifications de YSO (32) pour l'état exact d'avant.
 
@@ -299,13 +300,13 @@ Liste vos applications de bureau avec leur taille et leur dernière utilisation.
 3. Suivez la fenêtre de sa désinstallation jusqu'au bout.
 4. Parmi les restes, décochez ce que vous voulez garder, puis cliquez sur Supprimer ce qui est coché.
 
-### 39. Extensions de navigateur
+### 39. Navigateurs (extensions, recherche)
 
-Liste les extensions de Chrome, Edge, Brave, Vivaldi, Opera et Firefox, si chacune est activée, et ce qu'elle peut faire : lire et modifier tous les sites, voir votre navigation, ou peu de chose. Les extensions qui ne viennent pas du magasin sont signalées.
+Examine vos navigateurs : les extensions de Chrome, Edge, Brave, Vivaldi, Opera et Firefox et ce que chacune peut faire, le moteur de recherche par défaut, les sites autorisés à envoyer des notifications, et les stratégies qu'un programme a définies (extensions installées de force, moteur de recherche ou page d'accueil impossibles à changer).
 
-**Ce qui change.** Rien n'est modifié. Une extension qui peut lire tous les sites voit ce que vous y tapez, mots de passe compris : gardez seulement celles que vous connaissez et utilisez.
+**Ce qui change.** Rien n'est modifié. Une extension qui peut lire tous les sites voit ce que vous y tapez, mots de passe compris. Les fenêtres près de l'horloge qui disent « vous avez un virus » viennent en général d'un site autorisé à envoyer des notifications. Un moteur de recherche ou une stratégie inconnus viennent souvent d'un logiciel publicitaire.
 
-**Pour annuler.** Rien à annuler. Pour supprimer une extension, ouvrez la page des extensions du navigateur.
+**Pour annuler.** Rien à annuler. Retirez une extension ou un site de notifications dans les paramètres du navigateur ; YSO dit où.
 
 ### 32. Annuler les modifications de YSO
 
@@ -319,9 +320,9 @@ Chaque réglage modifié par YSO est d'abord noté, avec ce qu'il était avant :
 
 ### 19. Rapport de santé du système
 
-Tout le PC dans un seul rapport : Windows et matériel, espace et usure des disques, capacité de la batterie, Windows Update, plantages récents, sécurité et pilotes. Pour chaque problème, une flèche montre l'outil qui aide.
+Tout sur le PC dans un seul rapport : Windows et jusqu'à quand il reçoit les mises à jour de sécurité, le matériel, l'espace disque et l'usure, la capacité de la batterie, Windows Update, les plantages récents, l'indice de stabilité de Windows, ce qui a réveillé le PC, la sécurité et les pilotes. Il dit aussi quand la mémoire tourne moins vite que prévu, ou quand une seule barrette travaille seule. Pour chaque problème, une flèche montre l'outil qui aide.
 
-**Ce qui change.** Rien n'est modifié. Il peut créer le rapport détaillé de batterie de Windows, qui s'ouvre dans votre navigateur, et un PDF d'une page du rapport sur votre Bureau, à envoyer à quelqu'un qui vous aide (sans nom d'utilisateur, nom de PC ni nom de fichier).
+**Ce qui change.** Rien n'est modifié. Il peut créer le rapport détaillé de la batterie de Windows et, sur les portables à veille moderne, le rapport de veille (ce qui a utilisé la batterie pendant la veille) ; les deux s'ouvrent dans votre navigateur. Il peut aussi enregistrer un PDF d'une page du rapport sur votre Bureau, à envoyer à quelqu'un qui vous aide (sans nom d'utilisateur, nom de PC ni nom de fichier).
 
 **Pour annuler.** Rien à annuler.
 
@@ -335,9 +336,9 @@ Montre les écrans bleus, plantages d'applications et erreurs graves récents de
 
 ### 21. Sécurité et analyse Defender
 
-Vérifie l'antivirus, le pare-feu et Windows Update. Avec Microsoft Defender, il peut mettre à jour les définitions de virus et lancer une analyse rapide (5 à 15 minutes).
+Vérifie l'antivirus, le pare-feu, Windows Update, jusqu'à quand cette version de Windows reçoit les mises à jour de sécurité, et les certificats Secure Boot (ceux de 2011 ont expiré en 2026). Puis cherche ce que laissent les arnaques et les logiciels malveillants : applis d'accès à distance (AnyDesk, TeamViewer...), commandes collées dans Win+R qui téléchargent quelque chose (fausses pages « Je ne suis pas un robot »), un fichier hosts qui bloque des sites de sécurité ou envoie un site ailleurs, et un proxy. Avec Microsoft Defender, il peut mettre à jour les définitions de virus et lancer une analyse rapide (5 à 15 minutes).
 
-**Ce qui change.** Seulement la mise à jour et l'analyse de Defender : aucun réglage n'est modifié.
+**Ce qui change.** Seulement la mise à jour et l'analyse de Defender : aucun réglage n'est modifié. Chaque constat peut aussi être normal (une appli à distance que vous utilisez, un proxy au travail) : ce qui compte, c'est si vous l'avez mis en place vous-même.
 
 **Pour annuler.** Rien à annuler.
 
@@ -397,6 +398,21 @@ Montre chaque disque avec son type, sa température, son usure et ses heures d'u
 
 **Pour annuler.** Rien à annuler.
 
+### 40. Passeport du PC (santé de chaque composant)
+
+L'état précis de chaque composant du PC, avec une note sur 100 et un niveau (A à D) : disques, batterie, processeur, mémoire, carte graphique, écran et périphériques. Chaque note vient de mesures, pas d'une estimation : ce que le composant dit de lui-même (l'usure du disque, la capacité de la batterie), les erreurs matérielles que Windows a notées en 90 jours, et des tests qui chargent le composant et vérifient chaque résultat.
+
+**Ce qui change.** Rapide (2 minutes) ne fait que lire. Complet (20 minutes) ajoute le processeur en charge pendant 10 minutes avec chaque calcul vérifié cœur par cœur, une lecture de chaque disque et des tests guidés (écran, clavier, son, micro, webcam, ports). Approfondi (50 minutes) ajoute le Blender Benchmark, comparé à la médiane du même modèle sur Blender Open Data, et un test de la mémoire vidéo (memtest_vulkan) ; il les télécharge d'abord. Aucune puce ne mesure sa propre usure, donc une note a une marge : environ 5 points pour un passeport, 2 à 3 points entre deux passeports du même PC. Chaque passeport reste sur ce PC et peut être enregistré en PDF sur votre Bureau : numéros de série complets pour un professionnel, raccourcis pour une annonce.
+
+**Pour annuler.** Rien à annuler : les tests ne modifient rien. Les outils que télécharge le test approfondi (quelques centaines de Mo) sont gardés pour le prochain.
+
+**Étape par étape:**
+
+1. Branchez le portable et fermez vos autres applications.
+2. Choisissez Rapide, Complet ou Approfondi, et répondez aux tests guidés.
+3. Enregistrez le PDF pour un professionnel ou pour une annonce.
+4. Refaites un passeport dans quelques mois : il montre ce qui a changé depuis le premier.
+
 ## Espace & mises à jour
 
 ### 27. Explorateur d'espace (qui remplit le disque ?)
@@ -440,19 +456,19 @@ Le disque d'une machine virtuelle est un seul gros fichier sur votre PC (.vdi po
 
 ### 33. Plus d'espace venant de Windows
 
-Des réglages de Windows lui-même qui rendent de la place : Compact OS (Windows compresse ses propres fichiers, 2 à 4 Go), l'espace que Windows garde pour les mises à jour (environ 7 Go), l'espace que peuvent prendre les points de restauration, les fichiers OneDrive pas ouverts depuis 60 jours, et un index de recherche devenu trop gros.
+Réglages et restes de Windows qui rendent de la place : Compact OS (Windows compresse ses propres fichiers, 2 à 4 Go), l'espace que Windows garde pour les mises à jour (environ 7 Go), l'espace que peuvent prendre les points de restauration, les fichiers OneDrive pas ouverts depuis 60 jours, un index de recherche devenu trop gros, les anciennes copies des mises à jour de Windows (WinSxS), les anciennes versions de pilotes, les composants de Windows inutilisés, les comptes que personne n'a utilisés depuis 6 mois, et la taille du cache de Windows Installer.
 
-**Ce qui change.** Chaque ligne dit ce qu'elle coûte avant que YSO demande : un peu plus de travail pour le processeur avec Compact OS, une grosse mise à jour qui peut attendre de la place libre, les plus vieux points de restauration supprimés pour tenir dans la limite, des fichiers OneDrive qui demandent internet pour s'ouvrir, une recherche qui ne trouve qu'une partie de vos fichiers pendant quelques heures.
+**Ce qui change.** Chaque ligne dit ce qu'elle coûte avant que YSO ne demande : un peu plus de travail du processeur pour Compact OS, une grosse mise à jour qui peut attendre de la place libre, les plus anciens points de restauration supprimés pour tenir dans la limite, des fichiers OneDrive qui demandent Internet pour s'ouvrir, une recherche qui ne trouve qu'une partie de vos fichiers pendant quelques heures, des mises à jour et des pilotes vers lesquels on ne peut plus revenir. Pour un compte inutilisé, YSO demande un par un et montre sa taille et sa dernière utilisation. Le cache de Windows Installer est seulement affiché : Windows en a besoin.
 
-**Pour annuler.** Compact OS, l'espace réservé et la limite des points de restauration : Annuler les modifications de YSO (32). Un fichier OneDrive : clic droit dessus, Toujours conserver sur cet appareil. L'index se reconstruit tout seul.
+**Pour annuler.** Compact OS, l'espace réservé, la limite des points de restauration et les composants de Windows : Annuler les modifications de YSO (32). Un fichier OneDrive : clic droit, Toujours conserver sur cet appareil. L'index se reconstruit tout seul. Les anciennes mises à jour, les anciens pilotes et les fichiers d'un compte ne peuvent pas être remis.
 
 ### 34. Fichiers peut-être inutiles
 
-Montre vos propres fichiers qui prennent souvent de la place pour rien : installeurs et images disque dans Téléchargements pas touchés depuis 30 jours, sauvegardes d'iPhone et d'iPad, et fichiers en double (même contenu) dans Bureau, Documents, Téléchargements, Images, Vidéos et Musique.
+Montre vos propres fichiers qui prennent souvent de la place pour rien : installateurs et images disque dans Téléchargements non touchés depuis 30 jours, sauvegardes d'iPhone et d'iPad, fichiers en double (même contenu) dans Bureau, Documents, Téléchargements, Images, Vidéos et Musique, dossiers de build des projets de code (node_modules, target, bin et obj...), les photos et vidéos de WhatsApp pour PC et le cache de Telegram pour PC.
 
-**Ce qui change.** Rien n'est supprimé : un clic montre le fichier dans l'Explorateur de fichiers, et vous décidez là. Les fichiers OneDrive disponibles en ligne uniquement ne sont jamais lus, donc rien n'est téléchargé.
+**Ce qui change.** Seuls les dossiers de build peuvent être supprimés ici, avec des cases à cocher : ceux des projets non modifiés depuis 90 jours sont cochés, et l'outil du projet (npm install, cargo build, dotnet build...) les recrée. Tout le reste est seulement affiché : un clic l'ouvre dans l'Explorateur de fichiers, et vous décidez là. Les fichiers OneDrive uniquement en ligne ne sont jamais lus.
 
-**Pour annuler.** Rien à annuler. Un fichier que vous supprimez dans l'Explorateur de fichiers va dans la Corbeille.
+**Pour annuler.** Un dossier de build revient à la prochaine compilation du projet. Un fichier supprimé dans l'Explorateur de fichiers va dans la Corbeille.
 
 ## En un clic
 

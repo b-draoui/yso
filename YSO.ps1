@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    YSO - Your System Optimizer 1.0.2: a Windows cleaner, health check, updater and maintenance tool.
+    YSO - Your System Optimizer 1.0.3: a Windows cleaner, health check, updater and maintenance tool.
 
 .DESCRIPTION
     One PowerShell script with a window (WPF). English by default; French in Settings.
@@ -188,7 +188,7 @@ function N([string]$Text) { return $Text }   # marks text that is translated lat
 # ==================================================================
 #  Settings & state
 # ==================================================================
-$script:Version       = '1.0.2'
+$script:Version       = '1.0.3'
 $script:DataDir       = Join-Path $env:ProgramData 'YSO'
 $script:LogDir        = Join-Path $script:DataDir 'Logs'
 $script:SettingsPath  = Join-Path $script:DataDir 'settings.json'
@@ -235,7 +235,7 @@ $script:StopSignal    = $null    # set by the window: a shared table whose 'Stop
 $script:LastRun       = $null    # what the last option did (status, results, free space): read by the window
 $script:GuiFailure    = ''       # why the window could not open (shown before the console menu opens instead)
 # Every key of the menu that runs an option (Invoke-MenuOption); M, L and Q only change the menu itself.
-$script:MenuKeys      = @(@(1..39 | ForEach-Object { "$_" }) + @('A', 'F', 'R', 'S', 'H', 'T', 'P', 'O', 'G'))
+$script:MenuKeys      = @(@(1..40 | ForEach-Object { "$_" }) + @('A', 'F', 'R', 'S', 'H', 'T', 'P', 'O', 'G'))
 $script:HealthCache   = $null
 $script:DetectedApps  = @()
 $script:DryRun        = [bool]$DryRun
@@ -306,6 +306,14 @@ $script:DeviceProblems = @{
     39 = (N 'driver missing or corrupted');        43 = (N 'stopped by Windows after reporting problems')
     48 = (N 'blocked: known compatibility problem'); 52 = (N 'driver signature cannot be verified')
 }
+
+$script:BlenderMediansUrl = 'https://raw.githubusercontent.com/b-draoui/yso/main/data/blender-medians.json'
+$script:BlenderLauncherUrls = @(
+    'https://download.blender.org/release/BlenderBenchmark2.0/launcher/benchmark-launcher-cli-3.3.0-windows.zip',
+    'https://download.blender.org/release/BlenderBenchmark2.0/launcher/benchmark-launcher-cli-3.2.0-windows.zip',
+    'https://download.blender.org/release/BlenderBenchmark2.0/launcher/benchmark-launcher-cli-3.1.0-windows.zip')
+$script:MemtestRelease = 'https://api.github.com/repos/GpuZelenograd/memtest_vulkan/releases/tags/v0.5.0'
+$script:BlenderScenes = @('monster', 'junkshop', 'classroom')
 
 # ==================================================================
 #  UI helpers (all of them translate the text they are given)
@@ -2390,6 +2398,92 @@ function New-HealthItem([string]$Name, [string]$Level, [string]$Text, [string]$A
     return [pscustomobject]@{ Name = $Name; Level = $Level; Text = $Text; Action = $Action }
 }
 
+function Get-WindowsSupportTable {
+    # End of security updates for each Windows 11 version, from Microsoft's lifecycle pages:
+    # @(Home and Pro, Enterprise and Education). '' = not published yet.
+    return @{
+        '21H2' = @('2023-10-10', '2024-10-08'); '22H2' = @('2024-10-08', '2025-10-14'); '23H2' = @('2025-11-11', '2026-11-10')
+        '24H2' = @('2026-10-13', '2027-10-12'); '25H2' = @('2027-10-12', '2028-10-10'); '26H1' = @('2028-03-14', '2029-03-13')
+        '26H2' = @('2028-10-10', '')
+    }
+}
+
+function Get-WindowsSupportState($Info = $null, $Today = $null) {
+    # Until when this Windows gets security updates: End (date or $null), Level, Text.
+    # $Info (Build, Version, Edition) and $Today are given by the tests; otherwise read from Windows.
+    if (-not $Info) {
+        $cv = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction SilentlyContinue
+        if (-not $cv) { return $null }
+        $b = 0; [void][int]::TryParse("$($cv.CurrentBuild)", [ref]$b)
+        $Info = [pscustomobject]@{ Build = $b; Version = "$($cv.DisplayVersion)"; Edition = "$($cv.EditionID)" }
+    }
+    $now = $(if ($Today) { [datetime]$Today } else { (Get-Date).Date })
+    $ver = "$($Info.Version)".ToUpperInvariant()
+    $ed = "$($Info.Edition)"
+    $ltsc = ($ed -match '^(IoT)?EnterpriseS')
+    $iot = ($ed -like 'IoT*')
+    $ent = (-not $ltsc) -and ($ed -match '^(Enterprise|Education|IoTEnterprise)(N|G|K)?$' -or $ed -eq 'ServerRdsh')
+    $end = ''
+    if ($ltsc) {
+        $lt = @{ 14393 = @('2026-10-13', '2026-10-13'); 17763 = @('2029-01-09', '2029-01-09'); 19044 = @('2027-01-12', '2032-01-13'); 26100 = @('2029-10-09', '2034-10-10') }
+        if ($lt.ContainsKey([int]$Info.Build)) { $end = $lt[[int]$Info.Build][$(if ($iot) { 1 } else { 0 })] }
+        $name = N 'long-term edition (LTSC)'
+    } elseif ([int]$Info.Build -ge 22000) {
+        $t = Get-WindowsSupportTable
+        if ($t.ContainsKey($ver)) { $end = $t[$ver][$(if ($ent) { 1 } else { 0 })] }
+        $name = L 'version {0}' $ver
+    } else {
+        # Windows 10: support ended on 14 October 2025. Extended Security Updates (ESU) go on for PCs enrolled in them.
+        $esuEnd = [datetime]'2027-10-12'
+        if ($ver -eq '22H2' -and $now -le $esuEnd) {
+            return [pscustomobject]@{ End = $esuEnd; Level = 'Warn'; Esu = $true
+                Text = (L 'Windows 10: support ended in October 2025. Security updates go on until {0} only if this PC is enrolled in Extended Security Updates (Settings > Windows Update).' $esuEnd.ToString('d')) }
+        }
+        return [pscustomobject]@{ End = $null; Level = 'Bad'; Esu = $false; Text = (L 'Windows 10 {0}: no more security updates. Windows 11, or Extended Security Updates for Windows 10 22H2, keeps it protected.' $ver) }
+    }
+    if (-not $end) {
+        if ($ltsc -or [int]$Info.Build -ge 26200) { return [pscustomobject]@{ End = $null; Level = 'Good'; Esu = $false; Text = (L '{0}: gets security updates' $name) } }
+        return $null
+    }
+    $e = [datetime]$end
+    $days = ($e - $now).TotalDays
+    if ($days -lt 0) { return [pscustomobject]@{ End = $e; Level = 'Bad'; Esu = $false; Text = (L '{0}: security updates ended on {1}. Settings > Windows Update offers the newer version.' $name $e.ToString('d')) } }
+    if ($days -le 90) { return [pscustomobject]@{ End = $e; Level = 'Warn'; Esu = $false; Text = (L '{0}: security updates end on {1}. Install the newer version from Settings > Windows Update.' $name $e.ToString('d')) } }
+    return [pscustomobject]@{ End = $e; Level = 'Good'; Esu = $false; Text = (L '{0}: security updates until {1}' $name $e.ToString('d')) }
+}
+
+function Get-SecureBootCertState {
+    # Microsoft's 2011 Secure Boot certificates expired in 2026; Windows Update puts the 2023 ones in the firmware.
+    # 'updated', 'progress' (Windows is doing it), 'old', or $null when Secure Boot cannot be read.
+    $status = "$((Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing' -Name UEFICA2023Status -ErrorAction SilentlyContinue).UEFICA2023Status)"
+    $has = $null
+    try { $has = ([System.Text.Encoding]::ASCII.GetString((Get-SecureBootUEFI -Name db -ErrorAction Stop).Bytes) -match 'Windows UEFI CA 2023') } catch { }
+    if ($status -eq 'InProgress') { return 'progress' }
+    if ($has -eq $true -or $status -eq 'Updated') { return 'updated' }
+    if ($has -eq $false) { return 'old' }
+    return $null
+}
+
+function Get-WakeSources([int]$Days = 7) {
+    # What woke the PC from sleep, from Windows' own log (Power-Troubleshooter), most frequent first.
+    $ev = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Power-Troubleshooter'; Id = 1; StartTime = (Get-Date).AddDays(-$Days) })
+    $names = @(foreach ($e in $ev) {
+        $t = "$((Get-EventFields $e)['WakeSourceText'])".Trim()
+        if ($t) { $t } else { L 'unknown' }
+    })
+    return @($names | Group-Object | Sort-Object Count -Descending | ForEach-Object { [pscustomobject]@{ Name = $_.Name; Count = $_.Count } })
+}
+
+function Get-MemoryAdvice($Memory) {
+    # Advice on the RAM from what it says about itself: slower than it is made for, or one stick only.
+    $out = @()
+    if (-not $Memory) { return $out }
+    $slow = @($Memory.Sticks | Where-Object { $_.Rated -gt 0 -and $_.Speed -gt 0 -and $_.Speed -lt 0.9 * $_.Rated }) | Select-Object -First 1
+    if ($slow) { $out += L 'The memory runs at {0} MT/s, below the {1} it is made for. The processor may not allow more; otherwise the memory profile in the BIOS (XMP or EXPO) sets it to full speed.' $slow.Speed $slow.Rated }
+    if ($Memory.Single) { $out += N 'One memory stick only: a second identical one (dual channel) doubles the memory bandwidth, which games and built-in graphics feel.' }
+    return $out
+}
+
 function Get-HealthItems {
     # The state of the PC in a few lines - data only, so the console and a graphical interface show
     # the same thing. Each check stands alone: one that fails never hides the others.
@@ -2480,6 +2574,10 @@ function Get-HealthItems {
         $up = (Get-Date) - (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime
         if ($up.TotalDays -gt 14) { $items.Add((New-HealthItem (N 'Restart') 'Warn' (L 'not restarted for {0} days - Restart (not Shut down) once in a while' ([int]$up.TotalDays)))) }
     } catch { }
+    try {
+        $ws = Get-WindowsSupportState
+        if ($ws -and $ws.Level -ne 'Good') { $items.Add((New-HealthItem (N 'Windows support') $ws.Level $ws.Text '21')) }
+    } catch { }
     return $items
 }
 
@@ -2523,9 +2621,11 @@ function Show-HealthReport {
     Write-Kv 'Processor' ("$($cpu[0].Name)".Trim())
     Write-Kv 'CPU load'  "$cpuLoad %" $(if ($cpuLoad -gt 80) { 'Yellow' } else { 'Green' })
     Write-Kv 'Memory'    (L '{0} of {1} in use ({2} %)' (Format-Size ($ramTotal - $ramFree)) (Format-Size $ramTotal) $ramPct) $(if ($ramPct -gt 85) { 'Yellow' } else { 'Green' })
+    try { foreach ($t in @(Get-MemoryAdvice (Get-PassportMemory))) { Write-Info $t } } catch { }
     $upText = '{0}d {1}h {2}m' -f $uptime.Days, $uptime.Hours, $uptime.Minutes
     if ($uptime.TotalDays -gt 7) { $upText += '  ' + (L '- use Restart (not Shut down) once in a while') }
     Write-Kv 'Uptime' $upText $(if ($uptime.TotalDays -gt 7) { 'Yellow' } else { 'Green' })
+    try { $ws = Get-WindowsSupportState; if ($ws) { Write-Kv 'Windows support' $ws.Text (Get-LevelColor $ws.Level) } } catch { }
 
     Write-Section 'STORAGE'
     foreach ($v in @(Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveType -eq 'Fixed' -and $_.DriveLetter } | Sort-Object DriveLetter)) {
@@ -2578,7 +2678,14 @@ function Show-HealthReport {
     $errors = @(Get-EventsSafe @{ LogName = 'System'; Level = 1, 2; StartTime = (Get-Date).AddDays(-7) }).Count
     if ($script:LastEventError) { Write-Kv 'System errors (7 days)' (L 'could not be read') 'DarkGray' }
     else { Write-Kv 'System errors (7 days)' $errors $(if ($errors -gt 25) { 'Yellow' } else { 'Green' }) }
-    Write-Info 'Full security details: option 21. Crash details: option 20.'
+    $si = Get-StabilityIndex
+    if ($null -ne $si) { Write-Kv 'Stability index' (L '{0} / 10 (Windows'' own score, Reliability Monitor)' $si) $(if ($si -lt 5) { 'Red' } elseif ($si -lt 8) { 'Yellow' } else { 'Green' }) }
+    $wake = @(Get-WakeSources)
+    if ($wake.Count) {
+        Write-Kv 'What woke the PC (7 days)' (($wake | Select-Object -First 3 | ForEach-Object { '{0} ({1}x)' -f $_.Name, $_.Count }) -join ', ')
+        Write-Info 'A mouse or a network card that wakes the PC at night: Device Manager > the device > Power Management > untick Allow this device to wake the computer.'
+    }
+    Write-Info 'Full security details: option 21. Crash details: option 20. Every part of the PC with a score: PC passport (40).'
 
     if (Test-IsLaptop) {
         $battery = @(Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue)
@@ -2600,6 +2707,12 @@ function Show-HealthReport {
             $out = Join-Path $script:LogDir 'battery-report.html'
             powercfg /batteryreport /output "$out" | Out-Null
             if (Test-Path -LiteralPath $out) { Start-Process explorer.exe -ArgumentList "`"$out`"" }
+        }
+        if (Confirm-Action 'Create a sleep report (what used the battery while the PC was asleep)?' $false) {
+            $out = Join-Path $script:LogDir 'sleep-report.html'
+            & powercfg.exe /sleepstudy /output "$out" 2>&1 | Out-Null
+            if (Test-Path -LiteralPath $out) { Start-Process explorer.exe -ArgumentList "`"$out`"" }
+            else { Write-Info 'This PC has no sleep report: it uses classic sleep, which Windows does not record this way.' }
         }
     }
     Write-Host ''
@@ -2708,6 +2821,7 @@ function Show-SecurityCheck {
     if ($null -ne $bitlocker) {
         Write-Kv (L 'Encryption of {0}' $env:SystemDrive) $(if ($bitlocker) { L 'ON (BitLocker)' } else { L 'OFF - files are readable if the PC is stolen' }) (Get-StatusColor $bitlocker 'Yellow')
     }
+    Write-SecurityExtras
 
     Write-Host ''
     Write-Option '1' 'Update virus definitions'
@@ -2733,6 +2847,148 @@ function Show-SecurityCheck {
             if ($script:Build -ge 15063) { Start-Process 'windowsdefender:' }
             else { Start-Process 'ms-settings:windowsdefender' }
         }
+    }
+}
+
+function Get-RemoteAccessApps {
+    # Programs that let someone else see and control the PC: fine when you set them up yourself,
+    # a classic of phone scams ("Microsoft support", "your bank") otherwise. Installed, running or as a service.
+    $known = @('AnyDesk', 'TeamViewer', 'RustDesk', 'UltraViewer', 'Supremo', 'ScreenConnect', 'ConnectWise Control', 'Splashtop', 'LogMeIn',
+        'GoTo Resolve', 'Atera', 'NinjaRMM', 'TightVNC', 'UltraVNC', 'RealVNC', 'Ammyy', 'AeroAdmin', 'Zoho Assist', 'Chrome Remote Desktop',
+        'DWService', 'SimpleHelp', 'Remote Utilities', 'HopToDesk', 'Getscreen', 'MeshAgent', 'Level Remote')
+    $procs = @{ anydesk = 'AnyDesk'; teamviewer = 'TeamViewer'; teamviewer_service = 'TeamViewer'; rustdesk = 'RustDesk'; ultraviewer_desktop = 'UltraViewer'
+        supremo = 'Supremo'; supremoservice = 'Supremo'; 'screenconnect.clientservice' = 'ScreenConnect'; remoting_host = 'Chrome Remote Desktop'
+        aa_v3 = 'Ammyy'; aeroadmin = 'AeroAdmin'; hoptodesk = 'HopToDesk'; tvnserver = 'TightVNC'; winvnc = 'UltraVNC'; vncserver = 'RealVNC'; meshagent = 'MeshAgent'; srservice = 'Splashtop' }
+    $found = [ordered]@{}
+    $add = { param($n) if (-not $found.Contains($n)) { $found[$n] = [pscustomobject]@{ Name = $n; Running = $false; AtStartup = $false } } }
+    foreach ($e in @(Get-UninstallEntries)) {
+        foreach ($k in $known) { if ("$($e.DisplayName)" -like "*$k*") { & $add $k } }
+    }
+    foreach ($p in @(Get-Process -ErrorAction SilentlyContinue)) {
+        $n = "$($p.ProcessName)".ToLowerInvariant()
+        if ($procs.ContainsKey($n)) { & $add $procs[$n]; $found[$procs[$n]].Running = $true }
+    }
+    try {
+        foreach ($s in @(Get-CimInstance -ClassName Win32_Service -ErrorAction Stop)) {
+            foreach ($k in $known) {
+                if ("$($s.Name) $($s.DisplayName)" -like "*$k*") {
+                    & $add $k
+                    if ("$($s.StartMode)" -eq 'Auto') { $found[$k].AtStartup = $true }
+                    if ("$($s.State)" -eq 'Running') { $found[$k].Running = $true }
+                }
+            }
+        }
+    } catch { }
+    return @($found.Values)
+}
+
+function Test-SuspiciousCommand([string]$Command) {
+    # A command that downloads something and runs it: what fake "I am not a robot" pages ask people
+    # to paste in Win+R (ClickFix).
+    $c = "$Command".ToLowerInvariant()
+    $runner = $c -match '\b(powershell|pwsh|mshta|cmd|curl|wget|bitsadmin|certutil|rundll32|regsvr32|msiexec|wscript|cscript|conhost|finger)\b'
+    $fetch = $c -match '(https?://|\biwr\b|\birm\b|invoke-webrequest|invoke-restmethod|downloadstring|downloadfile|-enc\b|-encodedcommand|frombase64string|\biex\b|invoke-expression|\\\\[a-z0-9.-]+@ssl|\\\\\d+\.\d+\.\d+\.\d+)'
+    return ($runner -and $fetch)
+}
+
+function Get-SuspiciousRunCommands {
+    # Commands typed or pasted in Win+R (the RunMRU list of this account) that download and run something.
+    $props = Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU' -ErrorAction SilentlyContinue
+    if (-not $props) { return @() }
+    return @(foreach ($p in $props.PSObject.Properties) {
+        if ($p.Name -notmatch '^[a-z]$') { continue }
+        $cmd = ("$($p.Value)" -replace '\\1$', '')
+        if (Test-SuspiciousCommand $cmd) { $cmd }
+    })
+}
+
+function Get-HostsEntries([string[]]$Lines = $null) {
+    # Lines of the hosts file that send a name somewhere else. Comments and localhost lines left out.
+    # Blocks: sent to 0.0.0.0 or 127.0.0.1 (what ad blockers do). Security: the name is a security or update site.
+    if ($null -eq $Lines) { $Lines = @(Get-Content -LiteralPath (Join-Path $env:WINDIR 'System32\drivers\etc\hosts') -ErrorAction SilentlyContinue) }
+    $sec = '(windowsupdate|update\.microsoft|delivery\.mp\.microsoft|wdcp|wdcpalt|smartscreen|defender|security\.microsoft|avast|avg\.com|kaspersky|bitdefender|eset|malwarebytes|norton|mcafee|sophos|trendmicro|virustotal|f-secure|avira)'
+    return @(foreach ($l in $Lines) {
+        $t = ("$l" -replace '#.*$', '').Trim()
+        if (-not $t) { continue }
+        $parts = @($t -split '\s+')
+        if ($parts.Count -lt 2) { continue }
+        foreach ($name in $parts[1..($parts.Count - 1)]) {
+            if ($name -in @('localhost', 'localhost.localdomain', 'local', 'broadcasthost', 'ip6-localhost', 'ip6-loopback')) { continue }
+            [pscustomobject]@{ Address = $parts[0]; Name = $name; Blocks = ($parts[0] -in @('0.0.0.0', '127.0.0.1', '::1', '::', '0:0:0:0:0:0:0:0')); Security = ($name -match $sec) }
+        }
+    })
+}
+
+function Get-ProxyState {
+    # The proxy of this account (Settings > Network > Proxy): a server, or a setup script.
+    $p = Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction SilentlyContinue
+    $on = 0; [void][int]::TryParse("$($p.ProxyEnable)", [ref]$on)
+    return [pscustomobject]@{ Server = $(if ($on -eq 1) { "$($p.ProxyServer)" } else { '' }); Script = "$($p.AutoConfigURL)" }
+}
+
+function Get-LevelColor([string]$Level) {
+    switch ($Level) { 'Bad' { return 'Red' } 'Warn' { return 'Yellow' } 'Info' { return 'Cyan' } }
+    return 'Green'
+}
+
+function Write-SecurityExtras {
+    # The rest of the security check: how long Windows gets updates, the Secure Boot certificates,
+    # and what scams and malware leave behind.
+    $ws = Get-WindowsSupportState
+    if ($ws) { Write-Kv 'Windows support' $ws.Text (Get-LevelColor $ws.Level) }
+    $sbOn = $false
+    try { $sbOn = [bool](Confirm-SecureBootUEFI -ErrorAction Stop) } catch { }
+    if ($sbOn) {
+        switch (Get-SecureBootCertState) {
+            'updated'  { Write-Kv 'Secure Boot certificates' (L 'up to date (2023)') 'Green' }
+            'progress' { Write-Kv 'Secure Boot certificates' (L 'Windows is installing the 2023 ones: restart when it asks') 'Yellow' }
+            'old' {
+                Write-Kv 'Secure Boot certificates' (L 'still the 2011 ones, which expired in 2026') 'Yellow'
+                Write-Info 'The PC keeps starting, but it cannot get new protections for startup. Windows Update installs the new certificates by itself; if it does not, a BIOS (UEFI) update from your PC maker usually brings them.'
+            }
+        }
+    }
+
+    Write-Section 'SIGNS OF A SCAM OR HIJACK'
+    Write-Info 'What scams and malware often leave behind. Each one can also be normal: what matters is whether you set it up yourself.'
+    $remote = @(Get-RemoteAccessApps)
+    if ($remote.Count -eq 0) { Write-Kv 'Remote access apps' (L 'none') 'Green' }
+    else {
+        $txt = @(foreach ($r in $remote) {
+            $n = @()
+            if ($r.Running) { $n += L 'running' }
+            if ($r.AtStartup) { $n += L 'starts with Windows' }
+            if ($n.Count) { '{0} ({1})' -f $r.Name, ($n -join ', ') } else { $r.Name }
+        })
+        Write-Kv 'Remote access apps' ($txt -join ', ') 'Yellow'
+        Write-Info 'They let someone else control this PC. If you did not install one yourself, or someone on the phone asked you to, uninstall it (Settings > Apps) and change your passwords.'
+    }
+    $run = @(Get-SuspiciousRunCommands)
+    if ($run.Count -eq 0) { Write-Kv 'Commands pasted in Win+R' (L 'nothing suspicious') 'Green' }
+    else {
+        Write-Kv 'Commands pasted in Win+R' (L '{0} that download and run something' $run.Count) 'Red'
+        foreach ($c in ($run | Select-Object -First 3)) { Write-Host ('      ' + (Get-Truncated $c 100)) -ForegroundColor DarkYellow }
+        Write-Info 'A web page that asks you to press Win+R and paste something is a scam (a fake "I am not a robot" check). If you did it, run a full scan in Windows Security and change your passwords from another device.'
+    }
+    $hosts = @(Get-HostsEntries)
+    $redirect = @($hosts | Where-Object { -not $_.Blocks })
+    $blockedSec = @($hosts | Where-Object { $_.Blocks -and $_.Security })
+    if ($redirect.Count -eq 0 -and $blockedSec.Count -eq 0) {
+        $blocked = @($hosts | Where-Object { $_.Blocks }).Count
+        Write-Kv 'Hosts file' $(if ($blocked) { L '{0} sites blocked (an ad blocker list?)' $blocked } else { L 'normal' }) 'Green'
+    } else {
+        $bits = @()
+        if ($redirect.Count) { $bits += L '{0} sites sent to another address' $redirect.Count }
+        if ($blockedSec.Count) { $bits += L '{0} security or update sites blocked' $blockedSec.Count }
+        Write-Kv 'Hosts file' ($bits -join ', ') $(if ($blockedSec.Count) { 'Red' } else { 'Yellow' })
+        foreach ($h in @(@($blockedSec) + @($redirect) | Select-Object -First 4)) { Write-Host ('      {0} -> {1}' -f $h.Name, $h.Address) -ForegroundColor DarkYellow }
+        Write-Info 'The hosts file (C:\Windows\System32\drivers\etc\hosts) can send a site to another address. Malware uses it to block antivirus updates or fake a site. If you did not change it yourself, Windows Security can restore it.'
+    }
+    $px = Get-ProxyState
+    if (-not $px.Server -and -not $px.Script) { Write-Kv 'Proxy' (L 'no proxy') 'Green' }
+    else {
+        Write-Kv 'Proxy' $(if ($px.Server) { $px.Server } else { L 'setup script {0}' $px.Script }) 'Yellow'
+        Write-Info 'All your browsing goes through it. Normal at work or school; on a home PC, if you did not set it up, switch it off in Settings > Network & internet > Proxy.'
     }
 }
 
@@ -3641,6 +3897,7 @@ function Get-ChangeItemText($Item) {
         'reserved'  { return (L 'Space reserved for Windows updates') }
         'shadow'    { return (L 'Space for restore points on {0}' "$($Item.Drive)") }
         'appx'      { return (L 'App {0} (installed again from the Microsoft Store)' "$($Item.Name)") }
+        'capability' { return (L 'Part of Windows: {0} (downloaded again from Windows Update)' "$($Item.Label)") }
     }
     return "$($Item.Kind)"
 }
@@ -3781,6 +4038,10 @@ function Undo-ChangeItem($Item) {
             Start-Process ("ms-windows-store://pdp/?PFN=" + "$($Item.Family)")
             return $true
         }
+        'capability' {
+            Add-WindowsCapability -Online -Name "$($Item.Name)" -ErrorAction Stop | Out-Null
+            return $true
+        }
     }
     return $false
 }
@@ -3899,6 +4160,9 @@ function Get-PrivacyGroups {
                 @('HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo', 'Enabled', 0, 1),
                 @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Privacy', 'TailoredExperiencesWithDiagnosticDataEnabled', 0, 1),
                 @($adv, 'Start_TrackProgs', 0, $null)) }
+        @{ Id = 'pua'; Name = (N 'Unwanted apps that come with downloads'); Recommended = $true; Managed = $true
+            Note = (N 'Microsoft Defender and Edge block the extras bundled with free programs: toolbars, coupon add-ons, coin miners, ad injectors.')
+            Values = @(@('HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender', 'PUAProtection', 1, $null), @($edge, 'SmartScreenPuaEnabled', 1, $null)) }
         @{ Id = 'telemetry'; Name = (N 'Diagnostic data and activity history'); Recommended = $false; Managed = $true
             Note = (N 'Windows sends Microsoft only the required minimum, keeps no history of your activities and stops asking for feedback.')
             Values = @(
@@ -4508,10 +4772,11 @@ function Show-WindowsSpace($Sample = $null) {
     while ($true) {
         Clear-Host
         Write-Section 'MORE SPACE FROM WINDOWS'
-        Write-Info 'Settings of Windows that give space back. Each one says what it costs; YSO asks before changing anything, and Undo YSO changes (32) puts the settings back.'
+        Write-Info 'Settings and leftovers of Windows that give space back. Each one says what it costs and whether it can be undone; YSO asks before changing anything.'
         if ($null -ne $Sample) {
             $compact = $Sample.Compact; $reserved = $Sample.Reserved; $shadow = $Sample.Shadow; $od = @($Sample.OneDrive)
             $idle = @(1..$Sample.IdleCount); $idleBytes = [long]$Sample.IdleBytes; $index = [long]$Sample.Index
+            $profiles = @(for ($k = 0; $k -lt [int]$Sample.Profiles; $k++) { $k }); $installer = [long]$Sample.Installer
         } else {
             Write-Step 'Looking at Windows...'
             $compact = Test-CompactOs
@@ -4521,16 +4786,23 @@ function Show-WindowsSpace($Sample = $null) {
             $idle = $(if ($od.Count) { Get-OneDriveIdleFiles $od } else { @() })
             $idleBytes = 0L; foreach ($f in $idle) { $idleBytes += $f.Length }
             $index = Get-SearchIndexSize
+            $profiles = @(); try { $profiles = @(Get-IdleProfiles) } catch { }
+            $installer = Get-FolderBytes (Join-Path $env:WINDIR 'Installer')
         }
         Clear-Host
         Write-Section 'MORE SPACE FROM WINDOWS'
-        Write-Info 'Settings of Windows that give space back. Each one says what it costs; YSO asks before changing anything, and Undo YSO changes (32) puts the settings back.'
+        Write-Info 'Settings and leftovers of Windows that give space back. Each one says what it costs and whether it can be undone; YSO asks before changing anything.'
         Write-Host ''
         Write-Option '1' 'Compress Windows files (Compact OS)' $(if ($compact -eq $true) { L 'On already.' } elseif ($compact -eq $false) { L 'Off. Usually gives back 2 to 4 GB.' } else { L 'Usually gives back 2 to 4 GB.' })
         Write-Option '2' 'Space reserved for Windows updates' $(if ($reserved -eq 'Enabled') { L 'On: about 7 GB kept free for updates.' } elseif ($reserved -eq 'Disabled') { L 'Off already.' } else { L 'Not available on this Windows.' })
         Write-Option '3' 'Space for restore points' $(if (-not $shadow) { L 'System Protection is off: no space used.' } elseif ($shadow.Max -lt 0) { L 'No limit ({0} used now).' (Format-Size $shadow.Used) } else { L 'Up to {0} ({1} used now).' (Format-Size $shadow.Max) (Format-Size $shadow.Used) })
         Write-Option '4' 'OneDrive files not opened for 60 days' $(if ($od.Count -eq 0) { L 'OneDrive is not set up on this PC.' } else { L '{0} files, {1} on this PC.' $idle.Count (Format-Size $idleBytes) })
         Write-Option '5' 'Windows search index' (L '{0} now. Worth rebuilding when it is over 1 GB.' (Format-Size $index))
+        Write-Option '6' 'Old copies of Windows updates (WinSxS)' 'Measured when you choose it (about a minute). The updates cleaned can no longer be uninstalled.'
+        Write-Option '7' 'Old driver versions' 'Versions a newer driver replaced and that no device uses. A graphics driver is often 1 GB each.'
+        Write-Option '8' 'Parts of Windows you do not use' 'Math Input Panel, Steps Recorder, WordPad, XPS Viewer, and handwriting, OCR and speech for languages you do not use.'
+        Write-Option '9' 'Accounts not used for 6 months' $(if ($profiles.Count) { L '{0} on this PC. For each one, YSO asks before deleting its files.' $profiles.Count } else { L 'None on this PC.' })
+        Write-Option '10' 'Windows Installer cache' (L '{0}. Shown only: Windows needs these files.' (Format-Size $installer))
         Write-Option '0' 'Back'
         $c = Read-Choice -Hint 'Click a line to see what it does and what it costs.'
         if ($null -ne $Sample) { return }
@@ -4541,6 +4813,11 @@ function Show-WindowsSpace($Sample = $null) {
             '3' { Set-ShadowStorageChoice $shadow }
             '4' { Invoke-OneDriveFreeUp $idle $idleBytes }
             '5' { Reset-SearchIndex $index }
+            '6' { Invoke-ComponentStoreCleanup }
+            '7' { Show-OldDriverChoice }
+            '8' { Show-UnusedFeatures }
+            '9' { Remove-IdleProfiles $profiles }
+            '10' { Show-InstallerCache $installer }
             default { return }
         }
         [void](Read-Choice 'Press Enter to continue' -Buttons @(, @('', 'OK')))
@@ -4666,6 +4943,205 @@ function Reset-SearchIndex([long]$Size) {
     $gain = [math]::Max(0L, [long]((Get-FreeBytes) - $before))
     if ($gain -gt 0) { Add-Result -Category 'Search index' -Files -1 -Bytes $gain -Skipped 0 }
     Write-Ok 'Done: Windows is building the index again, quietly, over the next hours.'
+}
+
+function ConvertFrom-ComponentStoreAnalysis([string[]]$Lines) {
+    # What "Dism /AnalyzeComponentStore /English" says: Size (the real size of WinSxS), Backups
+    # (old copies and switched-off features), Packages (old updates that can go), Recommended.
+    $r = [ordered]@{ Size = $null; Backups = $null; Packages = 0; Recommended = $false }
+    $bytes = {
+        param($t)
+        if ("$t" -notmatch '(\d+(?:[\.,]\d+)?)\s*(bytes|KB|MB|GB|TB)') { return $null }
+        $n = [double]::Parse(($Matches[1] -replace ',', '.'), [System.Globalization.CultureInfo]::InvariantCulture)
+        $m = @{ bytes = 1; KB = 1KB; MB = 1MB; GB = 1GB; TB = 1TB }[$Matches[2]]
+        return [long]($n * $m)
+    }
+    foreach ($l in $Lines) {
+        $t = "$l"
+        if ($t -match 'Actual Size of Component Store\s*:\s*(.+)$') { $r.Size = & $bytes $Matches[1] }
+        elseif ($t -match 'Backups and Disabled Features\s*:\s*(.+)$') { $r.Backups = & $bytes $Matches[1] }
+        elseif ($t -match 'Number of Reclaimable Packages\s*:\s*(\d+)') { $r.Packages = [int]$Matches[1] }
+        elseif ($t -match 'Component Store Cleanup Recommended\s*:\s*(\w+)') { $r.Recommended = ($Matches[1] -eq 'Yes') }
+    }
+    if ($null -eq $r.Size) { return $null }
+    return [pscustomobject]$r
+}
+
+function Invoke-ComponentStoreCleanup {
+    Write-Step 'Old copies of Windows updates (WinSxS)'
+    Write-Info 'When Windows updates its files, it keeps the old copies so that an update can be uninstalled. Windows removes them by itself after a while; this does it now.'
+    if (Test-PendingReboot) { Write-Warn 'Windows is waiting for a restart: this can only be done after it. Restart, then try again.'; return }
+    Write-Step 'Measuring (about a minute)...'
+    $a = ConvertFrom-ComponentStoreAnalysis @(& dism.exe /Online /Cleanup-Image /AnalyzeComponentStore /English 2>&1)
+    if (-not $a) { Write-Warn 'Windows could not measure it now. Try again after a restart.'; return }
+    Write-Kv 'Size of the folder' (Format-Size $a.Size)
+    if ($null -ne $a.Backups) { Write-Kv 'Old copies in it' (Format-Size $a.Backups) }
+    Write-Kv 'Old updates that can go' $a.Packages
+    if (-not $a.Recommended -and $a.Packages -eq 0) { Write-Ok 'Nothing to clean: Windows did it already.'; return }
+    Write-Info 'Cost: the updates cleaned can no longer be uninstalled. It takes 5 to 30 minutes and can stay on the same percentage for a while.'
+    if ($script:DryRun -or -not (Confirm-Action 'Clean the old copies now?' $true)) { Write-Info 'Nothing was changed.'; return }
+    $before = Get-FreeBytes
+    Wait-ProcessWithProgress (Start-Process -FilePath 'dism.exe' -ArgumentList '/Online', '/Cleanup-Image', '/StartComponentCleanup' -NoNewWindow -PassThru) (L 'Old copies of Windows updates')
+    if (Confirm-Action 'Also lock in the updates installed so far (ResetBase)? A little more space, but no installed update can be uninstalled after it.' $false) {
+        Wait-ProcessWithProgress (Start-Process -FilePath 'dism.exe' -ArgumentList '/Online', '/Cleanup-Image', '/StartComponentCleanup', '/ResetBase' -NoNewWindow -PassThru) (L 'Old copies of Windows updates')
+    }
+    $gain = [math]::Max(0L, [long]((Get-FreeBytes) - $before))
+    Add-Result -Category 'Old copies of Windows updates' -Files -1 -Bytes $gain -Skipped 0
+    Write-Ok (L 'Done: {0} freed.' (Format-Size $gain))
+}
+
+function Show-OldDriverChoice {
+    Write-Step 'Old driver versions'
+    Write-Info 'Windows keeps every version of a driver it ever installed, and a graphics driver is often 1 GB each time. Only versions that no device uses and that a newer one replaced are shown.'
+    Write-Step 'Looking for old driver versions...'
+    $old = @(Find-OldDrivers)
+    if ($old.Count -eq 0) { Write-Ok 'No old driver versions to remove.'; return }
+    foreach ($d in $old) { Write-Kv ('{0} {1}' -f $d.Provider, $d.Class) (L '{0} (newest {1}), {2}' $d.Version $d.Newest (Format-Size $d.Bytes)) }
+    Write-Info (Get-OldDriversText $old)
+    if ($script:DryRun -or -not (Confirm-Action 'Remove them? You will not be able to go back to these driver versions.' $false)) { Write-Info 'Nothing was changed.'; return }
+    Remove-OldDriverPackages $old
+}
+
+function Get-OptionalFeatureCatalog {
+    # Optional parts of Windows (capabilities) that most people never use. Name pattern, what it is, ticked by default.
+    return @(
+        @('MathRecognizer~*', (N 'Math Input Panel (handwritten equations)'), $true),
+        @('App.StepsRecorder~*', (N 'Steps Recorder (Windows removes it in a later version)'), $true),
+        @('Microsoft.Windows.WordPad~*', (N 'WordPad (no longer part of Windows)'), $true),
+        @('XPS.Viewer~*', (N 'XPS Viewer'), $true),
+        @('Browser.InternetExplorer~*', (N 'Internet Explorer mode files'), $false),
+        @('Media.WindowsMediaPlayer~*', (N 'Windows Media Player Legacy'), $false),
+        @('Microsoft.Windows.PowerShell.ISE~*', (N 'PowerShell ISE (for scripts)'), $false)
+    )
+}
+
+function Get-UnusedLanguageParts([string[]]$Installed, [string[]]$Keep) {
+    # Handwriting, text recognition (OCR) and speech for languages that are not in your list.
+    # English (United States) and the language of Windows itself are always kept.
+    $keepAll = @(@($Keep) + @('en-US') | ForEach-Object { "$_".ToLowerInvariant() })
+    $out = @()
+    foreach ($n in $Installed) {
+        if ("$n" -notmatch '^Language\.(Handwriting|OCR|Speech|TextToSpeech)~~~([A-Za-z]{2,3}(-[A-Za-z0-9]+)*)~') { continue }
+        $lang = $Matches[2]
+        if ($keepAll -contains $lang.ToLowerInvariant()) { continue }
+        $kind = @{ Handwriting = (N 'Handwriting'); OCR = (N 'Text recognition (OCR)'); Speech = (N 'Speech recognition'); TextToSpeech = (N 'Text to speech') }[$Matches[1]]
+        $out += [pscustomobject]@{ Name = $n; Label = ('{0} ({1})' -f (L $kind), $lang); Usual = $true }
+    }
+    return $out
+}
+
+function Get-RemovableFeatures {
+    $caps = @(Get-WindowsCapability -Online -ErrorAction Stop | Where-Object { "$($_.State)" -eq 'Installed' })
+    $names = @($caps | ForEach-Object { "$($_.Name)" })
+    $out = @()
+    foreach ($c in @(Get-OptionalFeatureCatalog)) {
+        foreach ($n in @($names | Where-Object { $_ -like $c[0] })) { $out += [pscustomobject]@{ Name = $n; Label = (L $c[1]); Usual = [bool]$c[2] } }
+    }
+    $keep = @()
+    try { $keep += @(Get-WinUserLanguageList -ErrorAction Stop | ForEach-Object { "$($_.LanguageTag)" }) } catch { }
+    try { $keep += "$((Get-UICulture).Name)"; $keep += "$((Get-WinSystemLocale).Name)" } catch { }
+    $out += @(Get-UnusedLanguageParts $names $keep)
+    return $out
+}
+
+function Show-UnusedFeatures([object[]]$Sample = $null) {
+    Write-Step 'Parts of Windows you do not use'
+    $list = $Sample
+    if ($null -eq $list) {
+        Write-Step 'Asking Windows for its optional parts...'
+        try { $list = @(Get-RemovableFeatures) } catch { Write-Warn (L 'Windows did not answer: {0}' $_.Exception.Message); return }
+    }
+    $tick = [bool[]]@($list | ForEach-Object { $_.Usual })
+    while ($true) {
+        Clear-Host
+        Write-Section 'PARTS OF WINDOWS YOU DO NOT USE'
+        Write-Info 'Optional parts of Windows. Each one can be added back from Settings > System > Optional features (Windows downloads it again).'
+        Write-Host ''
+        if ($list.Count -eq 0) { Write-Ok 'Nothing to remove: these parts are not on this PC.'; return }
+        for ($i = 0; $i -lt $list.Count; $i++) { Write-Option "$($i + 1)" ('{0} {1}' -f $(if ($tick[$i]) { '[x]' } else { '[ ]' }), $list[$i].Label) }
+        $c = Read-Choice 'Number = tick or untick, D = remove the ticked ones, Enter = back' -Buttons @(@('D', 'Remove the ticked ones'), @('', 'Back')) -Hint 'Tick what you do not use, then Remove.'
+        if (-not $c -or $null -ne $Sample) { return }
+        if ($c -match '^\d+$' -and [int]$c -ge 1 -and [int]$c -le $list.Count) { $tick[[int]$c - 1] = -not $tick[[int]$c - 1]; continue }
+        if ($c -ne 'D') { continue }
+        $chosen = @(for ($i = 0; $i -lt $list.Count; $i++) { if ($tick[$i]) { $list[$i] } })
+        if ($chosen.Count -eq 0) { continue }
+        if ($script:DryRun) { Write-Info 'Analyze-only mode: nothing was changed.'; return }
+        if (-not (Confirm-Action (L 'Remove {0} part(s) of Windows?' $chosen.Count) $true)) { continue }
+        $before = Get-FreeBytes
+        $change = New-ChangeEntry (N 'More space from Windows') (N 'Parts of Windows removed: {0}') @(, [string[]]@($chosen | ForEach-Object { $_.Label }))
+        $n = 0
+        foreach ($f in $chosen) {
+            $n++
+            Write-YsoProgress -Activity (L 'Removing parts of Windows') -Status $f.Label -Percent (100 * ($n - 1) / $chosen.Count)
+            try {
+                Remove-WindowsCapability -Online -Name $f.Name -ErrorAction Stop | Out-Null
+                [void]$change.Items.Add([pscustomobject]@{ Kind = 'capability'; Name = $f.Name; Label = $f.Label })
+                Write-Ok (L 'Removed: {0}' $f.Label)
+            } catch { Write-Warn (L 'Not removed: {0} ({1})' $f.Label $_.Exception.Message) }
+        }
+        Write-YsoProgress -Activity (L 'Removing parts of Windows') -Completed
+        Add-ChangeEntry $change
+        $gain = [math]::Max(0L, [long]((Get-FreeBytes) - $before))
+        if ($gain -gt 0) { Add-Result -Category 'Parts of Windows' -Files -1 -Bytes $gain -Skipped 0 }
+        Write-Info 'Some parts are removed for good at the next restart.'
+        return
+    }
+}
+
+function Get-IdleProfiles([int]$Days = 180) {
+    # Accounts of this PC nobody signed in to for $Days days. Never: the account in use, an account that is
+    # signed in, Windows' own accounts, or an administrator.
+    $cut = (Get-Date).AddDays(-$Days)
+    $me = ''
+    try { $me = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value } catch { }
+    $admins = @()
+    try { $admins = @(Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction Stop | ForEach-Object { "$($_.SID)" }) } catch { }
+    if ($admins.Count -eq 0) {
+        # Get-LocalGroupMember fails when the group still lists a deleted account: ask the group itself.
+        try {
+            $gn = ((New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544')).Translate([System.Security.Principal.NTAccount]).Value -split '\\')[-1]
+            $admins = @(([ADSI]"WinNT://./$gn,group").Invoke('Members') | ForEach-Object {
+                (New-Object System.Security.Principal.SecurityIdentifier([byte[]]$_.GetType().InvokeMember('objectSid', 'GetProperty', $null, $_, $null), 0)).Value })
+        } catch { }
+        if ($admins.Count -eq 0) { return @() }   # who is an administrator is not known: nothing is offered
+    }
+    $out = @()
+    foreach ($p in @(Get-CimInstance -ClassName Win32_UserProfile -ErrorAction Stop)) {
+        if ($p.Special -or $p.Loaded -or "$($p.SID)" -eq $me -or $admins -contains "$($p.SID)") { continue }
+        if ("$($p.SID)" -notmatch '^S-1-5-21-' -or -not $p.LocalPath -or -not (Test-Path -LiteralPath $p.LocalPath)) { continue }
+        $last = $p.LastUseTime
+        $hive = [System.IO.Path]::Combine($p.LocalPath, 'NTUSER.DAT')
+        try { $w = (Get-Item -LiteralPath $hive -Force -ErrorAction Stop).LastWriteTime; if (-not $last -or $w -gt $last) { $last = $w } } catch { }
+        if ($last -and $last -gt $cut) { continue }
+        $out += [pscustomobject]@{ Sid = "$($p.SID)"; Path = "$($p.LocalPath)"; Name = [System.IO.Path]::GetFileName("$($p.LocalPath)"); Last = $last; Cim = $p }
+    }
+    return $out
+}
+
+function Remove-IdleProfiles([object[]]$Profiles) {
+    Write-Step 'Accounts not used for 6 months'
+    if ($Profiles.Count -eq 0) { Write-Ok 'Every account of this PC was used in the last 6 months.'; return }
+    Write-Info 'For each one, YSO asks. Its files (Desktop, Documents, Pictures...) and settings are deleted: this cannot be undone. The account itself stays and starts empty if someone signs in to it again.'
+    Write-Info 'Copy what must be kept first: open C:\Users and look in its folder.'
+    $done = 0; $gain = 0L
+    foreach ($p in $Profiles) {
+        $size = Get-FolderBytes $p.Path
+        Write-Host ''
+        Write-Kv 'Account' $p.Name
+        Write-Kv 'Last used' $(if ($p.Last) { '{0} ({1})' -f $p.Last.ToString('d'), (Format-DaysAgo $p.Last) } else { L 'never' })
+        Write-Kv 'Its files' (Format-Size $size)
+        if ($script:DryRun -or -not (Confirm-Action (L 'Delete the files and settings of {0}? This cannot be undone.' $p.Name) $false)) { Write-Info 'Kept.'; continue }
+        try { Remove-CimInstance -InputObject $p.Cim -ErrorAction Stop; $done++; $gain += $size; Write-Ok (L 'Deleted: {0}' $p.Name) }
+        catch { Write-Warn (L 'Windows refused: {0}' $_.Exception.Message) }
+    }
+    if ($done) { Add-Result -Category 'Unused accounts' -Files -1 -Bytes $gain -Skipped 0 }
+}
+
+function Show-InstallerCache([long]$Bytes) {
+    Write-Step 'Windows Installer cache'
+    Write-Kv 'Size' (Format-Size $Bytes)
+    Write-Info 'C:\Windows\Installer keeps a copy of each program installed with Windows Installer (.msi) and of its updates. Windows needs them to repair, update or uninstall those programs.'
+    Write-Info 'Never delete files there by hand: programs could no longer be updated or uninstalled. To make it smaller, uninstall programs you no longer use (Uninstall apps, 31).'
 }
 
 # ==================================================================
@@ -4819,15 +5295,147 @@ function Read-FileRows([object[]]$Rows, [string]$Title, [string]$Tip = '') {
     }
 }
 
+function Get-ProjectBuildKind([string]$Name, [string[]]$Siblings) {
+    # The folder a code project makes when it is built, which the project's own tool makes again:
+    # node_modules (npm install), target (cargo build, mvn), .next and .nuxt, bin and obj (dotnet build), .gradle.
+    # $Siblings: the file names next to it, which say what kind of project it is. '' when it is not one.
+    $s = @($Siblings | ForEach-Object { "$_".ToLowerInvariant() })
+    switch -Exact ("$Name".ToLowerInvariant()) {
+        'node_modules' { if ($s -contains 'package.json') { return 'npm install' } }
+        '.next'        { if ($s -contains 'package.json') { return 'npm run build' } }
+        '.nuxt'        { if ($s -contains 'package.json') { return 'npm run build' } }
+        'target'       { if ($s -contains 'cargo.toml') { return 'cargo build' }; if ($s -contains 'pom.xml') { return 'mvn package' } }
+        'bin'          { if (@($s | Where-Object { $_ -match '\.(cs|fs|vb)proj$' }).Count) { return 'dotnet build' } }
+        'obj'          { if (@($s | Where-Object { $_ -match '\.(cs|fs|vb)proj$' }).Count) { return 'dotnet build' } }
+        '.gradle'      { if (@($s | Where-Object { $_ -match '^(build|settings)\.gradle(\.kts)?$' }).Count) { return 'gradle build' } }
+    }
+    return ''
+}
+
+function Find-ProjectBuildFolders([string[]]$Roots, [int]$Depth = 7, [int]$Days = 90) {
+    # Build folders of code projects in your folders. AppData, hidden folders and links are skipped;
+    # nothing inside a build folder is read except its size. Ticked: a project untouched for $Days days.
+    $cut = (Get-Date).AddDays(-$Days)
+    $out = New-Object System.Collections.Generic.List[object]
+    $stack = New-Object System.Collections.Generic.Stack[object]
+    foreach ($r in $Roots) { if (Test-Path -LiteralPath $r -PathType Container) { $stack.Push(@($r, 0)) } }
+    $seen = @{}
+    while ($stack.Count -gt 0) {
+        $item = $stack.Pop(); $dir = [System.IO.DirectoryInfo]::new($item[0]); $lvl = $item[1]
+        if ($seen.ContainsKey($dir.FullName.ToLowerInvariant())) { continue }
+        $seen[$dir.FullName.ToLowerInvariant()] = $true
+        $files = @(); $subs = @()
+        try { $files = @($dir.GetFiles()) } catch { continue }
+        try { $subs = @($dir.GetDirectories()) } catch { }
+        $names = @($files | ForEach-Object { $_.Name })
+        foreach ($d in $subs) {
+            if ($d.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { continue }
+            $kind = Get-ProjectBuildKind $d.Name $names
+            if ($kind) {
+                $last = @($files | ForEach-Object { $_.LastWriteTime } | Sort-Object -Descending) | Select-Object -First 1
+                $out.Add([pscustomobject]@{ Path = $d.FullName; Project = $dir.Name; Tool = $kind; Bytes = (Get-FolderBytes $d.FullName); Last = $last; Usual = ($last -and $last -lt $cut) })
+                continue
+            }
+            if ($lvl -ge $Depth -or $d.Name -eq 'AppData' -or $d.Name.StartsWith('.') -or ($d.Attributes -band [System.IO.FileAttributes]::Hidden)) { continue }
+            if (Test-Excluded $d.FullName) { continue }
+            $stack.Push(@($d.FullName, ($lvl + 1)))
+        }
+    }
+    return @($out | Sort-Object Bytes -Descending)
+}
+
+function Show-ProjectBuildFolders([object[]]$Sample = $null) {
+    $list = $Sample
+    if ($null -eq $list) {
+        Write-Step 'Looking for code projects in your folders (can take a minute)...'
+        $roots = @(Get-UserFolders @('Desktop', 'Documents', 'Downloads'))
+        foreach ($n in @('source', 'repos', 'Projects', 'projects', 'dev', 'code', 'src', 'git', 'GitHub', 'workspace', 'Work')) {
+            if ($env:USERPROFILE) { $roots += [System.IO.Path]::Combine($env:USERPROFILE, $n) }
+        }
+        $list = @(Find-ProjectBuildFolders @($roots | Select-Object -Unique) | Where-Object { $_.Bytes -ge 1MB })
+    }
+    $tick = [bool[]]@($list | ForEach-Object { $_.Usual })
+    while ($true) {
+        Clear-Host
+        Write-Section 'FILES YOU MIGHT NOT NEED'
+        Write-Step 'Build folders of code projects'
+        Write-Info 'Folders a code project makes when it is built (node_modules, target, bin and obj...). The project''s own tool makes them again in a few minutes; your code is not touched. Ticked: projects not changed for 90 days.'
+        Write-Host ''
+        if ($list.Count -eq 0) { Write-Ok 'Nothing found.'; [void](Read-Choice 'Press Enter to continue' -Buttons @(, @('', 'OK'))); return }
+        for ($i = 0; $i -lt $list.Count; $i++) {
+            $p = $list[$i]
+            Write-Option "$($i + 1)" ('{0} {1}  {2}' -f $(if ($tick[$i]) { '[x]' } else { '[ ]' }), (Get-Truncated $p.Path 70), (Format-Size $p.Bytes)) (L '{0}, changed {1}, made again by: {2}' $p.Project (Format-DaysAgo $p.Last) $p.Tool)
+        }
+        $sum = [long](@(for ($i = 0; $i -lt $list.Count; $i++) { if ($tick[$i]) { $list[$i].Bytes } }) | Measure-Object -Sum).Sum
+        Write-Info (L 'Ticked: {0}' (Format-Size $sum))
+        $c = Read-Choice 'Number = tick or untick, D = delete the ticked ones, Enter = back' -Buttons @(@('D', 'Delete the ticked ones'), @('', 'Back')) -Hint 'Tick the folders of projects you do not work on, then Delete.'
+        if (-not $c -or $null -ne $Sample) { return }
+        if ($c -match '^\d+$' -and [int]$c -ge 1 -and [int]$c -le $list.Count) { $tick[[int]$c - 1] = -not $tick[[int]$c - 1]; continue }
+        if ($c -ne 'D') { continue }
+        $chosen = @(for ($i = 0; $i -lt $list.Count; $i++) { if ($tick[$i]) { $list[$i] } })
+        if ($chosen.Count -eq 0) { continue }
+        if ($script:DryRun) { Write-Info 'Analyze-only mode: nothing was changed.'; Start-Sleep -Seconds 2; continue }
+        if (-not (Confirm-Action (L 'Delete {0} build folder(s), {1}? They do not go to the Recycle Bin.' $chosen.Count (Format-Size $sum)) $false)) { continue }
+        $done = 0; $failed = 0; $freed = 0L; $n = 0
+        foreach ($p in $chosen) {
+            $n++
+            Write-YsoProgress -Activity (L 'Deleting build folders') -Status $p.Project -Percent (100 * ($n - 1) / $chosen.Count)
+            # rd handles the very long paths node_modules is full of
+            & cmd.exe /d /c ('rd /s /q "\\?\{0}"' -f $p.Path) 2>&1 | Out-Null
+            if (Test-Path -LiteralPath $p.Path) { $failed++ } else { $done++; $freed += $p.Bytes }
+        }
+        Write-YsoProgress -Activity (L 'Deleting build folders') -Completed
+        Add-Result -Category 'Build folders of code projects' -Files -1 -Bytes $freed -Skipped $failed
+        Write-Ok (L 'Done: {0} folder(s) deleted, {1} freed.' $done (Format-Size $freed))
+        if ($failed) { Write-Warn (L '{0} could not be deleted completely (a program or an editor is using it?).' $failed) }
+        [void](Read-Choice 'Press Enter to continue' -Buttons @(, @('', 'OK')))
+        return
+    }
+}
+
+function Get-MessagingMediaFolders {
+    # Media and caches of WhatsApp and Telegram for PC: what you received and opened, often several GB.
+    $out = @()
+    foreach ($p in $script:Profiles) {
+        $local = [System.IO.Path]::Combine($p, 'AppData\Local')
+        $roam = [System.IO.Path]::Combine($p, 'AppData\Roaming')
+        foreach ($pkg in @(Get-ChildItem -LiteralPath ([System.IO.Path]::Combine($local, 'Packages')) -Directory -Filter '5319275A.WhatsAppDesktop_*' -ErrorAction SilentlyContinue)) {
+            foreach ($sub in @('LocalState\shared\transfers')) {
+                $d = [System.IO.Path]::Combine($pkg.FullName, $sub)
+                if (Test-Path -LiteralPath $d) { $out += [pscustomobject]@{ App = 'WhatsApp'; Path = $d } }
+            }
+        }
+        $d = [System.IO.Path]::Combine($roam, 'WhatsApp\Cache')
+        if (Test-Path -LiteralPath $d) { $out += [pscustomobject]@{ App = 'WhatsApp'; Path = $d } }
+        $tg = @([System.IO.Path]::Combine($roam, 'Telegram Desktop\tdata\user_data'))
+        foreach ($pkg in @(Get-ChildItem -LiteralPath ([System.IO.Path]::Combine($local, 'Packages')) -Directory -Filter 'TelegramMessengerLLP.TelegramDesktop_*' -ErrorAction SilentlyContinue)) {
+            $tg += [System.IO.Path]::Combine($pkg.FullName, 'LocalCache\Roaming\Telegram Desktop UWP\tdata\user_data')
+        }
+        foreach ($d in $tg) { if (Test-Path -LiteralPath $d) { $out += [pscustomobject]@{ App = 'Telegram'; Path = $d } } }
+    }
+    return @(foreach ($f in $out) { [pscustomobject]@{ App = $f.App; Path = $f.Path; Size = (Get-FolderBytes $f.Path) } })
+}
+
+function Show-MessagingMedia([string]$App) {
+    Write-Step (L 'Looking for {0} files...' $App)
+    $rows = @(Get-MessagingMediaFolders | Where-Object { $_.App -eq $App -and $_.Size -gt 0 } | ForEach-Object { [pscustomobject]@{ Path = $_.Path; Size = $_.Size; Note = '' } })
+    $tip = $(if ($App -eq 'Telegram') { N 'To empty it the Telegram way: Telegram > Settings > Advanced > Manage local storage. Your chats stay online.' }
+             else { N 'Photos, videos and documents you received and opened on this PC. Keep what you want to save before you delete: WhatsApp may no longer download old media again.' })
+    Read-FileRows $rows (L '{0} on this PC: {1}' $App (Format-Size (($rows | Measure-Object Size -Sum).Sum))) $tip
+}
+
 function Show-UnneededFiles {
     while ($true) {
         Clear-Host
         Write-Section 'FILES YOU MIGHT NOT NEED'
-        Write-Info 'Your own files that often take space for nothing. YSO only shows them: you decide, in File Explorer.'
+        Write-Info 'Your own files that often take space for nothing. YSO deletes only build folders you tick yourself; everything else opens in File Explorer, where you decide.'
         Write-Host ''
         Write-Option '1' 'Old installers and disk images in Downloads' 'Programs you installed long ago leave their installer behind (.exe, .msi, .iso).'
         Write-Option '2' 'iPhone and iPad backups' 'Made by iTunes or Apple Devices: one folder per device, often tens of GB.'
         Write-Option '3' 'Files that are there twice' 'Same content in two places (Desktop, Documents, Downloads, Pictures, Videos, Music). Can take a few minutes.'
+        Write-Option '4' 'Build folders of code projects' 'node_modules, target, bin and obj...: the project''s own tool makes them again. Ticked: projects not changed for 90 days.'
+        Write-Option '5' 'WhatsApp photos and videos' 'What you received and opened in WhatsApp for PC. Shown only.'
+        Write-Option '6' 'Telegram cache' 'Media Telegram for PC keeps after you open it. Shown only.'
         Write-Option '0' 'Back'
         $c = Read-Choice
         switch ($c) {
@@ -4849,6 +5457,9 @@ function Show-UnneededFiles {
                 })
                 Read-FileRows $rows (L 'Files that are there twice: {0} could be freed' (Format-Size (($groups | Measure-Object Waste -Sum).Sum)))
             }
+            '4' { Show-ProjectBuildFolders }
+            '5' { Show-MessagingMedia 'WhatsApp' }
+            '6' { Show-MessagingMedia 'Telegram' }
             default { return }
         }
     }
@@ -5315,13 +5926,117 @@ function Get-BrowserExtensions {
     return @($out | Sort-Object Browser, Name)
 }
 
+function ConvertTo-SiteName([string]$Pattern) {
+    # "https://example.com:443,*" (a Chromium site setting) -> "example.com"
+    $s = ("$Pattern" -split ',')[0]
+    $s = $s -replace '^\[\*\.\]', '' -replace '^[a-z][a-z0-9+.-]*://', '' -replace '^\[\*\.\]', ''
+    $s = $s -replace '/.*$', '' -replace ':\d+$', ''
+    return $s
+}
+
+function Test-KnownSearchEngine([string]$Url) {
+    # A search address of a well-known search engine. Anything else was probably set by a program.
+    if (-not $Url) { return $true }
+    if ($Url -notmatch '^[a-z]+://([^/:?]+)') { return $false }
+    $h = $Matches[1].ToLowerInvariant()
+    return ($h -match '(^|\.)(google\.[a-z.]+|bing\.com|duckduckgo\.com|ecosia\.org|yahoo\.[a-z.]+|qwant\.com|search\.brave\.com|startpage\.com|yandex\.[a-z.]+|ya\.ru|baidu\.com|naver\.com|seznam\.cz|perplexity\.ai|kagi\.com|you\.com|mojeek\.com|swisscows\.com|lilo\.org|chatgpt\.com|daum\.net|sogou\.com|so\.com)$')
+}
+
+function Get-BrowserSettings {
+    # Each Chromium profile: its default search engine (empty = the browser's own) and the sites allowed to send notifications.
+    $out = @()
+    foreach ($pr in @(Get-ChromiumProfiles)) {
+        $f = [System.IO.Path]::Combine($pr.Dir, 'Preferences')
+        if (-not (Test-Path -LiteralPath $f)) { continue }
+        try { $j = Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json } catch { continue }
+        $name = ''; $url = ''
+        $d = $null
+        try { $d = $j.default_search_provider_data.template_url_data } catch { }
+        if ($d) { $name = "$($d.short_name)"; $url = "$($d.url)" }
+        $sites = @()
+        $n = $null
+        try { $n = $j.profile.content_settings.exceptions.notifications } catch { }
+        if ($n) { foreach ($p in $n.PSObject.Properties) { if ("$($p.Value.setting)" -eq '1') { $sites += ConvertTo-SiteName $p.Name } } }
+        $out += [pscustomobject]@{ Browser = $pr.Browser; Profile = [System.IO.Path]::GetFileName($pr.Dir); Search = $name; SearchUrl = $url; Notify = @($sites | Where-Object { $_ } | Sort-Object -Unique) }
+    }
+    return $out
+}
+
+function Get-BrowserPolicies {
+    # Policies that change what a browser does: extensions installed by force, search engine, home page,
+    # pages at startup, proxy. Set by a program or a company, never by you in the browser.
+    # Those of YSO's privacy settings (30) are not among them.
+    $roots = @(@('Chrome', 'SOFTWARE\Policies\Google\Chrome'), @('Edge', 'SOFTWARE\Policies\Microsoft\Edge'),
+               @('Brave', 'SOFTWARE\Policies\BraveSoftware\Brave'), @('Firefox', 'SOFTWARE\Policies\Mozilla\Firefox'))
+    $watch = @('ExtensionInstallForcelist', 'ExtensionSettings', 'DefaultSearchProviderSearchURL', 'DefaultSearchProviderName', 'HomepageLocation',
+               'NewTabPageLocation', 'RestoreOnStartupURLs', 'ProxyServer', 'ProxyPacUrl', 'ProxySettings', 'Extensions', 'SearchEngines', 'Homepage', 'Proxy')
+    $out = @()
+    foreach ($r in $roots) {
+        foreach ($hive in @('HKLM:', 'HKCU:')) {
+            $key = "$hive\$($r[1])"
+            if (-not (Test-Path -LiteralPath $key)) { continue }
+            $props = Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue
+            foreach ($w in $watch) {
+                $val = $null
+                if ($props -and $props.PSObject.Properties[$w]) { $val = "$($props.$w)" }
+                $sub = Join-Path $key $w
+                if (Test-Path -LiteralPath $sub) {
+                    $sp = Get-ItemProperty -LiteralPath $sub -ErrorAction SilentlyContinue
+                    $vals = @(if ($sp) { $sp.PSObject.Properties | Where-Object { $_.Name -notlike 'PS*' } | ForEach-Object { "$($_.Value)" } })
+                    $vals += @(Get-ChildItem -LiteralPath $sub -ErrorAction SilentlyContinue | ForEach-Object { $_.PSChildName })
+                    if ($vals.Count) { $val = ($vals -join ', ') }
+                }
+                if ($val) { $out += [pscustomobject]@{ Browser = $r[0]; Name = $w; Value = $val } }
+            }
+        }
+    }
+    return $out
+}
+
+function Show-BrowserSettingsPart([object[]]$Settings, [object[]]$Policies) {
+    Write-Section 'SEARCH ENGINE'
+    if ($Settings.Count -eq 0) { Write-Info 'No Chrome, Edge, Brave, Vivaldi or Opera profile found.' }
+    $odd = 0
+    foreach ($s in $Settings) {
+        $label = ('{0} ({1})' -f $s.Browser, $s.Profile)
+        if (-not $s.Search -and -not $s.SearchUrl) { Write-Kv $label (L 'the browser''s own') 'Green'; continue }
+        $ok = Test-KnownSearchEngine $s.SearchUrl
+        if (-not $ok) { $odd++ }
+        Write-Kv $label $(if ($ok) { $s.Search } else { L '{0}: not a known search engine' $s.Search }) $(if ($ok) { 'Green' } else { 'Yellow' })
+    }
+    if ($odd) { Write-Info 'An unknown search engine is often set by a program installed with something else (adware). Change it in the browser: Settings > Search engine.' }
+
+    Write-Section 'SITES THAT MAY SEND NOTIFICATIONS'
+    $any = $false
+    foreach ($s in $Settings) {
+        if ($s.Notify.Count -eq 0) { continue }
+        $any = $true
+        Write-Kv ('{0} ({1})' -f $s.Browser, $s.Profile) (Get-Truncated ($s.Notify -join ', ') 90) $(if ($s.Notify.Count -gt 5) { 'Yellow' } else { 'Gray' })
+    }
+    if (-not $any) { Write-Ok 'No site may send notifications.' }
+    else { Write-Info 'Pop-ups "you have a virus" or "you won" near the clock usually come from a site allowed here. To stop one: in the browser, Settings > Privacy and security > Site settings > Notifications (Chrome), or Settings > Cookies and site permissions > Notifications (Edge).' }
+
+    Write-Section 'SET BY A PROGRAM (POLICIES)'
+    if ($Policies.Count -eq 0) { Write-Ok 'None: your browsers do what you set in them.' }
+    else {
+        foreach ($p in $Policies) { Write-Kv ('{0}: {1}' -f $p.Browser, $p.Name) (Get-Truncated $p.Value 80) 'Yellow' }
+        Write-Info 'A company, a school or an antivirus can set these. On a home PC, unknown ones often come from adware: the browser then shows "Managed by your organization". Uninstall the program that set them, or ask for help.'
+    }
+}
+
 function Show-BrowserExtensions([object[]]$Sample = $null) {
     # -Sample: made-up extensions for the window's pictures.
     Write-Section 'BROWSER EXTENSIONS'
     Write-Info 'Every extension of your browsers, and what it may do. An extension that can read every site sees your passwords as you type them: keep only the ones you know and use.'
     $list = $(if ($null -ne $Sample) { @($Sample) } else { @(Get-BrowserExtensions) })
     Write-Host ''
-    if ($list.Count -eq 0) { Write-Ok 'No extension found.'; return }
+    if ($list.Count -eq 0) { Write-Ok 'No extension found.' }
+    else { Write-ExtensionTable $list }
+    if ($null -ne $Sample) { return }
+    Show-BrowserSettingsPart @(Get-BrowserSettings) @(Get-BrowserPolicies)
+}
+
+function Write-ExtensionTable([object[]]$List) {
     Write-Host ('       ' + (L 'Browser').PadRight(10) + (L 'Extension').PadRight(40) + (L 'State').PadRight(8) + (L 'What it may do')) -ForegroundColor DarkGray
     foreach ($e in $list) {
         Write-Host ('       ' + $e.Browser.PadRight(10)) -NoNewline -ForegroundColor DarkGray
@@ -5595,6 +6310,1995 @@ function Save-HealthReportPdf {
 }
 
 # ==================================================================
+#  PC PASSPORT  (40) - the precise state of every part of the PC, a score out of 100 for each, and a
+#  detailed PDF to send to a professional or a buyer. Reads first (nothing is changed), then optional
+#  tests: processor under load with computations checked core by core, disk surface read, memory
+#  test, guided tests (screen, keyboard, sound...), and the deep test (Blender benchmark compared with
+#  the median of the same model, memtest_vulkan for the video memory). Each passport is kept in
+#  C:\ProgramData\YSO\Passports, so the next one shows what changed.
+# ==================================================================
+function Initialize-PassportNative {
+    # The parts PowerShell cannot do fast or at all: verified computations on every core, reading a
+    # disk without the cache, the graphics card's sensors (D3DKMT) and the health log of NVMe drives.
+    if ('YsoPassport.CpuCheck' -as [type]) { return $true }
+    try {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Threading;
+using Microsoft.Win32.SafeHandles;
+
+namespace YsoPassport {
+    public class CpuCheck {
+        [DllImport("kernel32.dll")] static extern IntPtr GetCurrentThread();
+        [DllImport("kernel32.dll")] static extern UIntPtr SetThreadAffinityMask(IntPtr thread, UIntPtr mask);
+        public int Workers;
+        public bool Pin;
+        public bool Pinned = true;
+        public long[] Iterations;
+        public long[] Errors;
+        public string[] FirstError;
+        volatile bool stop;
+        Thread[] threads;
+        byte[] data;
+        byte[] sha;
+        long fp;
+        ulong ints;
+
+        public CpuCheck(int workers, bool pin) {
+            Workers = Math.Max(1, workers); Pin = pin;
+            Iterations = new long[Workers]; Errors = new long[Workers]; FirstError = new string[Workers];
+        }
+        public static byte[] MakeData() {
+            byte[] d = new byte[65536]; uint x = 2463534242;
+            for (int i = 0; i < d.Length; i++) { x ^= x << 13; x ^= x >> 17; x ^= x << 5; d[i] = (byte)x; }
+            return d;
+        }
+        public static long FloatWork() {
+            double s = 0;
+            for (int i = 1; i <= 20000; i++) { s += Math.Sqrt(i) * Math.Sin(i) / (1.0 + Math.Log(i)); }
+            return BitConverter.DoubleToInt64Bits(s);
+        }
+        public static ulong IntWork() {
+            ulong h = 1469598103934665603UL;
+            for (ulong i = 1; i <= 200000; i++) { h ^= i * 0x9E3779B97F4A7C15UL; h *= 1099511628211UL; h = (h << 13) | (h >> 51); }
+            return h;
+        }
+        static bool Same(byte[] a, byte[] b) {
+            if (a.Length != b.Length) return false;
+            for (int i = 0; i < a.Length; i++) { if (a[i] != b[i]) return false; }
+            return true;
+        }
+        public void Start() {
+            data = MakeData();
+            using (SHA256 s = SHA256.Create()) { sha = s.ComputeHash(data); }
+            fp = FloatWork(); ints = IntWork();
+            if (fp != FloatWork() || ints != IntWork()) { throw new InvalidOperationException("The reference computation is not stable."); }
+            stop = false;
+            threads = new Thread[Workers];
+            for (int i = 0; i < Workers; i++) {
+                threads[i] = new Thread(Run); threads[i].IsBackground = true; threads[i].Priority = ThreadPriority.BelowNormal;
+                threads[i].Start(i);
+            }
+        }
+        void Run(object o) {
+            int i = (int)o;
+            if (Pin) {
+                try { if (SetThreadAffinityMask(GetCurrentThread(), new UIntPtr(1UL << (i % 64))) == UIntPtr.Zero) { Pinned = false; } }
+                catch { Pinned = false; }
+            }
+            using (SHA256 s = SHA256.Create()) {
+                while (!stop) {
+                    string bad = null;
+                    if (!Same(s.ComputeHash(data), sha)) { bad = "SHA-256"; }
+                    if (FloatWork() != fp) { bad = "floating point"; }
+                    if (IntWork() != ints) { bad = "integer"; }
+                    Interlocked.Increment(ref Iterations[i]);
+                    if (bad != null) { Interlocked.Increment(ref Errors[i]); if (FirstError[i] == null) { FirstError[i] = bad; } }
+                }
+            }
+        }
+        public void Stop() {
+            stop = true;
+            if (threads == null) return;
+            foreach (Thread t in threads) { t.Join(15000); }
+        }
+    }
+
+    public class DiskRead {
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        static extern SafeFileHandle CreateFile(string name, uint access, uint share, IntPtr sec, uint disposition, uint flags, IntPtr template);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool ReadFile(SafeFileHandle file, IntPtr buffer, int count, out int read, IntPtr overlapped);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool SetFilePointerEx(SafeFileHandle file, long distance, out long position, uint method);
+        public long Size;
+        public int Block;
+        public bool Full;
+        public int Samples;
+        public long BytesRead;
+        public long Done;
+        public long Total;
+        public int Errors;
+        public string Error;
+        public volatile bool Finished;
+        volatile bool cancel;
+        public List<double> Speeds = new List<double>();
+        int disk;
+        Thread thread;
+
+        public void Start(int diskNumber, long size, bool full, int samples, int blockBytes) {
+            disk = diskNumber; Size = size; Full = full; Samples = Math.Max(2, samples); Block = Math.Max(65536, blockBytes / 4096 * 4096);
+            Total = full ? Math.Max(1, size / Block) : Samples;
+            thread = new Thread(Run); thread.IsBackground = true; thread.Start();
+        }
+        public void Cancel() { cancel = true; }
+        public void Wait() { if (thread != null) thread.Join(); }
+        void Run() {
+            IntPtr raw = IntPtr.Zero;
+            try {
+                using (SafeFileHandle h = CreateFile("\\\\.\\PhysicalDrive" + disk, 0x80000000, 3, IntPtr.Zero, 3, 0x20000000 | (Full ? 0x08000000u : 0u), IntPtr.Zero)) {
+                    if (h.IsInvalid) { Error = "open failed (" + Marshal.GetLastWin32Error() + ")"; return; }
+                    raw = Marshal.AllocHGlobal(Block + 4096);
+                    IntPtr buf = new IntPtr((raw.ToInt64() + 4095) / 4096 * 4096);
+                    Stopwatch sw = new Stopwatch();
+                    long chunkBytes = 0; long chunkTicks = 0;
+                    for (long k = 0; k < Total && !cancel; k++) {
+                        long pos = Full ? k * Block : (long)((double)(Size - Block) * k / (Samples - 1)) / 4096 * 4096;
+                        if (pos < 0) pos = 0;
+                        int want = (int)Math.Min((long)Block, (Size - pos) / 4096 * 4096);
+                        if (want <= 0) { Done++; continue; }
+                        long p;
+                        sw.Restart();
+                        bool ok = SetFilePointerEx(h, pos, out p, 0);
+                        int got = 0;
+                        if (ok) ok = ReadFile(h, buf, want, out got, IntPtr.Zero);
+                        sw.Stop();
+                        if (!ok || got <= 0) { Errors++; }
+                        else {
+                            BytesRead += got;
+                            if (Full) {
+                                chunkBytes += got; chunkTicks += sw.ElapsedTicks;
+                                if (chunkBytes >= 256L * 1024 * 1024) { Speeds.Add(chunkBytes / 1048576.0 / ((double)chunkTicks / Stopwatch.Frequency)); chunkBytes = 0; chunkTicks = 0; }
+                            } else if (sw.ElapsedTicks > 0) {
+                                Speeds.Add(got / 1048576.0 / ((double)sw.ElapsedTicks / Stopwatch.Frequency));
+                            }
+                        }
+                        Done++;
+                    }
+                    if (Full && chunkBytes > 0 && chunkTicks > 0) { Speeds.Add(chunkBytes / 1048576.0 / ((double)chunkTicks / Stopwatch.Frequency)); }
+                }
+            } catch (Exception e) { Error = e.Message; }
+            finally { if (raw != IntPtr.Zero) Marshal.FreeHGlobal(raw); Finished = true; }
+        }
+    }
+
+    public class GpuData {
+        public string Name; public long Luid; public bool Perf; public uint FanRpm; public uint Power; public uint Temperature;
+        public bool Caps; public uint MaxFanRpm; public uint TemperatureMax; public uint TemperatureWarning;
+    }
+
+    public static class Gpu {
+        [StructLayout(LayoutKind.Sequential)] struct AdapterInfo { public uint Handle; public uint LuidLow; public int LuidHigh; public uint Sources; public int Precise; }
+        [StructLayout(LayoutKind.Sequential)] struct EnumAdapters2 { public uint Count; public IntPtr Adapters; }
+        [StructLayout(LayoutKind.Sequential)] struct QueryInfo { public uint Handle; public int Type; public IntPtr Data; public uint Size; }
+        [StructLayout(LayoutKind.Sequential)] struct CloseInfo { public uint Handle; }
+        [DllImport("gdi32.dll")] static extern int D3DKMTEnumAdapters2(ref EnumAdapters2 e);
+        [DllImport("gdi32.dll")] static extern int D3DKMTQueryAdapterInfo(ref QueryInfo q);
+        [DllImport("gdi32.dll")] static extern int D3DKMTCloseAdapter(ref CloseInfo c);
+
+        static int Query(uint handle, int type, IntPtr data, int size) {
+            QueryInfo q = new QueryInfo(); q.Handle = handle; q.Type = type; q.Data = data; q.Size = (uint)size;
+            return D3DKMTQueryAdapterInfo(ref q);
+        }
+        public static GpuData[] Read() {
+            List<GpuData> list = new List<GpuData>();
+            EnumAdapters2 e = new EnumAdapters2();
+            if (D3DKMTEnumAdapters2(ref e) != 0 || e.Count == 0) return list.ToArray();
+            int one = Marshal.SizeOf(typeof(AdapterInfo));
+            e.Adapters = Marshal.AllocHGlobal(one * (int)e.Count);
+            IntPtr buf = Marshal.AllocHGlobal(4096);
+            try {
+                if (D3DKMTEnumAdapters2(ref e) != 0) return list.ToArray();
+                for (int i = 0; i < e.Count; i++) {
+                    AdapterInfo a = (AdapterInfo)Marshal.PtrToStructure(new IntPtr(e.Adapters.ToInt64() + i * one), typeof(AdapterInfo));
+                    GpuData g = new GpuData(); g.Luid = ((long)a.LuidHigh << 32) | a.LuidLow;
+                    for (int z = 0; z < 4096; z++) Marshal.WriteByte(buf, z, 0);
+                    if (Query(a.Handle, 8, buf, 2080) == 0) { g.Name = Marshal.PtrToStringUni(buf); }
+                    for (int z = 0; z < 128; z++) Marshal.WriteByte(buf, z, 0);
+                    if (Query(a.Handle, 62, buf, 64) == 0) {
+                        g.Perf = true;
+                        g.FanRpm = (uint)Marshal.ReadInt32(buf, 48); g.Power = (uint)Marshal.ReadInt32(buf, 52); g.Temperature = (uint)Marshal.ReadInt32(buf, 56);
+                    }
+                    for (int z = 0; z < 128; z++) Marshal.WriteByte(buf, z, 0);
+                    if (Query(a.Handle, 63, buf, 40) == 0) {
+                        g.Caps = true;
+                        g.MaxFanRpm = (uint)Marshal.ReadInt32(buf, 24); g.TemperatureMax = (uint)Marshal.ReadInt32(buf, 28); g.TemperatureWarning = (uint)Marshal.ReadInt32(buf, 32);
+                    }
+                    CloseInfo c = new CloseInfo(); c.Handle = a.Handle; D3DKMTCloseAdapter(ref c);
+                    list.Add(g);
+                }
+            } finally { Marshal.FreeHGlobal(e.Adapters); Marshal.FreeHGlobal(buf); }
+            return list.ToArray();
+        }
+    }
+
+    public static class Winmm {
+        [DllImport("winmm.dll", CharSet = CharSet.Unicode)]
+        static extern int mciSendString(string command, System.Text.StringBuilder answer, int size, IntPtr callback);
+        public static int Send(string command) { return mciSendString(command, null, 0, IntPtr.Zero); }
+    }
+
+    public static class Nvme {
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        static extern SafeFileHandle CreateFile(string name, uint access, uint share, IntPtr sec, uint disposition, uint flags, IntPtr template);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool DeviceIoControl(SafeFileHandle device, uint code, IntPtr inBuf, int inSize, IntPtr outBuf, int outSize, out int returned, IntPtr overlapped);
+        public static byte[] HealthLog(int disk) {
+            // IOCTL_STORAGE_QUERY_PROPERTY, StorageDeviceProtocolSpecificProperty, NVMe log page 02h (SMART / health)
+            uint[] access = new uint[] { 0xC0000000, 0x80000000, 0 };
+            foreach (uint acc in access) {
+                using (SafeFileHandle h = CreateFile("\\\\.\\PhysicalDrive" + disk, acc, 3, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
+                    if (h.IsInvalid) continue;
+                    int len = 8 + 40 + 4096;
+                    IntPtr buf = Marshal.AllocHGlobal(len);
+                    try {
+                        for (int z = 0; z < len; z++) Marshal.WriteByte(buf, z, 0);
+                        Marshal.WriteInt32(buf, 0, 50); Marshal.WriteInt32(buf, 4, 0);
+                        Marshal.WriteInt32(buf, 8, 3); Marshal.WriteInt32(buf, 12, 2); Marshal.WriteInt32(buf, 16, 2);
+                        Marshal.WriteInt32(buf, 20, 0); Marshal.WriteInt32(buf, 24, 40); Marshal.WriteInt32(buf, 28, 512);
+                        int got;
+                        if (!DeviceIoControl(h, 0x2D1400, buf, len, buf, len, out got, IntPtr.Zero)) continue;
+                        int offset = Marshal.ReadInt32(buf, 24); int size = Marshal.ReadInt32(buf, 28);
+                        if (offset <= 0 || size < 512 || 8 + offset + 512 > len) continue;
+                        byte[] log = new byte[512];
+                        Marshal.Copy(new IntPtr(buf.ToInt64() + 8 + offset), log, 0, 512);
+                        return log;
+                    } finally { Marshal.FreeHGlobal(buf); }
+                }
+            }
+            return null;
+        }
+    }
+}
+'@ -ErrorAction Stop
+        return $true
+    } catch {
+        Write-YsoError -Context 'passport: native helpers' -ErrorRecord $_
+        return $false
+    }
+}
+
+function Get-LittleEndian([byte[]]$Bytes, [int]$Offset, [int]$Count) {
+    # An unsigned number of 1 to 8 bytes, lowest byte first (the NVMe and ATA logs). Above 8 bytes only
+    # the low 8 are read: a counter of 16 bytes never goes past them on a real drive.
+    [double]$v = 0
+    $n = [math]::Min($Count, 8)
+    for ($i = $n - 1; $i -ge 0; $i--) { $v = $v * 256 + [int]$Bytes[$Offset + $i] }
+    return $v
+}
+
+function ConvertFrom-NvmeHealthLog([byte[]]$Log) {
+    # The SMART / health log of an NVMe drive (log page 02h, 512 bytes), as the NVMe specification lays it out.
+    if (-not $Log -or $Log.Count -lt 200) { return $null }
+    $k = Get-LittleEndian $Log 1 2
+    $unit = 512000   # a "data unit" is 1000 blocks of 512 bytes
+    return [pscustomobject]@{
+        Critical      = [int]$Log[0]
+        Temp          = $(if ($k -gt 0) { [int][math]::Round($k - 273.15) } else { $null })
+        Spare         = [int]$Log[3]
+        SpareThreshold = [int]$Log[4]
+        Used          = [int]$Log[5]
+        ReadBytes     = (Get-LittleEndian $Log 32 16) * $unit
+        WrittenBytes  = (Get-LittleEndian $Log 48 16) * $unit
+        PowerCycles   = [long](Get-LittleEndian $Log 112 16)
+        Hours         = [long](Get-LittleEndian $Log 128 16)
+        Unsafe        = [long](Get-LittleEndian $Log 144 16)
+        MediaErrors   = [long](Get-LittleEndian $Log 160 16)
+        ErrorLog      = [long](Get-LittleEndian $Log 176 16)
+        WarnTempMinutes = [long](Get-LittleEndian $Log 192 4)
+        CritTempMinutes = [long](Get-LittleEndian $Log 196 4)
+    }
+}
+
+function Get-NvmeCriticalText([int]$Bits) {
+    # What the critical warning bits of an NVMe drive mean.
+    $t = @()
+    if ($Bits -band 1)  { $t += (L 'spare space below its threshold') }
+    if ($Bits -band 2)  { $t += (L 'temperature beyond its limit') }
+    if ($Bits -band 4)  { $t += (L 'reliability reduced by media errors') }
+    if ($Bits -band 8)  { $t += (L 'switched to read-only') }
+    if ($Bits -band 16) { $t += (L 'backup of its cache failed') }
+    return ($t -join ', ')
+}
+
+function ConvertFrom-AtaSmartData([byte[]]$Vendor) {
+    # MSStorageDriver_FailurePredictData.VendorSpecific: 2 bytes of version, then 30 attributes of 12 bytes
+    # (id, 2 bytes of flags, current value, worst value, 6 bytes of raw value, 1 reserved).
+    $attr = @{}
+    if (-not $Vendor -or $Vendor.Count -lt 362) { return $attr }
+    for ($i = 0; $i -lt 30; $i++) {
+        $o = 2 + 12 * $i
+        $id = [int]$Vendor[$o]
+        if ($id -eq 0) { continue }
+        $attr[$id] = [pscustomobject]@{ Id = $id; Current = [int]$Vendor[$o + 3]; Worst = [int]$Vendor[$o + 4]; Raw = [long](Get-LittleEndian $Vendor ($o + 5) 6) }
+    }
+    return $attr
+}
+
+function Get-AtaLifeLeft([hashtable]$Attr) {
+    # The life left of a SATA SSD, as its maker counts it (a normalized value, 100 = new): 231 SSD life
+    # left, 233 media wearout (Intel), 177 wear leveling (Samsung), 202 percent of life left (Crucial).
+    foreach ($id in @(231, 233, 177, 202)) {
+        if ($Attr.ContainsKey($id) -and $Attr[$id].Current -ge 1 -and $Attr[$id].Current -le 100) { return [pscustomobject]@{ Percent = $Attr[$id].Current; Attribute = $id } }
+    }
+    return $null
+}
+
+function Get-AtaSmartByDisk {
+    # SATA drives: the SMART attributes Windows passes through (administrator only), by disk number.
+    $byDisk = @{}
+    try {
+        $data = @(Get-CimInstance -Namespace 'root\wmi' -ClassName MSStorageDriver_FailurePredictData -ErrorAction Stop)
+        $status = @(Get-CimInstance -Namespace 'root\wmi' -ClassName MSStorageDriver_FailurePredictStatus -ErrorAction SilentlyContinue)
+        $drives = @(Get-CimInstance -ClassName Win32_DiskDrive -ErrorAction Stop)
+        foreach ($d in $data) {
+            $inst = ("$($d.InstanceName)" -replace '_\d+$', '').ToLowerInvariant()
+            $drive = @($drives | Where-Object { "$($_.PNPDeviceID)".ToLowerInvariant() -eq $inst }) | Select-Object -First 1
+            if (-not $drive) { continue }
+            $st = @($status | Where-Object { "$($_.InstanceName)" -eq "$($d.InstanceName)" }) | Select-Object -First 1
+            $byDisk[[int]$drive.Index] = [pscustomobject]@{ Attr = (ConvertFrom-AtaSmartData ([byte[]]@($d.VendorSpecific))); Predict = [bool]($st -and $st.PredictFailure) }
+        }
+    } catch { }
+    return $byDisk
+}
+
+function Get-PassportDisks {
+    # Every physical disk: identity, what its controller reports, and Windows' own counters.
+    $out = @()
+    $ata = Get-AtaSmartByDisk
+    $native = Initialize-PassportNative
+    $sysDisk = -1
+    try { $sysDisk = [int](Get-Partition -DriveLetter ("$env:SystemDrive".Substring(0, 1)) -ErrorAction Stop | Select-Object -First 1).DiskNumber } catch { }
+    foreach ($pd in @(Get-PhysicalDisk -ErrorAction SilentlyContinue | Sort-Object { [int]$_.DeviceId })) {
+        $n = [int]$pd.DeviceId
+        $d = [ordered]@{
+            Number = $n; System = ($n -eq $sysDisk); Name = "$($pd.FriendlyName)".Trim(); Bus = "$($pd.BusType)"; Media = "$($pd.MediaType)"; Size = [long]$pd.Size
+            Serial = "$($pd.SerialNumber)".Trim(); Firmware = "$($pd.FirmwareVersion)".Trim(); Health = "$($pd.HealthStatus)"
+            Temp = $null; TempMax = $null; Hours = $null; Cycles = $null; Unsafe = $null; WrittenBytes = $null; ReadBytes = $null
+            LifeLeft = $null; LifeSource = ''; Spare = $null; SpareThreshold = $null; Critical = $null; MediaErrors = $null
+            Reallocated = $null; Pending = $null; Uncorrectable = $null; Predict = $false; ReadErrors = $null; Read = $null
+        }
+        try {
+            $r = $pd | Get-StorageReliabilityCounter -ErrorAction Stop
+            if ($r.Temperature -gt 0) { $d.Temp = [int]$r.Temperature }
+            if ($r.TemperatureMax -gt 0) { $d.TempMax = [int]$r.TemperatureMax }
+            if ($r.PowerOnHours -gt 0) { $d.Hours = [long]$r.PowerOnHours }
+            if ($r.StartStopCycleCount -gt 0) { $d.Cycles = [long]$r.StartStopCycleCount }
+            if ($null -ne $r.Wear) { $d.LifeLeft = [math]::Max(0, 100 - [int]$r.Wear); $d.LifeSource = 'windows' }
+            if ($null -ne $r.ReadErrorsUncorrected) { $d.ReadErrors = [long]$r.ReadErrorsUncorrected }
+        } catch { }
+        if ("$($pd.BusType)" -eq 'NVMe' -and $native) {
+            try {
+                $h = ConvertFrom-NvmeHealthLog ([YsoPassport.Nvme]::HealthLog($n))
+                if ($h) {
+                    $d.Critical = $h.Critical; $d.Spare = $h.Spare; $d.SpareThreshold = $h.SpareThreshold
+                    $d.LifeLeft = [math]::Max(0, 100 - $h.Used); $d.LifeSource = 'nvme'
+                    $d.WrittenBytes = $h.WrittenBytes; $d.ReadBytes = $h.ReadBytes; $d.Hours = $h.Hours; $d.Cycles = $h.PowerCycles
+                    $d.Unsafe = $h.Unsafe; $d.MediaErrors = $h.MediaErrors
+                    if ($null -ne $h.Temp) { $d.Temp = $h.Temp }
+                }
+            } catch { }
+        }
+        if ($ata.ContainsKey($n)) {
+            $a = $ata[$n].Attr
+            $d.Predict = $ata[$n].Predict
+            if ($a.ContainsKey(5))   { $d.Reallocated = $a[5].Raw }
+            if ($a.ContainsKey(197)) { $d.Pending = $a[197].Raw }
+            if ($a.ContainsKey(198)) { $d.Uncorrectable = $a[198].Raw }
+            if ($a.ContainsKey(9) -and -not $d.Hours)   { $d.Hours = [long]($a[9].Raw -band 0xFFFFFFFF) }
+            if ($a.ContainsKey(12) -and -not $d.Cycles) { $d.Cycles = $a[12].Raw }
+            if ($a.ContainsKey(194) -and -not $d.Temp)  { $d.Temp = [int]($a[194].Raw -band 0xFF) }
+            if ($a.ContainsKey(241) -and -not $d.WrittenBytes) { $d.WrittenBytes = $a[241].Raw * 512 }   # LBAs written, on most makers
+            $life = Get-AtaLifeLeft $a
+            if ($life) { $d.LifeLeft = $life.Percent; $d.LifeSource = 'smart' }
+        }
+        if ("$($pd.MediaType)" -eq 'HDD') { $d.LifeLeft = $null; $d.LifeSource = '' }
+        $out += [pscustomobject]$d
+    }
+    return $out
+}
+
+function Get-MicrocodeRevision([byte[]]$Bytes) {
+    # HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\0, "Update Revision": 8 bytes. Intel keeps the
+    # revision in the upper 4 bytes, AMD in the lower 4.
+    if (-not $Bytes -or $Bytes.Count -lt 8) { return $null }
+    $hi = [long](Get-LittleEndian $Bytes 4 4)
+    $lo = [long](Get-LittleEndian $Bytes 0 4)
+    if ($hi -gt 0) { return $hi }
+    if ($lo -gt 0) { return $lo }
+    return $null
+}
+
+function Test-RaptorLakeDesktop([string]$Name) {
+    # Intel Core 13th and 14th gen desktop processors, the ones of the Vmin Shift instability. Laptop
+    # chips (H, HX, U, P) are left out: Intel found them not exposed.
+    return ($Name -match 'Core\(TM\) i[3579]-1[34]\d{2,3}(K|KF|KS|F|T)?(\s|$)' -and $Name -notmatch 'i[3579]-1[34]\d{2,3}(H|HX|U|P)\b')
+}
+
+function Get-PassportCpu {
+    $c = @(Get-CimInstance -ClassName Win32_Processor -ErrorAction SilentlyContinue)
+    $first = $c | Select-Object -First 1
+    $name = ("$($first.Name)" -replace '\s+', ' ').Trim()
+    $mc = $null
+    try { $mc = Get-MicrocodeRevision ([byte[]](Get-ItemProperty -LiteralPath 'HKLM:\HARDWARE\DESCRIPTION\System\CentralProcessor\0' -Name 'Update Revision' -ErrorAction Stop).'Update Revision') } catch { }
+    $raptor = Test-RaptorLakeDesktop $name
+    return [pscustomobject][ordered]@{
+        Name = $name; Maker = "$($first.Manufacturer)"; Cores = [int](($c | Measure-Object NumberOfCores -Sum).Sum); Threads = [int](($c | Measure-Object NumberOfLogicalProcessors -Sum).Sum)
+        BaseMHz = [int]$first.MaxClockSpeed; Socket = "$($first.SocketDesignation)"
+        Microcode = $(if ($mc) { '0x{0:X}' -f $mc } else { '' })
+        Raptor = $raptor; MicrocodeOk = $(if ($raptor -and $mc) { $mc -ge 0x12F } else { $null })
+        Check = $null; Blender = $null
+    }
+}
+
+function Get-PassportMemory {
+    $sticks = @(Get-CimInstance -ClassName Win32_PhysicalMemory -ErrorAction SilentlyContinue | ForEach-Object {
+        [pscustomobject][ordered]@{ Slot = "$($_.DeviceLocator)".Trim(); Size = [long]$_.Capacity; Maker = "$($_.Manufacturer)".Trim(); Part = "$($_.PartNumber)".Trim()
+            Serial = "$($_.SerialNumber)".Trim(); Rated = [int]$_.Speed; Speed = [int]$(if ($_.ConfiguredClockSpeed) { $_.ConfiguredClockSpeed } else { $_.Speed }) }
+    })
+    $total = [long](($sticks | Measure-Object Size -Sum).Sum)
+    $slow = @($sticks | Where-Object { $_.Rated -gt 0 -and $_.Speed -gt 0 -and $_.Speed -lt 0.9 * $_.Rated }).Count -gt 0
+    return [pscustomobject][ordered]@{ Total = $total; Sticks = $sticks; Slow = $slow; Single = ($sticks.Count -eq 1 -and $total -ge 8GB); LastTest = (Get-MemoryTestResult); Whea47 = 0 }
+}
+
+function Get-MemoryTestResult {
+    # The last run of Windows Memory Diagnostic: 1201 = no errors, 1202 = errors found.
+    $e = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-MemoryDiagnostics-Results'; Id = 1201, 1202 } -MaxEvents 1) | Select-Object -First 1
+    if (-not $e) { return $null }
+    return [pscustomobject]@{ When = $e.TimeCreated.ToString('yyyy-MM-dd'); Pass = ([int]$e.Id -eq 1201) }
+}
+
+function ConvertFrom-UInt16Text($Codes) {
+    # WmiMonitorID gives its names as arrays of character codes, padded with zeros.
+    return (-join @(@($Codes) | Where-Object { $_ -gt 0 } | ForEach-Object { [char][int]$_ })).Trim()
+}
+
+function Get-PassportMonitors {
+    return @(Get-CimInstance -Namespace 'root\wmi' -ClassName WmiMonitorID -ErrorAction SilentlyContinue | ForEach-Object {
+        [pscustomobject][ordered]@{ Maker = (ConvertFrom-UInt16Text $_.ManufacturerName); Name = (ConvertFrom-UInt16Text $_.UserFriendlyName)
+            Serial = (ConvertFrom-UInt16Text $_.SerialNumberID); Year = [int]$_.YearOfManufacture; Week = [int]$_.WeekOfManufacture; Screen = $null }
+    })
+}
+
+function Find-NvidiaSmi {
+    foreach ($p in @("$env:WINDIR\System32\nvidia-smi.exe", (Join-Path "$env:ProgramFiles" 'NVIDIA Corporation\NVSMI\nvidia-smi.exe'))) {
+        if ($p -and (Test-Path -LiteralPath $p)) { return $p }
+    }
+    return $null
+}
+
+function ConvertFrom-NvidiaSmiLine([string]$Line) {
+    # One line of: nvidia-smi --query-gpu=name,temperature.gpu,fan.speed,power.draw,power.limit,clocks_throttle_reasons.active,memory.total --format=csv,noheader,nounits
+    $f = @("$Line" -split ',' | ForEach-Object { $_.Trim() })
+    if ($f.Count -lt 7) { return $null }
+    $num = { param($t) $v = 0.0; if ([double]::TryParse(("$t" -replace '[^\d\.]', ''), [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$v) -and "$t" -match '\d') { $v } else { $null } }
+    $reasons = 0L
+    if ("$($f[5])" -match '^0x([0-9a-fA-F]+)$') { $reasons = [Convert]::ToInt64($Matches[1], 16) }
+    return [pscustomobject]@{ Name = $f[0]; Temp = (& $num $f[1]); FanPercent = (& $num $f[2]); Watts = (& $num $f[3]); WattsLimit = (& $num $f[4])
+        Throttle = $reasons; ThermalSlowdown = (($reasons -band 0x20) -ne 0 -or ($reasons -band 0x40) -ne 0); VramMB = (& $num $f[6]) }
+}
+
+function Read-NvidiaSmi {
+    $smi = Find-NvidiaSmi
+    if (-not $smi) { return @() }
+    try {
+        $lines = @(& $smi '--query-gpu=name,temperature.gpu,fan.speed,power.draw,power.limit,clocks_throttle_reasons.active,memory.total' '--format=csv,noheader,nounits' 2>$null)
+        return @($lines | ForEach-Object { ConvertFrom-NvidiaSmiLine $_ } | Where-Object { $_ })
+    } catch { return @() }
+}
+
+function Read-GpuSensors {
+    # Temperature, fan and power of each graphics card, from Windows (D3DKMT): no driver to install.
+    if (-not (Initialize-PassportNative)) { return @() }
+    try { return @([YsoPassport.Gpu]::Read() | Where-Object { $_.Name -and $_.Name -notmatch 'Basic Render|Basic Display|Remote Display' }) } catch { return @() }
+}
+
+function Get-PassportGpus {
+    $sensors = @(Read-GpuSensors)
+    $smi = @(Read-NvidiaSmi)
+    return @(Get-CimInstance -ClassName Win32_VideoController -ErrorAction SilentlyContinue | Where-Object { "$($_.Name)" -and "$($_.Name)" -notmatch 'Basic Render|Basic Display|Remote Display|Virtual' } | ForEach-Object {
+        $name = "$($_.Name)".Trim()
+        $s = @($sensors | Where-Object { $_.Name -eq $name }) | Select-Object -First 1
+        $n = @($smi | Where-Object { $_.Name -eq $name }) | Select-Object -First 1
+        [pscustomobject][ordered]@{
+            Name = $name; Driver = "$($_.DriverVersion)"; DriverDate = $(if ($_.DriverDate) { ([datetime]$_.DriverDate).ToString('yyyy-MM-dd') } else { '' })
+            Vram = $(if ($n -and $n.VramMB) { [long]($n.VramMB * 1MB) } else { $null })
+            Temp = $(if ($s -and $s.Perf -and $s.Temperature -gt 0) { [math]::Round($s.Temperature / 10, 1) } elseif ($n) { $n.Temp } else { $null })
+            TempWarn = $(if ($s -and $s.Caps -and $s.TemperatureWarning -gt 0) { [math]::Round($s.TemperatureWarning / 10, 1) } else { $null })
+            TempMax = $(if ($s -and $s.Caps -and $s.TemperatureMax -gt 0) { [math]::Round($s.TemperatureMax / 10, 1) } else { $null })
+            Fan = $(if ($s -and $s.Perf -and $s.FanRpm -gt 0) { [int]$s.FanRpm } else { $null })
+            FanMax = $(if ($s -and $s.Caps -and $s.MaxFanRpm -gt 0) { [int]$s.MaxFanRpm } else { $null })
+            Nvidia = [bool]$n; Tdr = $null; Load = $null; Blender = $null; Vmem = $null
+        }
+    })
+}
+
+function Get-PassportBattery {
+    $b = Get-BatteryHealth
+    if (-not $b) { return $null }
+    $maker = ''; $serial = ''; $name = ''
+    try {
+        $s = @(Get-CimInstance -Namespace 'root\wmi' -ClassName BatteryStaticData -ErrorAction Stop)[0]
+        $maker = "$($s.ManufactureName)".Trim(); $serial = "$($s.SerialNumber)".Trim(); $name = "$($s.DeviceName)".Trim()
+    } catch { }
+    return [pscustomobject][ordered]@{ Name = $name; Maker = $maker; Serial = $serial; Design = $b.Design; Full = $b.Full; Health = $b.Percent; Reported = $b.Reported; Cycles = $b.Cycles
+        GaugeOff = ((Get-BatteryVerdict $b).GaugeOff); Same = ($b.Design -eq $b.Full -and $null -ne $b.Cycles -and $b.Cycles -ge 100) }
+}
+
+function Get-PassportMachine {
+    $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue
+    $bios = Get-CimInstance -ClassName Win32_BIOS -ErrorAction SilentlyContinue
+    $board = Get-CimInstance -ClassName Win32_BaseBoard -ErrorAction SilentlyContinue
+    $enc = Get-CimInstance -ClassName Win32_SystemEnclosure -ErrorAction SilentlyContinue
+    $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction SilentlyContinue
+    $tpm = $null; $ek = ''
+    try { $t = Get-Tpm -ErrorAction Stop; $tpm = [pscustomobject]@{ Present = [bool]$t.TpmPresent; Ready = [bool]$t.TpmReady; Maker = "$($t.ManufacturerIdTxt)"; Version = "$($t.ManufacturerVersion)" } } catch { }
+    try { $ek = "$((Get-TpmEndorsementKeyInfo -HashAlgorithm Sha256 -ErrorAction Stop).PublicKeyHash)" } catch { }
+    $sb = $null
+    try { $sb = [bool](Confirm-SecureBootUEFI -ErrorAction Stop) } catch { }
+    return [pscustomobject][ordered]@{
+        Maker = "$($cs.Manufacturer)".Trim(); Model = "$($cs.Model)".Trim(); Serial = "$($bios.SerialNumber)".Trim()
+        Board = ("$($board.Manufacturer) $($board.Product)").Trim(); BoardSerial = "$($board.SerialNumber)".Trim()
+        Chassis = $(if ($enc -and $enc.ChassisTypes) { [int]@($enc.ChassisTypes)[0] } else { 0 })
+        Bios = ("$($bios.Manufacturer) $($bios.SMBIOSBIOSVersion)").Trim(); BiosDate = $(if ($bios.ReleaseDate) { ([datetime]$bios.ReleaseDate).ToString('yyyy-MM-dd') } else { '' })
+        Os = "$($os.Caption)".Trim(); OsBuild = "$($os.BuildNumber)"; Installed = $(if ($os.InstallDate) { ([datetime]$os.InstallDate).ToString('yyyy-MM-dd') } else { '' })
+        Tpm = $tpm; SecureBoot = $sb; EkHash = $ek
+    }
+}
+
+function Get-PassportNetwork {
+    return @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue | ForEach-Object {
+        $kind = if ("$($_.PhysicalMediaType)" -match '802\.11|Wireless|Native 802' -or "$($_.InterfaceDescription)" -match 'Wi-?Fi|Wireless|WLAN') { 'wifi' } elseif ("$($_.InterfaceDescription)" -match 'Bluetooth') { 'bluetooth' } else { 'ethernet' }
+        [pscustomobject][ordered]@{ Name = "$($_.InterfaceDescription)".Trim(); Kind = $kind; Status = "$($_.Status)"; Speed = "$($_.LinkSpeed)"; Mac = "$($_.MacAddress)" }
+    })
+}
+
+function Get-WerLiveKernelDays([int]$Days = 90) {
+    # Graphics driver timeouts (LiveKernelEvent 141 and 117, a graphics card that stopped answering), by day.
+    $out = @{}
+    foreach ($e in @(Get-EventsSafe @{ LogName = 'Application'; ProviderName = 'Windows Error Reporting'; Id = 1001; StartTime = (Get-Date).AddDays(-$Days) })) {
+        $m = "$($e.Message)"
+        if ($m -match 'LiveKernelEvent' -and $m -match '(?m)P1:\s*(141|117)\b') { $out[$e.TimeCreated.ToString('yyyy-MM-dd')] = $true }
+    }
+    return $out
+}
+
+function Get-PassportEvents([int]$Days = 90) {
+    # Hardware errors (WHEA), graphics driver resets and timeouts, crashes: the last 90 days, by day.
+    $since = (Get-Date).AddDays(-$Days)
+    $whea = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-WHEA-Logger'; StartTime = $since })
+    $day = { param($list) @($list | ForEach-Object { $_.TimeCreated.ToString('yyyy-MM-dd') } | Sort-Object -Unique) }
+    $tdr = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Display'; Id = 4101; StartTime = $since })
+    $lke = Get-WerLiveKernelDays $Days
+    $gpuDays = @(@(& $day $tdr) + @($lke.Keys) | Sort-Object -Unique)
+    $bsod = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-WER-SystemErrorReporting'; Id = 1001; StartTime = $since })
+    $power = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-Power'; Id = 41; StartTime = $since })
+    return [pscustomobject][ordered]@{
+        Days = $Days
+        Whea17 = @($whea | Where-Object { $_.Id -eq 17 }).Count; Whea18 = @($whea | Where-Object { $_.Id -eq 18 }).Count
+        Whea19 = @($whea | Where-Object { $_.Id -eq 19 }).Count; Whea47 = @($whea | Where-Object { $_.Id -eq 47 }).Count
+        Whea19Days = @(& $day @($whea | Where-Object { $_.Id -eq 19 })).Count
+        GpuResetDays = $gpuDays.Count; GpuResets = $tdr.Count + $lke.Count
+        Bsod = $bsod.Count; Unexpected = $power.Count
+    }
+}
+
+function Get-StabilityIndex {
+    # Windows' own stability index (1 = unstable, 10 = stable), from Reliability Monitor: the latest value.
+    try {
+        $m = @(Get-CimInstance -ClassName Win32_ReliabilityStabilityMetrics -ErrorAction Stop | Sort-Object TimeGenerated) | Select-Object -Last 1
+        if ($m) { return [math]::Round([double]$m.SystemStabilityIndex, 1) }
+    } catch { }
+    return $null
+}
+
+function Get-PassportReadings {
+    # The first pass: everything the parts say about themselves. Nothing is changed, nothing is loaded.
+    $p = [ordered]@{ Format = 1; Yso = $script:Version; When = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss'); Mode = 'quick' }
+    $steps = @(
+        @('Machine', (N 'This PC and its firmware'), { Get-PassportMachine }),
+        @('Cpu', (N 'Processor'), { Get-PassportCpu }),
+        @('Memory', (N 'Memory (RAM)'), { Get-PassportMemory }),
+        @('Disks', (N 'Drives'), { @(Get-PassportDisks) }),
+        @('Battery', (N 'Battery'), { if (Test-IsLaptop) { Get-PassportBattery } else { $null } }),
+        @('Gpus', (N 'Graphics cards'), { @(Get-PassportGpus) }),
+        @('Monitors', (N 'Screens'), { @(Get-PassportMonitors) }),
+        @('Network', (N 'Network adapters'), { @(Get-PassportNetwork) }),
+        @('Events', (N 'Hardware errors of the last 90 days'), { Get-PassportEvents }),
+        @('Stability', (N 'Stability index'), { Get-StabilityIndex })
+    )
+    $i = 0
+    foreach ($s in $steps) {
+        $i++
+        Assert-NotStopped
+        Write-YsoProgress -Activity (L 'Reading the parts of the PC') -Status (L $s[1]) -Percent (100 * $i / $steps.Count)
+        try { $p[$s[0]] = & $s[2] } catch { $p[$s[0]] = $null; Write-YsoError -Context ('passport: ' + $s[0]) -ErrorRecord $_ }
+    }
+    Write-YsoProgress -Activity (L 'Reading the parts of the PC') -Completed
+    if ($p.Memory -and $p.Events) { $p.Memory.Whea47 = $p.Events.Whea47 }
+    $p.Guided = $null
+    return [pscustomobject]$p
+}
+
+function Get-Median([double[]]$Values) {
+    $v = @($Values | Where-Object { $null -ne $_ } | Sort-Object)
+    if ($v.Count -eq 0) { return $null }
+    if ($v.Count % 2) { return [double]$v[[int][math]::Floor($v.Count / 2)] }
+    return ([double]$v[$v.Count / 2 - 1] + [double]$v[$v.Count / 2]) / 2
+}
+
+function Read-CpuCounters {
+    # One reading of Windows' processor counters, by their WMI names (the same in every language of Windows).
+    $c = Get-CimInstance -ClassName Win32_PerfFormattedData_Counters_ProcessorInformation -Filter "Name='_Total'" -ErrorAction Stop
+    return [pscustomobject]@{ Perf = [double]$c.PercentProcessorPerformance; Limit = [double]$c.PercentPerformanceLimit; MaxFreq = [double]$c.PercentofMaximumFrequency
+        MHz = [double]$c.ProcessorFrequency; Flags = [long]$c.PerformanceLimitFlags }
+}
+
+function Get-CpuTestSummary([double[]]$Perf, [double[]]$Limit, [double[]]$MHz) {
+    # How well the processor kept its speed: the last 70 % of the test against its first 15 %.
+    $n = @($Perf).Count
+    if ($n -lt 4) { return [pscustomobject]@{ Sustain = $null; LimitMin = $null; PerfStart = $null; PerfEnd = $null; MHzAvg = $null } }
+    $head = [math]::Max(1, [int][math]::Floor($n * 0.15))
+    $tail = [math]::Max(1, [int][math]::Floor($n * 0.70))
+    $start = ($Perf[0..($head - 1)] | Measure-Object -Average).Average
+    $end = ($Perf[($n - $tail)..($n - 1)] | Measure-Object -Average).Average
+    $sustain = $(if ($start -gt 0) { [math]::Round([math]::Min(1.0, $end / $start), 3) } else { $null })
+    $lim = @($Limit | Where-Object { $_ -gt 0 })
+    return [pscustomobject]@{
+        Sustain = $sustain; PerfStart = [math]::Round($start, 1); PerfEnd = [math]::Round($end, 1)
+        LimitMin = $(if ($lim.Count) { [math]::Round(($lim | Measure-Object -Minimum).Minimum, 1) } else { $null })
+        MHzAvg = $(if (@($MHz).Count) { [int](($MHz | Measure-Object -Average).Average) } else { $null })
+    }
+}
+
+function Invoke-PassportCpuTest([int]$Seconds = 600) {
+    # Every core at work for $Seconds, each one doing computations whose result is known in advance
+    # (SHA-256, floating point, integers): a core that gets one wrong is faulty. Meanwhile Windows'
+    # counters say whether the processor keeps its speed or slows down (heat, power limit).
+    if (-not (Initialize-PassportNative)) { return $null }
+    $workers = [Environment]::ProcessorCount
+    $check = New-Object YsoPassport.CpuCheck @($workers, $true)
+    $perf = New-Object System.Collections.Generic.List[double]
+    $limit = New-Object System.Collections.Generic.List[double]
+    $mhz = New-Object System.Collections.Generic.List[double]
+    $started = Get-Date
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    $check.Start()
+    try {
+        try { [void](Read-CpuCounters) } catch { }   # the first reading of a counter is always 0
+        while ($clock.Elapsed.TotalSeconds -lt $Seconds) {
+            Start-Sleep -Milliseconds 1000
+            try { $r = Read-CpuCounters; $perf.Add($r.Perf); $limit.Add($r.Limit); $mhz.Add($r.MHz) } catch { }
+            $left = [int]($Seconds - $clock.Elapsed.TotalSeconds)
+            $now = $(if ($perf.Count) { $perf[$perf.Count - 1] } else { 0 })
+            Write-YsoProgress -Activity (L 'Processor under load, {0} cores' $workers) -Status (L '{0} min {1:00} s left, speed {2:N0} % of nominal' ([int][math]::Floor($left / 60)) ($left % 60) $now) -Percent (100 * $clock.Elapsed.TotalSeconds / $Seconds) -Force
+        }
+    } finally {
+        $check.Stop()
+        Write-YsoProgress -Activity (L 'Processor under load, {0} cores' $workers) -Completed
+    }
+    $whea = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-WHEA-Logger'; StartTime = $started } | Where-Object { @(18, 19) -contains $_.Id }).Count
+    $s = Get-CpuTestSummary $perf.ToArray() $limit.ToArray() $mhz.ToArray()
+    $errCores = @(for ($i = 0; $i -lt $workers; $i++) { if ($check.Errors[$i] -gt 0) { $i } })
+    return [pscustomobject][ordered]@{
+        Seconds = [int]$clock.Elapsed.TotalSeconds; Workers = $workers; Pinned = [bool]$check.Pinned
+        Iterations = [long](($check.Iterations | Measure-Object -Sum).Sum); Errors = [long](($check.Errors | Measure-Object -Sum).Sum)
+        ErrorCores = $errCores; ErrorKind = $(if ($errCores.Count) { "$($check.FirstError[$errCores[0]])" } else { '' })
+        Sustain = $s.Sustain; PerfStart = $s.PerfStart; PerfEnd = $s.PerfEnd; LimitMin = $s.LimitMin; MHzAvg = $s.MHzAvg; WheaDuring = $whea
+    }
+}
+
+function Get-DiskReadSummary([double[]]$Speeds, [int]$Errors) {
+    # Speeds in MB/s, one per block read. Slow: below a third of the median (a weak area of the disk).
+    $v = @($Speeds | Where-Object { $_ -gt 0 })
+    if ($v.Count -eq 0) { return [pscustomobject]@{ Median = $null; Min = $null; Max = $null; SlowShare = $null; Errors = $Errors } }
+    $med = Get-Median $v
+    $slow = @($v | Where-Object { $_ -lt $med / 3 }).Count
+    return [pscustomobject]@{ Median = [math]::Round($med, 1); Min = [math]::Round(($v | Measure-Object -Minimum).Minimum, 1); Max = [math]::Round(($v | Measure-Object -Maximum).Maximum, 1)
+        SlowShare = [math]::Round(100 * $slow / $v.Count, 1); Errors = $Errors }
+}
+
+function Invoke-PassportDiskRead($Disk, [switch]$Full) {
+    # Reads the disk without the cache, never writing. Samples: 512 blocks of 4 MB spread over the whole
+    # surface (seconds to a minute). Full: the whole disk, block after block (can take hours on a hard drive).
+    if (-not (Initialize-PassportNative)) { return $null }
+    $errBefore = $Disk.ReadErrors
+    $r = New-Object YsoPassport.DiskRead
+    $r.Start([int]$Disk.Number, [long]$Disk.Size, [bool]$Full, 512, $(if ($Full) { 8MB } else { 4MB }))
+    $act = (L 'Reading {0}' $Disk.Name)
+    try {
+        while (-not $r.Finished) {
+            Start-Sleep -Milliseconds 500
+            Write-YsoProgress -Activity $act -Status (L '{0} read, {1} error(s)' (Format-Size $r.BytesRead) $r.Errors) -Percent ([math]::Min(100.0, 100.0 * $r.Done / [math]::Max(1, $r.Total))) -Force
+        }
+    } catch {
+        $r.Cancel(); $r.Wait()
+        throw
+    } finally { Write-YsoProgress -Activity $act -Completed }
+    $s = Get-DiskReadSummary $r.Speeds.ToArray() $r.Errors
+    $errAfter = $null
+    try { $errAfter = [long](Get-PhysicalDisk -ErrorAction Stop | Where-Object { [int]$_.DeviceId -eq [int]$Disk.Number } | Get-StorageReliabilityCounter -ErrorAction Stop).ReadErrorsUncorrected } catch { }
+    return [pscustomobject][ordered]@{ Mode = $(if ($Full) { 'full' } else { 'samples' }); Bytes = [long]$r.BytesRead; Errors = [int]$r.Errors; Problem = "$($r.Error)"
+        Median = $s.Median; Min = $s.Min; Max = $s.Max; SlowShare = $s.SlowShare
+        NewErrors = $(if ($null -ne $errBefore -and $null -ne $errAfter) { [math]::Max(0, $errAfter - $errBefore) } else { $null }) }
+}
+
+# --- Guided tests: what no sensor can see. YSO shows something, the user says what happened. ---
+function New-GuidedResult([string]$Result, [string]$Note = '') { return [pscustomobject]@{ R = $Result; Note = $Note } }
+
+function New-ToneWav([int]$Channel, [double]$Seconds = 0.8, [int]$Hz = 660) {
+    # A short beep in one ear: 16-bit stereo PCM, the other channel silent (0 = left, 1 = right).
+    $rate = 44100
+    $frames = [int]($rate * $Seconds)
+    $data = New-Object byte[] ($frames * 4)
+    for ($i = 0; $i -lt $frames; $i++) {
+        $fade = [math]::Min(1.0, [math]::Min($i, $frames - $i) / 2000.0)
+        $v = [int16]([math]::Sin(2 * [math]::PI * $Hz * $i / $rate) * 12000 * $fade)
+        $b = [BitConverter]::GetBytes($v)
+        $o = $i * 4 + 2 * $Channel
+        $data[$o] = $b[0]; $data[$o + 1] = $b[1]
+    }
+    $ms = New-Object System.IO.MemoryStream
+    $w = New-Object System.IO.BinaryWriter $ms
+    $w.Write([Text.Encoding]::ASCII.GetBytes('RIFF')); $w.Write([int](36 + $data.Length)); $w.Write([Text.Encoding]::ASCII.GetBytes('WAVEfmt '))
+    $w.Write([int]16); $w.Write([int16]1); $w.Write([int16]2); $w.Write([int]$rate); $w.Write([int]($rate * 4)); $w.Write([int16]4); $w.Write([int16]16)
+    $w.Write([Text.Encoding]::ASCII.GetBytes('data')); $w.Write([int]$data.Length); $w.Write($data)
+    $w.Flush()
+    return , $ms.ToArray()
+}
+
+function Get-WavPeak([byte[]]$Wav) {
+    # The loudest sample of a 16-bit PCM recording, in % of the maximum (0 to 100).
+    if (-not $Wav -or $Wav.Count -lt 48) { return 0 }
+    $i = 12; $start = -1; $len = 0
+    while ($i + 8 -le $Wav.Count) {
+        $id = [Text.Encoding]::ASCII.GetString($Wav, $i, 4); $size = [BitConverter]::ToInt32($Wav, $i + 4)
+        if ($id -eq 'data') { $start = $i + 8; $len = [math]::Min($size, $Wav.Count - $start); break }
+        $i += 8 + $size
+    }
+    if ($start -lt 0) { return 0 }
+    $peak = 0
+    for ($j = $start; $j + 1 -lt $start + $len; $j += 2) {
+        $v = [math]::Abs([int][BitConverter]::ToInt16($Wav, $j))
+        if ($v -gt $peak) { $peak = $v }
+    }
+    return [math]::Round(100 * $peak / 32768, 1)
+}
+
+function Read-GuidedAnswer([string]$Question, [object[]]$Buttons) {
+    # The question, then buttons in the window; in the console, the keys to type ("1 = Left, 2 = Right").
+    Write-Host ''
+    Write-Info $Question
+    $keys = @(foreach ($b in $Buttons) { if ("$($b[0])") { '{0} = {1}' -f $b[0], (L "$($b[1])") } else { L 'Enter = {0}' (L "$($b[1])") } }) -join ', '
+    return (Read-Choice $keys -Buttons $Buttons)
+}
+
+function New-YsoForm([string]$Title, [switch]$FullScreen) {
+    Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+    $f = New-Object System.Windows.Forms.Form
+    $f.Text = "YSO - $Title"
+    $f.TopMost = $true
+    $f.KeyPreview = $true
+    $f.StartPosition = 'CenterScreen'
+    if ($FullScreen) { $f.FormBorderStyle = 'None'; $f.WindowState = 'Maximized' }
+    else { $f.Size = New-Object System.Drawing.Size(900, 560); $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false }
+    $f.Font = New-Object System.Drawing.Font('Segoe UI', 11)
+    $f.Add_Shown({ $this.Activate() })
+    return $f
+}
+
+function Invoke-ScreenColors {
+    # Plain colours on the whole screen: a pixel that never changes, a stain or light at the edges shows.
+    $colors = @('Black', 'White', 'Red', 'Lime', 'Blue', 'Gray')
+    $f = New-YsoForm (L 'Screen test') -FullScreen
+    $f.BackColor = [System.Drawing.Color]::FromName($colors[0])
+    $f.Cursor = [System.Windows.Forms.Cursors]::Hand
+    $tip = New-Object System.Windows.Forms.Label
+    $tip.Text = (L 'Click (or press a key) for the next colour. Esc to finish. Look closely at the whole screen.')
+    $tip.ForeColor = [System.Drawing.Color]::Gray; $tip.AutoSize = $true; $tip.Location = New-Object System.Drawing.Point(30, 30)
+    $f.Controls.Add($tip)
+    $state = @{ I = 0 }
+    $next = {
+        $state.I++
+        $tip.Visible = $false
+        if ($state.I -ge $colors.Count) { $f.Close(); return }
+        $f.BackColor = [System.Drawing.Color]::FromName($colors[$state.I])
+    }.GetNewClosure()
+    $f.Add_Click($next); $tip.Add_Click($next)
+    $f.Add_KeyDown({ param($s, $e) if ($e.KeyCode -eq 'Escape') { $f.Close() } else { & $next } }.GetNewClosure())
+    [void]$f.ShowDialog()
+}
+
+function Get-KeyboardKeys {
+    $keys = @([char[]]'ABCDEFGHIJKLMNOPQRSTUVWXYZ' | ForEach-Object { "$_" }) + @('D0', 'D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D9')
+    return @($keys + @('Space', 'Return', 'Back', 'Tab', 'ShiftKey', 'ControlKey', 'Menu', 'Left', 'Right', 'Up', 'Down', 'Escape'))
+}
+
+function Invoke-KeyboardTest {
+    # Every key pressed lights up; what never lit up is listed afterwards.
+    $keys = Get-KeyboardKeys
+    $seen = @{}
+    $f = New-YsoForm (L 'Keyboard test')
+    $hdr = New-Object System.Windows.Forms.Label
+    $hdr.Text = (L 'Press every key below, one after the other. They turn green. Then click Done.')
+    $hdr.AutoSize = $true; $hdr.Location = New-Object System.Drawing.Point(20, 14)
+    $f.Controls.Add($hdr)
+    $labels = @{}
+    $x = 20; $y = 54
+    foreach ($k in $keys) {
+        $lb = New-Object System.Windows.Forms.Label
+        $lb.Text = $(switch ($k) { 'Return' { 'Enter' } 'Back' { (L 'Backspace') } 'ShiftKey' { 'Shift' } 'ControlKey' { 'Ctrl' } 'Menu' { 'Alt' } 'Escape' { 'Esc' } default { $k -replace '^D(\d)$', '$1' } })
+        $lb.TextAlign = 'MiddleCenter'; $lb.BorderStyle = 'FixedSingle'
+        $lb.Size = New-Object System.Drawing.Size($(if ($lb.Text.Length -gt 2) { 104 } else { 52 }), 40)
+        if ($x + $lb.Width -gt 860) { $x = 20; $y += 48 }
+        $lb.Location = New-Object System.Drawing.Point($x, $y)
+        $x += $lb.Width + 6
+        $f.Controls.Add($lb); $labels[$k] = $lb
+    }
+    $done = New-Object System.Windows.Forms.Button
+    $done.Text = (L 'Done'); $done.Size = New-Object System.Drawing.Size(140, 40); $done.Location = New-Object System.Drawing.Point(720, 460)
+    $done.Add_Click({ $f.Close() }.GetNewClosure())
+    $done.TabStop = $false
+    $f.Controls.Add($done)
+    $f.Add_PreviewKeyDown({ param($s, $e) $e.IsInputKey = $true })
+    $f.Add_KeyDown({
+        param($s, $e)
+        $k = "$($e.KeyCode)"
+        if ($k -match '^(L|R)(ShiftKey|ControlKey|Menu)$') { $k = $Matches[2] }
+        if ($labels.ContainsKey($k)) { $seen[$k] = $true; $labels[$k].BackColor = [System.Drawing.Color]::LightGreen }
+        $e.SuppressKeyPress = $true; $e.Handled = $true
+    }.GetNewClosure())
+    [void]$f.ShowDialog()
+    return @($keys | Where-Object { -not $seen.ContainsKey($_) })
+}
+
+function Invoke-TouchpadTest {
+    $f = New-YsoForm (L 'Touchpad test')
+    $done = @{}
+    $zones = @(@('left', (L 'Left-click here'), 20), @('right', (L 'Right-click here'), 310), @('wheel', (L 'Scroll here (two fingers)'), 600))
+    $labels = @{}
+    foreach ($z in $zones) {
+        $lb = New-Object System.Windows.Forms.Label
+        $lb.Text = $z[1]; $lb.TextAlign = 'MiddleCenter'; $lb.BorderStyle = 'FixedSingle'
+        $lb.Size = New-Object System.Drawing.Size(270, 300); $lb.Location = New-Object System.Drawing.Point($z[2], 60)
+        $f.Controls.Add($lb); $labels[$z[0]] = $lb
+    }
+    $mark = { param($id) $done[$id] = $true; $labels[$id].BackColor = [System.Drawing.Color]::LightGreen; if ($done.Count -ge 3) { $f.Close() } }.GetNewClosure()
+    $labels['left'].Add_MouseUp({ param($s, $e) if ("$($e.Button)" -eq 'Left') { & $mark 'left' } }.GetNewClosure())
+    $labels['right'].Add_MouseUp({ param($s, $e) if ("$($e.Button)" -eq 'Right') { & $mark 'right' } }.GetNewClosure())
+    $f.Add_MouseWheel({ param($s, $e) & $mark 'wheel' }.GetNewClosure())
+    $btn = New-Object System.Windows.Forms.Button
+    $btn.Text = (L 'Done'); $btn.Size = New-Object System.Drawing.Size(140, 40); $btn.Location = New-Object System.Drawing.Point(720, 460)
+    $btn.Add_Click({ $f.Close() }.GetNewClosure())
+    $f.Controls.Add($btn)
+    [void]$f.ShowDialog()
+    return @(@('left', 'right', 'wheel') | Where-Object { -not $done.ContainsKey($_) })
+}
+
+function Invoke-MicRecording([int]$Seconds = 3) {
+    # Records a few seconds with Windows' own recorder (winmm), then measures the loudest moment.
+    if (-not (Initialize-PassportNative)) { return $null }
+    $wav = Join-Path $env:TEMP ('yso-mic_{0}.wav' -f [guid]::NewGuid().ToString('N').Substring(0, 6))
+    try {
+        [void][YsoPassport.Winmm]::Send('close ysomic')
+        if ([YsoPassport.Winmm]::Send('open new Type waveaudio Alias ysomic') -ne 0) { return $null }
+        [void][YsoPassport.Winmm]::Send('set ysomic bitspersample 16 channels 1 samplespersec 16000 bytespersec 32000 alignment 2')
+        if ([YsoPassport.Winmm]::Send('record ysomic') -ne 0) { return $null }
+        for ($i = $Seconds; $i -gt 0; $i--) { Write-YsoProgress -Activity (L 'Recording: speak now') -Status (L '{0} s left' $i) -Percent (100 * ($Seconds - $i) / $Seconds) -Force; Start-Sleep -Seconds 1 }
+        [void][YsoPassport.Winmm]::Send('stop ysomic')
+        [void][YsoPassport.Winmm]::Send(('save ysomic "{0}"' -f $wav))
+        if (-not (Test-Path -LiteralPath $wav)) { return $null }
+        return (Get-WavPeak ([System.IO.File]::ReadAllBytes($wav)))
+    } finally {
+        [void][YsoPassport.Winmm]::Send('close ysomic')
+        Write-YsoProgress -Activity (L 'Recording: speak now') -Completed
+        Remove-Item -LiteralPath $wav -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-UsbDeviceIds {
+    return @(Get-CimInstance -ClassName Win32_PnPEntity -Filter "PNPDeviceID LIKE 'USB%' OR PNPDeviceID LIKE 'USBSTOR%'" -ErrorAction SilentlyContinue | ForEach-Object { "$($_.PNPDeviceID)" })
+}
+
+function Watch-UsbArrivals([int]$Seconds = 60) {
+    # Counts each time a USB device appears (plugged in), during $Seconds.
+    $known = @{}
+    foreach ($id in (Get-UsbDeviceIds)) { $known[$id] = $true }
+    $arrivals = 0
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        while ($clock.Elapsed.TotalSeconds -lt $Seconds) {
+            Start-Sleep -Milliseconds 1000
+            $now = @{}
+            foreach ($id in (Get-UsbDeviceIds)) { $now[$id] = $true; if (-not $known.ContainsKey($id)) { $arrivals++ } }
+            $known = $now
+            Write-YsoProgress -Activity (L 'Plug a USB stick or mouse into each port, one after the other') -Status (L '{0} plugged in so far, {1} s left' $arrivals ([int]($Seconds - $clock.Elapsed.TotalSeconds))) -Percent (100 * $clock.Elapsed.TotalSeconds / $Seconds) -Force
+        }
+    } finally { Write-YsoProgress -Activity (L 'Plug a USB stick or mouse into each port, one after the other') -Completed }
+    return $arrivals
+}
+
+function Get-WifiNetworkCount {
+    try {
+        $out = @(& netsh.exe wlan show networks 2>$null)
+        return @($out | Where-Object { $_ -match '^\s*SSID\s+\d+\s*:' }).Count
+    } catch { return $null }
+}
+
+function Test-OnCharger {
+    try {
+        $s = @(Get-CimInstance -Namespace 'root\wmi' -ClassName BatteryStatus -ErrorAction Stop)[0]
+        return [bool]$s.PowerOnline
+    } catch { }
+    try { return (@(Get-CimInstance -ClassName Win32_Battery -ErrorAction Stop)[0].BatteryStatus -eq 2) } catch { return $null }
+}
+
+function Show-GuidedTests($Passport) {
+    # About 5 minutes. Each test can be skipped; what is skipped is said so in the passport.
+    $g = [ordered]@{}
+    $yes = @(@('Y', (N 'Yes')), @('N', (N 'No')), @('', (N 'Skip')))
+    Write-Section 'GUIDED TESTS'
+    Write-Info 'YSO shows something, you say what you saw or heard. Each test can be skipped.'
+
+    Write-Step '1. Screen'
+    Write-Info 'Plain colours fill the screen. Look for a dot that never changes colour (a dead pixel), a stain, or light leaking at the edges.'
+    if ((Read-GuidedAnswer (N 'Start the screen test?') @(@('Y', (N 'Start')), @('', (N 'Skip')))) -eq 'Y') {
+        try { Invoke-ScreenColors } catch { Write-YsoError -Context 'passport: screen test' -ErrorRecord $_ }
+        $a = Read-GuidedAnswer (N 'What did you see?') @(@('0', (N 'Nothing wrong')), @('1', (N 'One dead pixel')), @('3', (N '2 or 3 dead pixels')), @('5', (N '4 or more dead pixels')), @('T', (N 'A stain or light leaking')), @('Z', (N 'A dead area or a crack')))
+        $g.Screen = switch ($a) { '0' { New-GuidedResult 'ok' } '1' { New-GuidedResult 'pixels' '1' } '3' { New-GuidedResult 'pixels' '3' } '5' { New-GuidedResult 'pixels' '5' } 'T' { New-GuidedResult 'stain' } 'Z' { New-GuidedResult 'dead' } default { New-GuidedResult 'skip' } }
+    } else { $g.Screen = New-GuidedResult 'skip' }
+
+    Write-Step '2. Keyboard'
+    if ((Read-GuidedAnswer (N 'Start the keyboard test?') @(@('Y', (N 'Start')), @('', (N 'Skip')))) -eq 'Y') {
+        $miss = @()
+        try { $miss = @(Invoke-KeyboardTest) } catch { Write-YsoError -Context 'passport: keyboard test' -ErrorRecord $_ }
+        if ($miss.Count -eq 0) { $g.Keyboard = New-GuidedResult 'ok' }
+        else {
+            $a = Read-GuidedAnswer (L 'These keys sent nothing: {0}. Do they not work?' (($miss -replace '^D(\d)$', '$1') -join ' ')) @(@('Y', (N 'They do not work')), @('N', (N 'I did not press them')))
+            $g.Keyboard = $(if ($a -eq 'Y') { New-GuidedResult 'fail' ($miss -join ' ') } else { New-GuidedResult 'ok' (L 'not all keys pressed') })
+        }
+    } else { $g.Keyboard = New-GuidedResult 'skip' }
+
+    if (Test-IsLaptop) {
+        Write-Step '3. Touchpad'
+        if ((Read-GuidedAnswer (N 'Start the touchpad test?') @(@('Y', (N 'Start')), @('', (N 'Skip')))) -eq 'Y') {
+            $miss = @()
+            try { $miss = @(Invoke-TouchpadTest) } catch { Write-YsoError -Context 'passport: touchpad test' -ErrorRecord $_ }
+            $g.Touchpad = $(if ($miss.Count -eq 0) { New-GuidedResult 'ok' } else { New-GuidedResult 'fail' ($miss -join ' ') })
+        } else { $g.Touchpad = New-GuidedResult 'skip' }
+    }
+
+    Write-Step '4. Speakers, left and right'
+    Write-Info 'Four short beeps, each in one speaker, in an order YSO picks at random. Say where you heard each one.'
+    if ((Read-GuidedAnswer (N 'Start the sound test?') @(@('Y', (N 'Start')), @('', (N 'Skip')))) -eq 'Y') {
+        $rnd = New-Object System.Random
+        $right = 0; $silent = @{}; $tries = 4
+        for ($t = 0; $t -lt $tries; $t++) {
+            $side = $rnd.Next(2)
+            try { $pl = New-Object System.Media.SoundPlayer (New-Object System.IO.MemoryStream (, (New-ToneWav $side))); $pl.PlaySync(); $pl.Dispose() } catch { Write-YsoError -Context 'passport: sound test' -ErrorRecord $_ }
+            $a = Read-GuidedAnswer (L 'Beep {0} of {1}: where did you hear it?' ($t + 1) $tries) @(@('1', (N 'Left')), @('2', (N 'Right')), @('0', (N 'I heard nothing')), @('A', (N 'Play it again')))
+            if ($a -eq 'A') { $t--; continue }
+            if ($a -eq '0') { $silent[$side] = $true }
+            elseif (($a -eq '1' -and $side -eq 0) -or ($a -eq '2' -and $side -eq 1)) { $right++ }
+        }
+        $g.Sound = $(if ($silent.Count) { New-GuidedResult 'fail' $(if ($silent.ContainsKey(0)) { L 'left speaker silent' } else { L 'right speaker silent' }) }
+                     elseif ($right -eq $tries) { New-GuidedResult 'ok' } else { New-GuidedResult 'fail' (L 'left and right swapped or unclear') })
+    } else { $g.Sound = New-GuidedResult 'skip' }
+
+    Write-Step '5. Microphone'
+    Write-Info 'YSO records 3 seconds. Speak or clap during them.'
+    if ((Read-GuidedAnswer (N 'Start the microphone test?') @(@('Y', (N 'Start')), @('', (N 'Skip')))) -eq 'Y') {
+        $peak = $null
+        try { $peak = Invoke-MicRecording 3 } catch { Write-YsoError -Context 'passport: microphone test' -ErrorRecord $_ }
+        if ($null -eq $peak) { $g.Mic = New-GuidedResult 'none' (L 'no microphone could record') }
+        elseif ($peak -ge 2) { $g.Mic = New-GuidedResult 'ok' (L 'loudest moment {0} %' $peak) }
+        else { $g.Mic = New-GuidedResult 'fail' (L 'almost silent ({0} %)' $peak) }
+    } else { $g.Mic = New-GuidedResult 'skip' }
+
+    Write-Step '6. Webcam'
+    $cams = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { @('Camera', 'Image') -contains "$($_.Class)" -and "$($_.Status)" -eq 'OK' })
+    if ($cams.Count -eq 0) { $g.Webcam = New-GuidedResult 'none' }
+    elseif ((Read-GuidedAnswer (N 'Open the Camera app to check the webcam?') @(@('Y', (N 'Open it')), @('', (N 'Skip')))) -eq 'Y') {
+        try { Start-Process 'microsoft.windows.camera:' } catch { }
+        $a = Read-GuidedAnswer (N 'Do you see the picture of the webcam?') $yes
+        $g.Webcam = switch ($a) { 'Y' { New-GuidedResult 'ok' } 'N' { New-GuidedResult 'fail' } default { New-GuidedResult 'skip' } }
+    } else { $g.Webcam = New-GuidedResult 'skip' }
+
+    Write-Step '7. USB ports'
+    Write-Info 'For 60 seconds YSO watches the USB ports. Plug a USB stick or a mouse into each port, one after the other.'
+    if ((Read-GuidedAnswer (N 'Start the USB test?') @(@('Y', (N 'Start')), @('', (N 'Skip')))) -eq 'Y') {
+        $n = Watch-UsbArrivals 60
+        $a = Read-GuidedAnswer (L 'YSO saw {0} device(s) plugged in. How many ports did you try?' $n) @(@('1', '1'), @('2', '2'), @('3', '3'), @('4', '4'), @('5', '5'), @('6', (N '6 or more')))
+        $tried = $(if ("$a" -match '^\d$') { [int]$a } else { 0 })
+        $g.Usb = $(if ($tried -eq 0) { New-GuidedResult 'skip' } elseif ($n -ge $tried) { New-GuidedResult 'ok' (L '{0} of {1} ports answered' $tried $tried) } else { New-GuidedResult 'fail' (L '{0} of {1} ports answered' $n $tried) })
+    } else { $g.Usb = New-GuidedResult 'skip' }
+
+    Write-Step '8. Wi-Fi and Bluetooth'
+    $wifi = @($Passport.Network | Where-Object { $_.Kind -eq 'wifi' })
+    if ($wifi.Count -eq 0) { $g.Wifi = New-GuidedResult 'none' }
+    else {
+        $n = Get-WifiNetworkCount
+        $g.Wifi = $(if ($n -gt 0) { New-GuidedResult 'ok' (L '{0} network(s) found' $n) } elseif ($null -eq $n) { New-GuidedResult 'skip' } else { New-GuidedResult 'fail' (L 'no network found') })
+    }
+    $bt = @(Get-PnpDevice -Class Bluetooth -PresentOnly -ErrorAction SilentlyContinue)
+    $g.Bluetooth = $(if ($bt.Count -eq 0) { New-GuidedResult 'none' } elseif (@($bt | Where-Object { "$($_.Status)" -eq 'OK' }).Count) { New-GuidedResult 'ok' (L 'adapter present and working') } else { New-GuidedResult 'fail' (L 'adapter reports a problem') })
+    Write-Info (L 'Wi-Fi: {0}. Bluetooth: {1}.' (Get-GuidedText $g.Wifi) (Get-GuidedText $g.Bluetooth))
+
+    if (Test-IsLaptop) {
+        Write-Step '9. Charger'
+        $on = Test-OnCharger
+        if (-not $on) {
+            Write-Info 'Plug the charger in: YSO waits 30 seconds for it.'
+            for ($i = 0; $i -lt 30 -and -not $on; $i++) { Start-Sleep -Seconds 1; $on = Test-OnCharger; Write-YsoProgress -Activity (L 'Waiting for the charger') -Status (L '{0} s left' (30 - $i)) -Percent (100 * $i / 30) -Force }
+            Write-YsoProgress -Activity (L 'Waiting for the charger') -Completed
+        }
+        $g.Charger = $(if ($on) { New-GuidedResult 'ok' } elseif ($null -eq $on) { New-GuidedResult 'skip' } else { New-GuidedResult 'fail' (L 'the battery did not see a charger') })
+    }
+    return [pscustomobject]$g
+}
+
+function Get-GuidedText($Result) {
+    if (-not $Result) { return (L 'not tested') }
+    $t = switch ($Result.R) {
+        'ok' { L 'works' } 'fail' { L 'does not work' } 'skip' { L 'not tested' } 'none' { L 'none on this PC' }
+        'pixels' { L '{0} dead pixel(s)' $Result.Note } 'stain' { L 'stain or light leak' } 'dead' { L 'dead area or crack' }
+        default { "$($Result.R)" }
+    }
+    if ($Result.Note -and $Result.R -ne 'pixels') { $t += ' (' + $Result.Note + ')' }
+    return $t
+}
+
+# --- The deep test: performance against the same model (Blender Open Data) and the video memory ---
+function Test-PassportDownloadUrl([string]$Url) {
+    # The only places the deep test downloads from: Blender's own server and GitHub (memtest_vulkan, the medians).
+    return ($Url -match '^https://(download\.blender\.org|github\.com|api\.github\.com|objects\.githubusercontent\.com|release-assets\.githubusercontent\.com|raw\.githubusercontent\.com)/')
+}
+
+function Save-PassportDownload([string]$Url, [string]$Path, [long]$MaxBytes, [string]$Activity) {
+    if (-not (Test-PassportDownloadUrl $Url)) { throw "Refused address: $Url" }
+    Enable-Tls12
+    $req = [System.Net.HttpWebRequest]::Create($Url)
+    $req.UserAgent = "YSO/$($script:Version)"
+    $req.Timeout = 30000
+    $req.AllowAutoRedirect = $true
+    $resp = $req.GetResponse()
+    $tmp = "$Path.part"
+    try {
+        if ($resp.ResponseUri.Scheme -ne 'https') { throw 'The download was redirected outside HTTPS.' }
+        $total = [long]$resp.ContentLength
+        $in = $resp.GetResponseStream()
+        $out = [System.IO.File]::Create($tmp)
+        try {
+            $buf = New-Object byte[] 262144
+            $got = [long]0
+            while (($n = $in.Read($buf, 0, $buf.Length)) -gt 0) {
+                $out.Write($buf, 0, $n)
+                $got += $n
+                if ($got -gt $MaxBytes) { throw 'The download is larger than expected.' }
+                Write-YsoProgress -Activity $Activity -Status (Format-Size $got) -Percent $(if ($total -gt 0) { 100 * $got / $total } else { -1 })
+            }
+        } finally { $out.Close() }
+        Move-Item -LiteralPath $tmp -Destination $Path -Force
+    } finally {
+        $resp.Close()
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        Write-YsoProgress -Activity $Activity -Completed
+    }
+}
+
+function ConvertTo-ArgumentLine([string[]]$Arguments) {
+    # Windows PowerShell joins -ArgumentList with spaces: an argument with a space needs its quotes.
+    return (@($Arguments | ForEach-Object { if ("$_" -match '[\s"]') { '"' + ("$_" -replace '"', '\"') + '"' } else { "$_" } }) -join ' ')
+}
+
+function Invoke-PassportTool([string]$Exe, [string[]]$Arguments, [string]$Activity, [int]$TimeoutMinutes = 60, [scriptblock]$Tick = $null) {
+    # Runs a downloaded tool hidden, with what it prints kept, the time shown, and Stop working.
+    $id = [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $outFile = Join-Path $env:TEMP "yso-tool-$id.out"; $errFile = Join-Path $env:TEMP "yso-tool-$id.err"
+    $p = Start-Process -FilePath $Exe -ArgumentList (ConvertTo-ArgumentLine $Arguments) -WorkingDirectory (Split-Path -Parent $Exe) -WindowStyle Hidden -PassThru `
+        -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        while (-not $p.WaitForExit(2000)) {
+            if ($clock.Elapsed.TotalMinutes -gt $TimeoutMinutes) { try { $p.Kill() } catch { }; throw (L '{0} did not finish in {1} minutes.' $Activity $TimeoutMinutes) }
+            if ($Tick) { & $Tick }
+            Write-YsoProgress -Activity $Activity -Status (L 'working for {0} min {1:00} s' ([int][math]::Floor($clock.Elapsed.TotalMinutes)) $clock.Elapsed.Seconds) -Force
+        }
+    } catch {
+        try { if (-not $p.HasExited) { $p.Kill() } } catch { }
+        throw
+    } finally {
+        Write-YsoProgress -Activity $Activity -Completed
+    }
+    $out = ''; $err = ''
+    try { $out = [System.IO.File]::ReadAllText($outFile) } catch { }
+    try { $err = [System.IO.File]::ReadAllText($errFile) } catch { }
+    Remove-Item -LiteralPath $outFile, $errFile -Force -ErrorAction SilentlyContinue
+    return [pscustomobject]@{ Code = $p.ExitCode; Out = $out; Err = $err }
+}
+
+function Get-PassportToolsDir {
+    $d = Join-Path $script:DataDir 'Tools'
+    New-Item -ItemType Directory -Path $d -Force | Out-Null
+    return $d
+}
+
+function ConvertTo-BenchKey([string]$Type, [string]$Name) {
+    # The same name on both sides (the launcher here, the public results in the medians): lower case,
+    # without (R), (TM) and a final "CPU", one space between words.
+    $n = ("$Name" -replace '\((R|TM|C)\)', '' -replace '(?i)\s+CPU$', '' -replace '\s+', ' ').Trim().ToLowerInvariant()
+    return ('{0}|{1}' -f "$Type".ToUpperInvariant(), $n)
+}
+
+function ConvertTo-BenchVersion([string]$Version) {
+    if ("$Version" -match '^(\d+)\.(\d+)') { return "$($Matches[1]).$($Matches[2])" }
+    return ''
+}
+
+function Get-BlenderMedians {
+    # The median score of each processor and graphics card in Blender Open Data, by Blender version and
+    # scene, made from the public data (CC0) by YSO's GitHub workflow every week. Kept for when offline.
+    $cache = Join-Path (Get-PassportToolsDir) 'blender-medians.json'
+    try {
+        Save-PassportDownload $script:BlenderMediansUrl "$cache.new" 30MB (L 'Reference results of Blender Open Data')
+        $j = Get-Content -LiteralPath "$cache.new" -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($j.devices) { Move-Item -LiteralPath "$cache.new" -Destination $cache -Force }
+    } catch { Write-YsoError -Context 'passport: reference results' -ErrorRecord $_ }
+    Remove-Item -LiteralPath "$cache.new" -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $cache) {
+        try { return (Get-Content -LiteralPath $cache -Raw -Encoding UTF8 | ConvertFrom-Json) } catch { }
+    }
+    return $null
+}
+
+function Find-BlenderMedian($Medians, [string]$Type, [string]$Name, [string]$Version) {
+    # For one device and one Blender version: the median of each scene and how many results it comes from.
+    if (-not $Medians -or -not $Medians.devices) { return $null }
+    $dev = $Medians.devices.PSObject.Properties[(ConvertTo-BenchKey $Type $Name)]
+    if (-not $dev) { return $null }
+    $ver = $dev.Value.PSObject.Properties[(ConvertTo-BenchVersion $Version)]
+    if (-not $ver) { return $null }
+    $scenes = @{}
+    foreach ($s in $ver.Value.PSObject.Properties) { $scenes[$s.Name] = [pscustomobject]@{ Median = [double]$s.Value[0]; Count = [int]$s.Value[1] } }
+    return $scenes
+}
+
+function Get-BlenderVersionsFor($Medians, [string]$Type, [string]$Name) {
+    # The Blender versions with results for this device, the best covered first.
+    if (-not $Medians -or -not $Medians.devices) { return @() }
+    $dev = $Medians.devices.PSObject.Properties[(ConvertTo-BenchKey $Type $Name)]
+    if (-not $dev) { return @() }
+    return @($dev.Value.PSObject.Properties | ForEach-Object {
+        $min = @($_.Value.PSObject.Properties | ForEach-Object { [int]$_.Value[1] } | Measure-Object -Minimum).Minimum
+        [pscustomobject]@{ Version = $_.Name; Count = [int]$min }
+    } | Sort-Object Count -Descending)
+}
+
+function ConvertFrom-BlenderJson([string]$Text) {
+    # What "benchmark ... --json" prints: an array with one object per scene (scene.label,
+    # stats.samples_per_minute, device_info.compute_devices, blender_version.version).
+    $a = $Text.IndexOf('['); $b = $Text.LastIndexOf(']')
+    if ($a -lt 0 -or $b -le $a) { return $null }
+    $items = @($Text.Substring($a, $b - $a + 1) | ConvertFrom-Json)
+    $scenes = @{}; $device = ''; $version = ''
+    foreach ($i in $items) {
+        if (-not $i.scene -or -not $i.stats) { continue }
+        $scenes["$($i.scene.label)"] = [double]$i.stats.samples_per_minute
+        if (-not $device -and $i.device_info -and $i.device_info.compute_devices) { $device = "$(@($i.device_info.compute_devices)[0].name)" }
+        if (-not $version -and $i.blender_version) { $version = "$($i.blender_version.version)" }
+    }
+    if ($scenes.Count -eq 0) { return $null }
+    return [pscustomobject]@{ Scenes = $scenes; Device = $device; Version = $version }
+}
+
+function Get-BlenderComparison([hashtable]$Scenes, [hashtable]$Reference) {
+    # Each scene against its median; the average of the ratios is the performance of this PC against the
+    # same model. Count: the smallest number of public results behind one of the medians.
+    $ratios = @(); $count = $null
+    foreach ($k in $Scenes.Keys) {
+        if (-not $Reference -or -not $Reference.ContainsKey($k) -or $Reference[$k].Median -le 0) { continue }
+        $ratios += ($Scenes[$k] / $Reference[$k].Median)
+        if ($null -eq $count -or $Reference[$k].Count -lt $count) { $count = $Reference[$k].Count }
+    }
+    if ($ratios.Count -eq 0) { return $null }
+    return [pscustomobject]@{ Ratio = [math]::Round(($ratios | Measure-Object -Average).Average, 3); Count = $count; Scenes = $ratios.Count }
+}
+
+function Install-BlenderLauncher {
+    # The official Blender Benchmark launcher (command line), downloaded once from download.blender.org.
+    $dir = Join-Path (Get-PassportToolsDir) 'blender-benchmark'
+    $exe = @(Get-ChildItem -LiteralPath $dir -Filter 'benchmark-launcher-cli.exe' -Recurse -File -ErrorAction SilentlyContinue) | Select-Object -First 1
+    if (-not $exe) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        $zip = Join-Path $dir 'launcher.zip'
+        $ok = $false
+        foreach ($u in $script:BlenderLauncherUrls) {
+            try { Save-PassportDownload $u $zip 100MB (L 'Downloading the Blender Benchmark launcher'); $ok = $true; break } catch { Write-YsoError -Context "passport: $u" -ErrorRecord $_ }
+        }
+        if (-not $ok) { return $null }
+        Expand-Archive -LiteralPath $zip -DestinationPath $dir -Force
+        Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
+        $exe = @(Get-ChildItem -LiteralPath $dir -Filter 'benchmark-launcher-cli.exe' -Recurse -File -ErrorAction SilentlyContinue) | Select-Object -First 1
+        if (-not $exe) { return $null }
+    }
+    $sig = Get-AuthenticodeSignature -LiteralPath $exe.FullName
+    $signed = ("$($sig.Status)" -eq 'Valid' -and "$($sig.SignerCertificate.Subject)" -match 'Blender')
+    return [pscustomobject]@{ Path = $exe.FullName; Signed = $signed; Signer = "$($sig.SignerCertificate.Subject)" }
+}
+
+function Get-BlenderLauncherVersions([string]$Exe) {
+    $r = Invoke-PassportTool $Exe @('blender', 'list') (L 'Blender Benchmark: available versions') 5
+    return @(($r.Out -split "`r?`n") | ForEach-Object { if ($_ -match '^\s*(\d+\.\d+(\.\d+)?[a-z]?)\s') { $Matches[1] } } | Select-Object -Unique)
+}
+
+function Get-BlenderDevices([string]$Exe, [string]$Version) {
+    # The devices Blender can render with: a name and a kind (CPU, OPTIX, CUDA, HIP, ONEAPI).
+    $r = Invoke-PassportTool $Exe @('devices', '--blender-version', $Version) (L 'Blender Benchmark: devices') 10
+    return @(($r.Out -split "`r?`n") | ForEach-Object {
+        if ($_ -match '^\s*(.+?)\s+(CPU|OPTIX|CUDA|HIP|ONEAPI|METAL)\s*$') { [pscustomobject]@{ Name = $Matches[1].Trim(); Type = $Matches[2] } }
+    })
+}
+
+function Invoke-BlenderRuns([string]$Exe, [string]$Version, [string]$Type, [string]$Device, [int]$Runs = 3, [scriptblock]$Tick = $null) {
+    # The three scenes, $Runs times: the median of each scene keeps one unlucky run from deciding.
+    $all = @{}
+    $dev = ''; $ver = $Version
+    for ($i = 1; $i -le $Runs; $i++) {
+        $a = @('benchmark') + $script:BlenderScenes + @('--blender-version', $Version, '--device-type', $Type)
+        if ($Type -ne 'CPU' -and $Device) { $a += @('--device-name', $Device) }
+        $a += '--json'
+        $r = Invoke-PassportTool $Exe $a (L 'Blender Benchmark on the {0}, run {1} of {2}' $(if ($Type -eq 'CPU') { L 'processor' } else { $Device }) $i $Runs) 60 $Tick
+        $j = ConvertFrom-BlenderJson $r.Out
+        if (-not $j) {
+            Write-YsoError -Context 'passport: Blender Benchmark' -ErrorRecord (New-Object System.Management.Automation.ErrorRecord ((New-Object System.Exception ("no result (code $($r.Code)): " + (Get-Truncated (($r.Err + ' ' + $r.Out) -replace '\s+', ' ') 400)))), 'blender', 'InvalidResult', $null)
+            continue
+        }
+        if (-not $dev) { $dev = $j.Device }
+        if ($j.Version) { $ver = $j.Version }
+        foreach ($k in $j.Scenes.Keys) { if (-not $all.ContainsKey($k)) { $all[$k] = New-Object System.Collections.Generic.List[double] }; $all[$k].Add($j.Scenes[$k]) }
+    }
+    if ($all.Count -eq 0) { return $null }
+    $med = @{}; $spread = 0
+    foreach ($k in $all.Keys) {
+        $m = Get-Median $all[$k].ToArray()
+        $med[$k] = [math]::Round($m, 2)
+        if ($m -gt 0 -and $all[$k].Count -gt 1) { $spread = [math]::Max($spread, 100 * (($all[$k] | Measure-Object -Maximum).Maximum - ($all[$k] | Measure-Object -Minimum).Minimum) / $m) }
+    }
+    return [pscustomobject]@{ Version = $ver; Type = $Type; Device = $(if ($dev) { $dev } else { $Device }); Scenes = $med; Runs = $Runs; Spread = [math]::Round($spread, 1)
+        Score = [math]::Round(($med.Values | Measure-Object -Sum).Sum, 1) }
+}
+
+function ConvertFrom-MemtestLog([string]$Text) {
+    # memtest_vulkan: "Error found", "ERRORS FOUND" or "fail" = the video memory gave back wrong data.
+    if (-not $Text) { return [pscustomobject]@{ Result = 'unknown'; Checked = $null } }
+    $checked = $null
+    foreach ($m in [regex]::Matches($Text, 'checked:\s*([\d\.]+)GB')) { $checked = [double]$m.Groups[1].Value }
+    if ($Text -match 'Error found|ERRORS FOUND|test fail') { return [pscustomobject]@{ Result = 'errors'; Checked = $checked } }
+    if ($Text -match 'PASSed|no any errors|NO ERRORS') { return [pscustomobject]@{ Result = 'ok'; Checked = $checked } }
+    return [pscustomobject]@{ Result = 'unknown'; Checked = $checked }
+}
+
+function Install-MemtestVulkan {
+    # memtest_vulkan (zlib license, by a GPU repair centre), from its GitHub release, with the SHA-256
+    # GitHub publishes for the file when there is one.
+    $dir = Join-Path (Get-PassportToolsDir) 'memtest_vulkan'
+    $exe = @(Get-ChildItem -LiteralPath $dir -Filter 'memtest_vulkan*.exe' -Recurse -File -ErrorAction SilentlyContinue) | Select-Object -First 1
+    if ($exe) { return $exe.FullName }
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    $rel = [Text.Encoding]::UTF8.GetString((Get-YsoWebBytes $script:MemtestRelease 2MB)) | ConvertFrom-Json
+    $arch = $(if ("$env:PROCESSOR_ARCHITECTURE" -eq 'ARM64') { 'arm|aarch' } else { 'x86_64|x64|amd64|win64|windows' })
+    $asset = @($rel.assets | Where-Object { "$($_.name)" -match '(?i)win|\.exe$' -and "$($_.name)" -notmatch '(?i)linux|\.tar' } |
+        Sort-Object @{ Expression = { if ("$($_.name)" -match "(?i)$arch") { 0 } else { 1 } } }) | Select-Object -First 1
+    if (-not $asset) { return $null }
+    $file = Join-Path $dir "$($asset.name)"
+    Save-PassportDownload "$($asset.browser_download_url)" $file 100MB (L 'Downloading memtest_vulkan')
+    if ("$($asset.digest)" -match '^sha256:([0-9a-fA-F]{64})$') {
+        if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $Matches[1].ToUpperInvariant()) {
+            Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
+            throw (L 'memtest_vulkan was not used: the file does not match the checksum GitHub publishes for it.')
+        }
+    }
+    if ($file -match '\.zip$') { Expand-Archive -LiteralPath $file -DestinationPath $dir -Force; Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue }
+    $exe = @(Get-ChildItem -LiteralPath $dir -Filter 'memtest_vulkan*.exe' -Recurse -File -ErrorAction SilentlyContinue) | Select-Object -First 1
+    if ($exe) { return $exe.FullName }
+    return $null
+}
+
+function Invoke-VramTest([string]$Exe, [int]$Seconds = 330, [scriptblock]$Tick = $null) {
+    # memtest_vulkan writes patterns into the video memory and reads them back: its standard test lasts
+    # 5 minutes. It runs in its own small window; YSO reads its log, then closes it.
+    $dir = Split-Path -Parent $Exe
+    Get-ChildItem -LiteralPath $dir -Filter '*.log' -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+    $p = Start-Process -FilePath $Exe -WorkingDirectory $dir -WindowStyle Minimized -PassThru
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    $text = ''
+    try {
+        while ($clock.Elapsed.TotalSeconds -lt ($Seconds + 60)) {
+            Start-Sleep -Seconds 2
+            if ($Tick) { & $Tick }
+            $log = @(Get-ChildItem -LiteralPath $dir -Filter '*.log' -File -ErrorAction SilentlyContinue) | Select-Object -First 1
+            if ($log) { try { $text = [System.IO.File]::ReadAllText($log.FullName) } catch { } }
+            if ($text -match 'Standard 5-minute test (PASSed|fail)' -or $text -match 'Error found') { break }
+            if ($clock.Elapsed.TotalSeconds -ge $Seconds -and $text -match 'written:') { break }
+            if ($p.HasExited) { break }
+            $left = [math]::Max(0, [int]($Seconds - $clock.Elapsed.TotalSeconds))
+            Write-YsoProgress -Activity (L 'Testing the video memory (memtest_vulkan)') -Status (L '{0} min {1:00} s left' ([int][math]::Floor($left / 60)) ($left % 60)) -Percent (100 * $clock.Elapsed.TotalSeconds / $Seconds) -Force
+        }
+    } finally {
+        try { if (-not $p.HasExited) { $p.Kill() } } catch { }
+        Write-YsoProgress -Activity (L 'Testing the video memory (memtest_vulkan)') -Completed
+    }
+    $r = ConvertFrom-MemtestLog $text
+    return [pscustomobject]@{ Result = $r.Result; Checked = $r.Checked; Seconds = [int]$clock.Elapsed.TotalSeconds }
+}
+
+function New-GpuLoadWatch {
+    # During a load on the graphics card: the highest temperature, the fan, and whether it slowed down from heat.
+    return @{ TempMax = $null; FanMax = $null; FanPercent = $null; Thermal = $false; Samples = 0 }
+}
+
+function Update-GpuLoadWatch([hashtable]$Watch, [string]$Name) {
+    $s = @(Read-GpuSensors | Where-Object { $_.Name -eq $Name }) | Select-Object -First 1
+    if ($s -and $s.Perf -and $s.Temperature -gt 0) {
+        $t = [math]::Round($s.Temperature / 10, 1)
+        if ($null -eq $Watch.TempMax -or $t -gt $Watch.TempMax) { $Watch.TempMax = $t }
+        if ($s.FanRpm -gt 0 -and ($null -eq $Watch.FanMax -or $s.FanRpm -gt $Watch.FanMax)) { $Watch.FanMax = [int]$s.FanRpm }
+    }
+    $n = @(Read-NvidiaSmi | Where-Object { $_.Name -eq $Name }) | Select-Object -First 1
+    if ($n) {
+        if ($null -ne $n.Temp -and ($null -eq $Watch.TempMax -or $n.Temp -gt $Watch.TempMax)) { $Watch.TempMax = $n.Temp }
+        if ($null -ne $n.FanPercent -and ($null -eq $Watch.FanPercent -or $n.FanPercent -gt $Watch.FanPercent)) { $Watch.FanPercent = $n.FanPercent }
+        if ($n.ThermalSlowdown) { $Watch.Thermal = $true }
+    }
+    $Watch.Samples++
+}
+
+function Invoke-PassportDeepTest($Passport) {
+    # About 30 minutes and a few hundred MB downloaded: Blender, its 3 scenes, memtest_vulkan.
+    Write-Section 'DEEP TEST'
+    $medians = Get-BlenderMedians
+    if (-not $medians) { Write-Warn 'The reference results of Blender Open Data could not be downloaded: the scores are measured, but not compared with the same model.' }
+    $launcher = $null
+    try { $launcher = Install-BlenderLauncher } catch { Write-YsoError -Context 'passport: Blender launcher' -ErrorRecord $_ }
+    if ($launcher -and -not $launcher.Signed) {
+        Write-Warn (L 'The Blender Benchmark launcher is not signed by the Blender Foundation ({0}).' $(if ($launcher.Signer) { $launcher.Signer } else { L 'no signature' }))
+        if (-not (Confirm-Action 'Run it anyway? It comes from download.blender.org.' $false)) { $launcher = $null }
+    }
+    if ($launcher) {
+        $exe = $launcher.Path
+        $versions = @(Get-BlenderLauncherVersions $exe)
+        if ($versions.Count -eq 0) { Write-Warn 'The Blender Benchmark launcher gave no Blender version: performance is not measured.' }
+        else {
+            # the version with the most public results for this processor, else the newest one the launcher offers
+            $pick = $null
+            foreach ($v in (Get-BlenderVersionsFor $medians 'CPU' $Passport.Cpu.Name)) {
+                $pick = @($versions | Where-Object { (ConvertTo-BenchVersion $_) -eq $v.Version } | Sort-Object { [version]($_ -replace '[a-z]$', '') } -Descending) | Select-Object -First 1
+                if ($pick) { break }
+            }
+            if (-not $pick) { $pick = @($versions | Sort-Object { [version]($_ -replace '[a-z]$', '') } -Descending)[0] }
+            [void](Invoke-PassportTool $exe @('blender', 'download', $pick) (L 'Downloading Blender {0}' $pick) 60)
+            [void](Invoke-PassportTool $exe (@('scenes', 'download', '--blender-version', $pick) + $script:BlenderScenes) (L 'Downloading the benchmark scenes') 60)
+            $devices = @(Get-BlenderDevices $exe $pick)
+            $cpuRun = Invoke-BlenderRuns $exe $pick 'CPU' '' 3
+            if ($cpuRun) {
+                $ref = Find-BlenderMedian $medians 'CPU' $(if ($cpuRun.Device) { $cpuRun.Device } else { $Passport.Cpu.Name }) $cpuRun.Version
+                $cpuRun | Add-Member -NotePropertyName Compare -NotePropertyValue (Get-BlenderComparison $cpuRun.Scenes $ref)
+                $Passport.Cpu.Blender = $cpuRun
+            }
+            foreach ($g in @($Passport.Gpus)) {
+                $dev = @($devices | Where-Object { $_.Type -ne 'CPU' -and ($_.Name -eq $g.Name -or $_.Name -like "*$($g.Name)*" -or $g.Name -like "*$($_.Name)*") } |
+                    Sort-Object @{ Expression = { @('OPTIX', 'HIP', 'ONEAPI', 'CUDA', 'METAL').IndexOf($_.Type) } }) | Select-Object -First 1
+                if (-not $dev) { continue }
+                $watch = New-GpuLoadWatch
+                $before = Get-Date
+                $run = Invoke-BlenderRuns $exe $pick $dev.Type $dev.Name 3 { Update-GpuLoadWatch $watch $g.Name }
+                if ($run) {
+                    $ref = Find-BlenderMedian $medians $dev.Type $dev.Name $run.Version
+                    $run | Add-Member -NotePropertyName Compare -NotePropertyValue (Get-BlenderComparison $run.Scenes $ref)
+                    $g.Blender = $run
+                }
+                $g.Load = [pscustomobject]$watch
+                $g.Tdr = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Display'; Id = 4101; StartTime = $before }).Count
+            }
+        }
+    }
+    $main = @($Passport.Gpus | Sort-Object { if ($_.Vram) { -$_.Vram } else { 0 } }) | Select-Object -First 1
+    if ($main) {
+        try {
+            $mt = Install-MemtestVulkan
+            if ($mt) {
+                $watch = New-GpuLoadWatch
+                $res = Invoke-VramTest $mt 330 { Update-GpuLoadWatch $watch $main.Name }
+                $main.Vmem = $res
+                if (-not $main.Load) { $main.Load = [pscustomobject]$watch }
+            } else { Write-Warn 'memtest_vulkan could not be downloaded: the video memory is not tested.' }
+        } catch {
+            Write-YsoError -Context 'passport: memtest_vulkan' -ErrorRecord $_
+            Write-Warn (L 'Video memory not tested: {0}' $_.Exception.Message)
+        }
+    }
+    $Passport.Mode = 'deep'
+}
+
+# --- The score: out of 100 for each part, and a grade from A to D ---
+function Get-GradeFromScore([double]$Score, [string]$Scale = 'common') {
+    # common: A 85-100, B 70-84, C 50-69, D below. battery: Back Market's 85 % for computers. ssd: life left.
+    $cut = switch ($Scale) { 'battery' { @(85, 80, 60) } 'ssd' { @(90, 70, 30) } default { @(85, 70, 50) } }
+    if ($Score -ge $cut[0]) { return 'A' }
+    if ($Score -ge $cut[1]) { return 'B' }
+    if ($Score -ge $cut[2]) { return 'C' }
+    return 'D'
+}
+
+function Get-WorseGrade([string]$A, [string]$B) {
+    if (-not $A) { return $B }
+    if (-not $B) { return $A }
+    if ([string]::CompareOrdinal($A, $B) -ge 0) { return $A }
+    return $B
+}
+
+function New-ScoreFactor([string]$Name, $Score, [int]$Weight, [string]$Note = '', [string]$Kind = 'measured') {
+    # Kind: measured (the hardware says it), maker (the maker's estimate), yso (YSO's rule), test (a test YSO ran).
+    return [pscustomobject]@{ Name = $Name; Score = $(if ($null -ne $Score) { [math]::Max(0.0, [math]::Min(100.0, [math]::Round([double]$Score))) } else { $null }); Weight = $Weight; Note = $Note; Kind = $Kind }
+}
+
+function Get-PerfPoints($Ratio) {
+    # Against the median of the same model: 95 % and more gets every point, 55 % gets none.
+    if ($null -eq $Ratio) { return $null }
+    return [math]::Round([math]::Max(0.0, [math]::Min(100.0, 100 * ([double]$Ratio - 0.55) / 0.40)), 1)
+}
+
+function Join-ScoreFactors([object[]]$Factors) {
+    # The weighted mean of the factors that could be measured; the others are left out and said so.
+    $have = @($Factors | Where-Object { $null -ne $_.Score })
+    if ($have.Count -eq 0) { return $null }
+    $w = ($have | Measure-Object Weight -Sum).Sum
+    return [math]::Round((($have | ForEach-Object { $_.Score * $_.Weight }) | Measure-Object -Sum).Sum / $w)
+}
+
+function New-ScoreComponent([string]$Id, [string]$Name, [int]$Weight, $Score, [string]$Grade, [object[]]$Factors = @(), [string[]]$Notes = @(), [bool]$Partial = $false) {
+    return [pscustomobject]@{ Id = $Id; Name = $Name; Weight = $Weight; Score = $Score; Grade = $Grade; Factors = @($Factors); Notes = @($Notes | Where-Object { $_ }); Partial = $Partial }
+}
+
+function Get-DiskScore($D) {
+    # SSD: its life left, then what lowers it. Hard drive: 100, then its defects. Returns score, grade, notes.
+    $notes = @()
+    $ssd = ("$($D.Media)" -ne 'HDD')
+    if ($ssd) {
+        $s = $(if ($null -ne $D.LifeLeft) { [double]$D.LifeLeft } else { 100 })
+        if ($null -eq $D.LifeLeft) { $notes += (L 'life left not reported') }
+        if ($D.MediaErrors -gt 0) { $s -= 10; $notes += (L '{0} media error(s)' $D.MediaErrors) }
+        if ($D.Critical -gt 0) { $s = [math]::Min($s, 20); $notes += (L 'critical warning: {0}' (Get-NvmeCriticalText $D.Critical)) }
+        if ($null -ne $D.Spare -and $null -ne $D.SpareThreshold -and $D.SpareThreshold -gt 0 -and $D.Spare -lt $D.SpareThreshold) { $s = [math]::Min($s, 20); $notes += (L 'spare space {0} %, below its threshold' $D.Spare) }
+    } else {
+        $s = 100
+        if ($D.Reallocated -gt 0) { $s = [math]::Max(70, 84 - 2 * $D.Reallocated); $notes += (L '{0} reallocated sector(s)' $D.Reallocated) }
+        if ($D.Pending -gt 0) { $s = [math]::Min($s, 50); $notes += (L '{0} sector(s) waiting to be reallocated' $D.Pending) }
+        if ($D.Uncorrectable -gt 0) { $s = [math]::Min($s, 40); $notes += (L '{0} sector(s) that could not be read' $D.Uncorrectable) }
+        if ($D.Predict) { $s = [math]::Min($s, 10); $notes += (L 'the drive predicts its own failure') }
+    }
+    if ("$($D.Health)" -eq 'Unhealthy') { $s = [math]::Min($s, 10); $notes += (L 'Windows reports it as failing') }
+    elseif ("$($D.Health)" -eq 'Warning') { $s = [math]::Min($s, 49); $notes += (L 'Windows reports a warning') }
+    if ($D.ReadErrors -gt 0) { $s = [math]::Min($s, 40); $notes += (L '{0} read error(s) Windows could not correct' $D.ReadErrors) }
+    if ($D.Read) {
+        if ($D.Read.Errors -gt 0) { $s = [math]::Min($s, 20); $notes += (L 'the read test hit {0} unreadable block(s)' $D.Read.Errors) }
+        elseif ($D.Read.SlowShare -gt 10) { $s -= 10; $notes += (L '{0} % of the disk reads very slowly' $D.Read.SlowShare) }
+    }
+    $s = [math]::Max(0, [math]::Round($s))
+    return [pscustomobject]@{ Score = $s; Grade = (Get-GradeFromScore $s $(if ($ssd) { 'ssd' } else { 'common' })); Notes = $notes }
+}
+
+function Get-PassportScore($P) {
+    $comp = New-Object System.Collections.Generic.List[object]
+    $ev = $P.Events
+
+    # Battery: its health in %, the threshold of Back Market for computers.
+    if ($P.Battery) {
+        $b = $P.Battery
+        $notes = @()
+        if ($b.Cycles) { $notes += (L '{0} charge cycles' $b.Cycles) }
+        if ($b.GaugeOff) { $notes += (L 'its charge gauge needs a reset: the real wear is not known') }
+        if ($b.Same) { $notes += (L 'the battery reports the same original and current capacity: possibly misread') }
+        $comp.Add((New-ScoreComponent 'battery' (N 'Battery') 20 ([int]$b.Health) (Get-GradeFromScore $b.Health 'battery') @((New-ScoreFactor (N 'Capacity left') $b.Health 100 (L '{0} of {1} mWh' ([long]$b.Full) ([long]$b.Design)))) $notes ([bool]($b.GaugeOff -or $b.Same))))
+    }
+
+    # Drives: the worst one decides.
+    $disks = @($P.Disks)
+    if ($disks.Count) {
+        $worst = $null; $all = @()
+        foreach ($d in $disks) {
+            $ds = Get-DiskScore $d
+            $sum = @($(if ($null -ne $d.LifeLeft) { L '{0} % of life left' $d.LifeLeft }), $(if ($d.Hours) { Format-PassportHours $d.Hours })) + @($ds.Notes)
+            $all += (New-ScoreFactor ('{0}' -f $d.Name) $ds.Score 1 ((@($sum | Where-Object { $_ })) -join ', ') $(if ($d.LifeSource -eq 'nvme' -or $d.LifeSource -eq 'smart') { 'maker' } else { 'measured' }))
+            if (-not $worst -or $ds.Score -lt $worst.Score) { $worst = $ds }
+        }
+        $comp.Add((New-ScoreComponent 'disks' (N 'Drives') 20 $worst.Score $worst.Grade $all $worst.Notes))
+    }
+
+    # Processor: performance against the same model, exact computations, cooling, stability.
+    if ($P.Cpu) {
+        $c = $P.Cpu
+        $cap = ''
+        $notes = @()
+        $ratio = $(if ($c.Blender -and $c.Blender.Compare) { $c.Blender.Compare.Ratio } else { $null })
+        $perf = New-ScoreFactor (N 'Performance against the same model') (Get-PerfPoints $ratio) 40 $(if ($null -ne $ratio) { L '{0:N0} % of the median of {1} results' (100 * $ratio) $c.Blender.Compare.Count } elseif ($c.Blender) { L 'measured, no reference for this model' } else { '' }) 'test'
+        $exact = $null; $cool = $null
+        if ($c.Check) {
+            $exact = New-ScoreFactor (N 'Exact computations') $(if ($c.Check.Errors -gt 0) { 0 } else { 100 }) 25 $(if ($c.Check.Errors -gt 0) { L '{0} wrong result(s) on core(s) {1}' $c.Check.Errors (($c.Check.ErrorCores) -join ', ') } else { L '{0} checks on {1} cores, none wrong' $c.Check.Iterations $c.Check.Workers }) 'test'
+            if ($c.Check.Errors -gt 0) { $cap = 'D' }
+            if ($null -ne $c.Check.Sustain) {
+                $cs = 100 * [math]::Min(1.0, $c.Check.Sustain / 0.95)
+                if ($null -ne $c.Check.LimitMin -and $c.Check.LimitMin -lt 90) { $cs = [math]::Min($cs, $c.Check.LimitMin) }
+                $cool = New-ScoreFactor (N 'Cooling') $cs 20 (L 'kept {0:N0} % of its speed after {1} min, limit down to {2} %' (100 * $c.Check.Sustain) ([int]($c.Check.Seconds / 60)) $c.Check.LimitMin) 'test'
+            }
+        }
+        if (-not $exact) { $exact = New-ScoreFactor (N 'Exact computations') $null 25 }
+        if (-not $cool) { $cool = New-ScoreFactor (N 'Cooling') $null 20 }
+        $st = 100
+        if ($ev) {
+            if ($ev.Whea19Days -ge 4) { $st = 40 } elseif ($ev.Whea19Days -ge 1) { $st = 70 }
+            if ($ev.Whea18 -gt 0) { $st = 0; $cap = 'D' }
+        }
+        if ($c.Check -and $c.Check.WheaDuring -gt 0) { $st = 0; $cap = 'D' }
+        $stab = New-ScoreFactor (N 'Stability') $st 15 $(if ($ev) { L '{0} fatal and {1} corrected hardware error(s) in {2} days' $ev.Whea18 $ev.Whea19 $ev.Days } else { '' })
+        $factors = @($perf, $exact, $cool, $stab)
+        $score = Join-ScoreFactors $factors
+        $grade = Get-WorseGrade (Get-GradeFromScore $score) $cap
+        if ($c.Raptor -and $c.MicrocodeOk -eq $false) { $notes += (L 'Intel Core 13th/14th gen with microcode {0}: update the BIOS to 0x12F or later' $c.Microcode) }
+        $comp.Add((New-ScoreComponent 'cpu' (N 'Processor') 15 $score $grade $factors $notes (@($factors | Where-Object { $null -eq $_.Score }).Count -gt 0)))
+    }
+
+    # Memory: Windows Memory Diagnostic and corrected memory errors (WHEA 47).
+    if ($P.Memory) {
+        $m = $P.Memory
+        $cap = ''; $notes = @()
+        $t = $m.LastTest
+        $s = $(if ($t) { if ($t.Pass) { 100 } else { 0 } } else { 100 })
+        if ($t -and -not $t.Pass) { $cap = 'D' }
+        if ($m.Whea47 -gt 0) { $s = [math]::Min($s, 60); $notes += (L '{0} corrected memory error(s)' $m.Whea47) }
+        if ($m.Slow) { $notes += (L 'runs below its rated speed: turn on XMP or EXPO in the BIOS') }
+        if ($m.Single) { $notes += (L 'one module only: a second one would double the bandwidth, if the PC has a free slot') }
+        $f = New-ScoreFactor (N 'Memory test') $s 100 $(if ($t) { L 'Windows Memory Diagnostic on {0}: {1}' $t.When $(if ($t.Pass) { L 'no errors' } else { L 'errors found' }) } else { L 'never tested: the score comes from the error logs only' }) 'test'
+        $comp.Add((New-ScoreComponent 'memory' (N 'Memory (RAM)') 15 $s (Get-WorseGrade (Get-GradeFromScore $s) $cap) @($f) $notes (-not $t)))
+    }
+
+    # Graphics card: the main one (the most video memory).
+    $g = @($P.Gpus | Sort-Object { if ($_.Vram) { -$_.Vram } else { 0 } }) | Select-Object -First 1
+    if ($g) {
+        $cap = ''; $notes = @()
+        $ratio = $(if ($g.Blender -and $g.Blender.Compare) { $g.Blender.Compare.Ratio } else { $null })
+        $perf = New-ScoreFactor (N 'Performance against the same model') (Get-PerfPoints $ratio) 40 $(if ($null -ne $ratio) { L '{0:N0} % of the median of {1} results' (100 * $ratio) $g.Blender.Compare.Count } elseif ($g.Blender) { L 'measured, no reference for this model' } else { '' }) 'test'
+        $vm = $null
+        if ($g.Vmem -and $g.Vmem.Result -ne 'unknown') {
+            $vm = New-ScoreFactor (N 'Video memory') $(if ($g.Vmem.Result -eq 'ok') { 100 } else { 0 }) 25 $(if ($g.Vmem.Result -eq 'ok') { L 'memtest_vulkan: no errors in {0} min' ([int][math]::Floor($g.Vmem.Seconds / 60)) } else { L 'memtest_vulkan found errors' }) 'test'
+            if ($g.Vmem.Result -ne 'ok') { $cap = 'D' }
+        } else { $vm = New-ScoreFactor (N 'Video memory') $null 25 }
+        $cool = New-ScoreFactor (N 'Cooling') $null 20
+        if ($g.Load -and $null -ne $g.Load.TempMax) {
+            $cs = 100
+            $warn = $g.TempWarn
+            if ($warn) { if ($g.Load.TempMax -ge $warn) { $cs = 30 } elseif ($g.Load.TempMax -gt $warn - 5) { $cs = 60 } }
+            if ($g.Load.Thermal) { $cs = [math]::Min($cs, 60) }
+            $fanNote = ''
+            if ($g.FanMax -and $g.Load.FanMax -and $g.Load.FanPercent -ge 60) {
+                $fr = $g.Load.FanMax / ($g.FanMax * $g.Load.FanPercent / 100)
+                if ($fr -lt 0.7) { $cs -= 30; $fanNote = L 'the fan turns at {0:N0} % of the speed it is asked for' (100 * $fr) }
+            }
+            $cool = New-ScoreFactor (N 'Cooling') $cs 20 ((@((L 'up to {0} °C under load' $g.Load.TempMax), $(if ($warn) { L 'slows down from {0} °C' $warn } else { '' }), $fanNote) | Where-Object { $_ }) -join ', ') 'test'
+        }
+        $st = 100
+        if ($ev) { $st = [math]::Max(20, 100 - 15 * $ev.GpuResetDays) ; if ($ev.GpuResetDays -eq 0) { $st = 100 } }
+        if ($g.Tdr -gt 0) { $st = 0; $cap = 'D' }
+        $stab = New-ScoreFactor (N 'Stability') $st 15 $(if ($ev) { L 'graphics driver reset on {0} day(s) in {1} days' $ev.GpuResetDays $ev.Days } else { '' })
+        $factors = @($perf, $vm, $cool, $stab)
+        $score = Join-ScoreFactors $factors
+        $comp.Add((New-ScoreComponent 'gpu' (N 'Graphics card') 10 $score (Get-WorseGrade (Get-GradeFromScore $score) $cap) $factors $notes (@($factors | Where-Object { $null -eq $_.Score }).Count -gt 0)))
+    }
+
+    # Screen and the rest: the guided tests.
+    $gt = $P.Guided
+    if ($gt -and $gt.Screen -and @('skip', 'none') -notcontains $gt.Screen.R) {
+        $s = switch ($gt.Screen.R) { 'ok' { 100 } 'pixels' { [math]::Max(70, 84 - 4 * [int]$gt.Screen.Note) } 'stain' { 60 } 'dead' { 10 } default { $null } }
+        if ($null -ne $s) { $comp.Add((New-ScoreComponent 'screen' (N 'Screen') 10 $s (Get-GradeFromScore $s) @((New-ScoreFactor (N 'Screen test') $s 100 (Get-GuidedText $gt.Screen) 'test')))) }
+    }
+    if ($gt) {
+        $names = [ordered]@{ Keyboard = (N 'Keyboard'); Touchpad = (N 'Touchpad'); Sound = (N 'Speakers'); Mic = (N 'Microphone'); Webcam = (N 'Webcam'); Usb = (N 'USB ports'); Wifi = (N 'Wi-Fi'); Bluetooth = (N 'Bluetooth'); Charger = (N 'Charger') }
+        $tested = @(); $failed = @(); $cap = ''
+        foreach ($k in $names.Keys) {
+            $r = $gt.PSObject.Properties[$k]
+            if (-not $r -or -not $r.Value -or @('skip', 'none') -contains $r.Value.R) { continue }
+            $tested += $k
+            if ($r.Value.R -eq 'fail') { $failed += $k; if ($k -eq 'Keyboard' -or $k -eq 'Charger') { $cap = 'D' } }
+        }
+        if ($tested.Count) {
+            $s = [math]::Max(0, 100 - 20 * $failed.Count)
+            $f = @(foreach ($k in $tested) { New-ScoreFactor $names[$k] $(if ($failed -contains $k) { 0 } else { 100 }) 1 (Get-GuidedText $gt.$k) 'test' })
+            $comp.Add((New-ScoreComponent 'devices' (N 'Keyboard, sound, ports') 10 $s (Get-WorseGrade (Get-GradeFromScore $s) $cap) $f))
+        }
+    }
+
+    $scored = @($comp | Where-Object { $null -ne $_.Score })
+    $global = $null; $grade = ''; $limit = $null
+    if ($scored.Count) {
+        $w = ($scored | Measure-Object Weight -Sum).Sum
+        $global = [math]::Round((($scored | ForEach-Object { $_.Score * $_.Weight }) | Measure-Object -Sum).Sum / $w)
+        foreach ($c in $scored) { $grade = Get-WorseGrade $grade $c.Grade }
+        $limit = @($scored | Where-Object { $_.Grade -eq $grade } | Sort-Object Score) | Select-Object -First 1
+    }
+    $deep = [bool](@($comp | ForEach-Object { $_.Factors } | Where-Object { $_.Name -eq 'Performance against the same model' -and $null -ne $_.Score }).Count)
+    return [pscustomobject]@{ Components = $comp.ToArray(); Global = $global; Grade = $grade; LimitedBy = $(if ($limit -and $grade -ne 'A') { $limit.Name } else { '' }); Deep = $deep }
+}
+
+# --- Over time: each passport against the first one of this PC ---
+function Get-PassportDir {
+    $d = Join-Path $script:DataDir 'Passports'
+    New-Item -ItemType Directory -Path $d -Force | Out-Null
+    return $d
+}
+
+function Save-PassportRecord($P) {
+    $path = Join-Path (Get-PassportDir) ('passport_{0}.json' -f (Get-Date).ToString('yyyyMMdd_HHmmss'))
+    [System.IO.File]::WriteAllText($path, ($P | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding $false))
+    return $path
+}
+
+function Read-PassportRecords {
+    return @(Get-ChildItem -LiteralPath (Get-PassportDir) -Filter 'passport_*.json' -File -ErrorAction SilentlyContinue | Sort-Object Name | ForEach-Object {
+        try { Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json } catch { }
+    })
+}
+
+function Get-PassportDay($When) {
+    # A passport read back from its file: When is a text in Windows PowerShell, a date in PowerShell 7.
+    try { return ([datetime]$When).ToString('yyyy-MM-dd') } catch { return "$When" }
+}
+
+function Compare-Passports($First, $Now) {
+    # What changed since the first passport, part by part. A counter that went down (hours of a drive,
+    # data written, charge cycles) means the parts are not the same, or a counter was reset.
+    $lines = @()
+    if (-not $First -or -not $Now) { return $lines }
+    foreach ($kind in @('Cpu', 'Gpu')) {
+        $a = $(if ($kind -eq 'Cpu') { $First.Cpu } else { @($First.Gpus)[0] }); $b = $(if ($kind -eq 'Cpu') { $Now.Cpu } else { @($Now.Gpus)[0] })
+        if ($a -and $b -and $a.Blender -and $b.Blender -and $a.Blender.Version -eq $b.Blender.Version -and $a.Blender.Score -gt 0) {
+            $pct = 100 * ($b.Blender.Score / $a.Blender.Score - 1)
+            $what = $(if ($kind -eq 'Cpu') { L 'Processor' } else { L 'Graphics card' })
+            if ([math]::Abs($pct) -lt 3) { $lines += (L '{0}: as fast as on {1} (Blender {2}, within the normal 2 to 5 %)' $what (Get-PassportDay $First.When) $b.Blender.Version) }
+            elseif ($pct -lt 0) { $lines += (L '{0}: {1:N0} % slower than on {2} (same scenes, Blender {3})' $what (-$pct) (Get-PassportDay $First.When) $b.Blender.Version) }
+            else { $lines += (L '{0}: {1:N0} % faster than on {2} (same scenes, Blender {3})' $what $pct (Get-PassportDay $First.When) $b.Blender.Version) }
+        }
+    }
+    if ($First.Battery -and $Now.Battery) {
+        $lines += (L 'Battery: {0} % now, {1} % on {2}' $Now.Battery.Health $First.Battery.Health (Get-PassportDay $First.When))
+        if ($First.Battery.Cycles -and $Now.Battery.Cycles -and $Now.Battery.Cycles -lt $First.Battery.Cycles) { $lines += (L 'Battery: fewer charge cycles than on {0}: not the same battery, or its counter was reset' (Get-PassportDay $First.When)) }
+    }
+    foreach ($d in @($Now.Disks)) {
+        $o = @($First.Disks | Where-Object { $_.Serial -and $_.Serial -eq $d.Serial }) | Select-Object -First 1
+        if (-not $o) { continue }
+        if ($null -ne $o.LifeLeft -and $null -ne $d.LifeLeft -and $o.LifeLeft -ne $d.LifeLeft) { $lines += (L '{0}: {1} % of life left now, {2} % on {3}' $d.Name $d.LifeLeft $o.LifeLeft (Get-PassportDay $First.When)) }
+        if ($o.Hours -and $d.Hours -and $d.Hours -lt $o.Hours) { $lines += (L '{0}: fewer hours of use than on {1}: its counter went back' $d.Name (Get-PassportDay $First.When)) }
+        if ($o.WrittenBytes -and $d.WrittenBytes -and $d.WrittenBytes -gt $o.WrittenBytes) { $lines += (L '{0}: {1} written since {2}' $d.Name (Format-Size ($d.WrittenBytes - $o.WrittenBytes)) (Get-PassportDay $First.When)) }
+    }
+    foreach ($d in @($First.Disks)) { if ($d.Serial -and -not @($Now.Disks | Where-Object { $_.Serial -eq $d.Serial }).Count) { $lines += (L 'Drive {0} of {1} is no longer in this PC' $d.Name (Get-PassportDay $First.When)) } }
+    return $lines
+}
+
+# --- The PDF and the JSON ---
+function Hide-Serial([string]$Text) {
+    # For a public listing: only the last 4 characters of a serial number stay.
+    $t = "$Text".Trim()
+    if ($t.Length -le 4) { return $t }
+    return ('*' * [math]::Min(8, $t.Length - 4)) + $t.Substring($t.Length - 4)
+}
+
+function Get-PassportKindText([string]$Kind) {
+    switch ($Kind) { 'maker' { return (L 'estimated by the maker') } 'yso' { return (L 'calculated by YSO') } 'test' { return (L 'measured by a test') } default { return (L 'measured') } }
+}
+
+function Format-PassportHours($Hours) {
+    if ($null -eq $Hours) { return '' }
+    return (L '{0:N0} h of use ({1:N0} days)' $Hours ($Hours / 24))
+}
+
+function New-PassportHtml($P, $Score, [switch]$Mask, [string]$Language = '') {
+    # The detailed report: cover, summary, one part per component with every value, the tests,
+    # the logs of 90 days, the guided tests, the method and its limits.
+    $keep = $script:Lang
+    if ($Language) { $script:Lang = $Language }
+    try {
+        $h = { param($t) ConvertTo-HtmlText "$t" }
+        $ser = { param($t) if ($Mask) { Hide-Serial $t } else { "$t" } }
+        $sb = New-Object System.Text.StringBuilder
+        $row = { param($k, $v) if ("$v") { [void]$sb.AppendLine(('<tr><th>{0}</th><td>{1}</td></tr>' -f (& $h (L $k)), (& $h $v))) } }
+        $gradeColor = @{ A = '#1f8a4c'; B = '#6a9e1f'; C = '#c98a00'; D = '#c62828' }
+        $m = $P.Machine
+        $json = $P | ConvertTo-Json -Depth 10
+        $sha = [BitConverter]::ToString((New-Object System.Security.Cryptography.SHA256Managed).ComputeHash([Text.Encoding]::UTF8.GetBytes($json))).Replace('-', '').Substring(0, 32)
+        $css = 'body{font-family:Segoe UI,Arial,sans-serif;color:#1d2420;margin:26px 34px;font-size:12px}h1{font-size:24px;margin:0;color:#1f7a4d}' +
+               'h2{font-size:15px;margin:22px 0 6px;border-bottom:1px solid #d6dfd9;padding-bottom:4px;page-break-after:avoid}h3{font-size:13px;margin:14px 0 4px}' +
+               '.sub{color:#667;margin:2px 0 16px}table{border-collapse:collapse;width:100%;margin-bottom:6px}th{text-align:left;font-weight:600;width:36%;padding:3px 8px 3px 0;vertical-align:top}' +
+               'td{padding:3px 0;vertical-align:top}.grid th,.grid td{border-bottom:1px solid #eef2ef;padding:4px 6px;width:auto}.badge{display:inline-block;min-width:22px;text-align:center;color:#fff;border-radius:4px;padding:1px 6px;font-weight:700}' +
+               '.big{font-size:40px;font-weight:700;margin:6px 0}.note{color:#667}.page{page-break-before:always}.foot{margin-top:24px;color:#889;font-size:10.5px}'
+        [void]$sb.AppendLine('<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + (& $h (L 'PC passport')) + '</title><style>' + $css + '</style></head><body>')
+        # Cover
+        [void]$sb.AppendLine(('<h1>{0}</h1><div class="sub">{1}</div>' -f (& $h (L 'PC passport')), (& $h (L 'Made on {0} by YSO {1}, {2}' ([datetime]$P.When).ToString('D') $P.Yso $(switch ($P.Mode) { 'deep' { L 'complete passport with the deep test' } 'complete' { L 'complete passport' } default { L 'quick passport' } })))))
+        if ($null -ne $Score.Global) {
+            $gc = $gradeColor[$Score.Grade]
+            [void]$sb.AppendLine(('<div class="big">{0}/100 <span class="badge" style="background:{1};font-size:26px">{2}</span></div>' -f $Score.Global, $gc, $Score.Grade))
+            $lim = $(if ($Score.LimitedBy) { L 'Grade {0}, limited by: {1}. The grade of the PC is the grade of its weakest part.' $Score.Grade (L $Score.LimitedBy) } else { L 'Grade {0}: every part tested is in the best band.' $Score.Grade })
+            [void]$sb.AppendLine(('<p>{0}</p>' -f (& $h $lim)))
+            [void]$sb.AppendLine(('<p class="note">{0}</p>' -f (& $h $(if ($Score.Deep) { L 'Margin: about 5 points either way, mostly because two PCs of the same model differ by a few %, and two runs on the same PC by 2 to 5 %. Between two passports of this PC, about 2 to 3 points.' } else { L 'Without the deep test, the scores come from what the parts report and from the tests run: no comparison with other PCs of the same model.' }))))
+        }
+        [void]$sb.AppendLine('<table>')
+        & $row (N 'Model') ("$($m.Maker) $($m.Model)").Trim()
+        & $row (N 'Serial number') (& $ser $m.Serial)
+        & $row (N 'Motherboard') ("$($m.Board) " + $(if ($m.BoardSerial) { '(' + (& $ser $m.BoardSerial) + ')' } else { '' })).Trim()
+        & $row (N 'Firmware (BIOS)') ("$($m.Bios) " + $(if ($m.BiosDate) { "($($m.BiosDate))" } else { '' })).Trim()
+        & $row (N 'Windows') ("$($m.Os) (build $($m.OsBuild))" + $(if ($m.Installed) { ', ' + (L 'installed on {0}' $m.Installed) } else { '' }))
+        if ($m.Tpm) { & $row (N 'Security chip (TPM)') (((@($m.Tpm.Maker, $m.Tpm.Version) | Where-Object { $_ }) -join ' ') + $(if ($m.Tpm.Ready) { ', ' + (L 'ready') } else { '' })) }
+        if ($null -ne $m.SecureBoot) { & $row (N 'Secure Boot') (Format-OnOff $m.SecureBoot) }
+        if ($m.EkHash -and -not $Mask) { & $row (N 'TPM endorsement key (SHA-256)') $m.EkHash }
+        & $row (N 'Passport fingerprint') ($sha + ' ' + (L '(SHA-256 of the JSON file saved with this PDF)'))
+        [void]$sb.AppendLine('</table>')
+        # Summary
+        [void]$sb.AppendLine(('<h2>{0}</h2><table class="grid"><tr><th>{1}</th><th>{2}</th><th>{3}</th><th>{4}</th></tr>' -f (& $h (L 'Summary')), (& $h (L 'Part')), (& $h (L 'Score')), (& $h (L 'Grade')), (& $h (L 'What decides it'))))
+        foreach ($c in $Score.Components) {
+            $why = @($c.Factors | Where-Object { $null -ne $_.Score -and $_.Note } | Select-Object -First 2 | ForEach-Object { $_.Note }) + @($c.Notes | Select-Object -First 1)
+            [void]$sb.AppendLine(('<tr><td><b>{0}</b>{1}</td><td>{2}</td><td><span class="badge" style="background:{3}">{4}</span></td><td>{5}</td></tr>' -f (& $h (L $c.Name)), $(if ($c.Partial) { ' <span class="note">(' + (& $h (L 'partial')) + ')</span>' } else { '' }),
+                $(if ($null -ne $c.Score) { "$($c.Score)/100" } else { '-' }), $gradeColor[$c.Grade], $c.Grade, (& $h (($why | Where-Object { $_ }) -join ' ; '))))
+        }
+        [void]$sb.AppendLine('</table>')
+        # One part per component
+        [void]$sb.AppendLine(('<h2 class="page">{0}</h2>' -f (& $h (L 'Every part in detail'))))
+        foreach ($c in $Score.Components) {
+            [void]$sb.AppendLine(('<h3>{0}: {1}</h3><table class="grid"><tr><th>{2}</th><th>{3}</th><th>{4}</th><th>{5}</th></tr>' -f (& $h (L $c.Name)), $(if ($null -ne $c.Score) { "$($c.Score)/100, $($c.Grade)" } else { '-' }), (& $h (L 'Factor')), (& $h (L 'Points')), (& $h (L 'Weight')), (& $h (L 'Measure'))))
+            foreach ($f in $c.Factors) {
+                [void]$sb.AppendLine(('<tr><td>{0}</td><td>{1}</td><td>{2}</td><td>{3}</td></tr>' -f (& $h (L $f.Name)), $(if ($null -ne $f.Score) { $f.Score } else { & $h (L 'not measured') }), $f.Weight, (& $h (@($f.Note, ('(' + (Get-PassportKindText $f.Kind) + ')')) -join ' '))))
+            }
+            [void]$sb.AppendLine('</table>')
+            foreach ($n in $c.Notes) { [void]$sb.AppendLine(('<div class="note">- {0}</div>' -f (& $h $n))) }
+        }
+        # Raw values
+        [void]$sb.AppendLine(('<h2 class="page">{0}</h2>' -f (& $h (L 'Values reported by the hardware'))))
+        $cpu = $P.Cpu
+        if ($cpu) {
+            [void]$sb.AppendLine(('<h3>{0}</h3><table>' -f (& $h (L 'Processor'))))
+            & $row (N 'Model') $cpu.Name
+            & $row (N 'Cores and threads') ('{0} / {1}' -f $cpu.Cores, $cpu.Threads)
+            & $row (N 'Nominal speed') ('{0} MHz' -f $cpu.BaseMHz)
+            & $row (N 'Microcode') $cpu.Microcode
+            if ($cpu.Check) {
+                & $row (N 'Load test') (L '{0} s on {1} cores, {2} checks, {3} wrong' $cpu.Check.Seconds $cpu.Check.Workers $cpu.Check.Iterations $cpu.Check.Errors)
+                & $row (N 'Speed during the test') (L '{0:N0} % of nominal at the start, {1:N0} % at the end, {2} MHz on average' $cpu.Check.PerfStart $cpu.Check.PerfEnd $cpu.Check.MHzAvg)
+                if ($null -ne $cpu.Check.LimitMin) { & $row (N 'Lowest performance limit') ('{0} %' -f $cpu.Check.LimitMin) }
+            }
+            if ($cpu.Blender) { & $row (N 'Blender Benchmark') (L '{0} samples/min (Blender {1}, median of {2} runs, spread {3} %)' $cpu.Blender.Score $cpu.Blender.Version $cpu.Blender.Runs $cpu.Blender.Spread) }
+            [void]$sb.AppendLine('</table>')
+        }
+        if ($P.Memory) {
+            [void]$sb.AppendLine(('<h3>{0}</h3><table>' -f (& $h (L 'Memory (RAM)'))))
+            & $row (N 'Total') (Format-Size $P.Memory.Total)
+            foreach ($s in @($P.Memory.Sticks)) { & $row $s.Slot ((@((Format-Size $s.Size), $s.Maker, $s.Part, (L '{0} MT/s (rated {1})' $s.Speed $s.Rated), $(if ($s.Serial) { L 'serial {0}' (& $ser $s.Serial) } else { '' })) | Where-Object { $_ }) -join ', ') }
+            [void]$sb.AppendLine('</table>')
+        }
+        foreach ($d in @($P.Disks)) {
+            [void]$sb.AppendLine(('<h3>{0}</h3><table>' -f (& $h $d.Name)))
+            & $row (N 'Kind') ('{0} {1}, {2}' -f $d.Bus, $d.Media, (Format-Size $d.Size))
+            & $row (N 'Serial number') (& $ser $d.Serial)
+            & $row (N 'Firmware') $d.Firmware
+            if ($null -ne $d.LifeLeft) { & $row (N 'Life left') ('{0} % ({1})' -f $d.LifeLeft, (Get-PassportKindText 'maker')) }
+            if ($null -ne $d.Spare) { & $row (N 'Spare space') ('{0} % ({1} %)' -f $d.Spare, (L 'threshold {0}' $d.SpareThreshold)) }
+            & $row (N 'Hours of use') (Format-PassportHours $d.Hours)
+            if ($d.Cycles) { & $row (N 'Power cycles') ('{0:N0}' -f $d.Cycles) }
+            if ($d.Unsafe) { & $row (N 'Unsafe shutdowns') ('{0:N0}' -f $d.Unsafe) }
+            if ($d.WrittenBytes) { & $row (N 'Data written') (Format-Size $d.WrittenBytes) }
+            if ($d.ReadBytes) { & $row (N 'Data read') (Format-Size $d.ReadBytes) }
+            if ($null -ne $d.Temp) { & $row (N 'Temperature') ('{0} °C' -f $d.Temp + $(if ($d.TempMax) { ' (' + (L 'highest {0} °C' $d.TempMax) + ')' } else { '' })) }
+            if ($null -ne $d.Reallocated) { & $row (N 'Reallocated sectors') $d.Reallocated }
+            if ($null -ne $d.Pending) { & $row (N 'Sectors waiting') $d.Pending }
+            if ($d.Read) { & $row (N 'Read test') (L '{0} read in {1} mode, {2} error(s), median {3} MB/s, slowest {4} MB/s' (Format-Size $d.Read.Bytes) $(if ($d.Read.Mode -eq 'full') { L 'full' } else { L 'samples' }) $d.Read.Errors $d.Read.Median $d.Read.Min) }
+            [void]$sb.AppendLine('</table>')
+        }
+        if ($P.Battery) {
+            $b = $P.Battery
+            [void]$sb.AppendLine(('<h3>{0}</h3><table>' -f (& $h (L 'Battery'))))
+            & $row (N 'Model') ((@($b.Maker, $b.Name) | Where-Object { $_ }) -join ' ')
+            & $row (N 'Serial number') (& $ser $b.Serial)
+            & $row (N 'Capacity') (L '{0} mWh now, {1} mWh when new ({2} %)' ([long]$b.Full) ([long]$b.Design) $b.Reported)
+            if ($b.Cycles) { & $row (N 'Charge cycles') $b.Cycles }
+            [void]$sb.AppendLine('</table>')
+        }
+        foreach ($g in @($P.Gpus)) {
+            [void]$sb.AppendLine(('<h3>{0}</h3><table>' -f (& $h $g.Name)))
+            & $row (N 'Driver') ("$($g.Driver) " + $(if ($g.DriverDate) { "($($g.DriverDate))" } else { '' })).Trim()
+            if ($g.Vram) { & $row (N 'Video memory') (Format-Size $g.Vram) }
+            if ($null -ne $g.Temp) { & $row (N 'Temperature at rest') ('{0} °C' -f $g.Temp) }
+            if ($g.TempWarn) { & $row (N 'Slows down from') ('{0} °C' -f $g.TempWarn) }
+            if ($g.Fan) { & $row (N 'Fan at rest') ('{0} rpm' -f $g.Fan + $(if ($g.FanMax) { ' (' + (L 'highest {0} rpm' $g.FanMax) + ')' } else { '' })) }
+            if ($g.Load) { & $row (N 'Under load') ((@($(if ($null -ne $g.Load.TempMax) { L 'up to {0} °C' $g.Load.TempMax }), $(if ($g.Load.FanMax) { '{0} rpm' -f $g.Load.FanMax }), $(if ($g.Load.Thermal) { L 'slowed down by heat' })) | Where-Object { $_ }) -join ', ') }
+            if ($g.Blender) { & $row (N 'Blender Benchmark') (L '{0} samples/min (Blender {1}, {2}, median of {3} runs)' $g.Blender.Score $g.Blender.Version $g.Blender.Type $g.Blender.Runs) }
+            if ($g.Vmem) { & $row (N 'Video memory test') (Get-GuidedText ([pscustomobject]@{ R = $(if ($g.Vmem.Result -eq 'ok') { 'ok' } elseif ($g.Vmem.Result -eq 'errors') { 'fail' } else { 'skip' }); Note = '' })) }
+            [void]$sb.AppendLine('</table>')
+        }
+        foreach ($mo in @($P.Monitors)) {
+            [void]$sb.AppendLine(('<h3>{0}</h3><table>' -f (& $h ((@($mo.Maker, $mo.Name) | Where-Object { $_ }) -join ' '))))
+            & $row (N 'Serial number') (& $ser $mo.Serial)
+            if ($mo.Year) { & $row (N 'Made in') (L 'week {0} of {1}' $mo.Week $mo.Year) }
+            [void]$sb.AppendLine('</table>')
+        }
+        if (@($P.Network).Count) {
+            [void]$sb.AppendLine(('<h3>{0}</h3><table>' -f (& $h (L 'Network adapters'))))
+            foreach ($n in @($P.Network)) { & $row $n.Name ((@($n.Status, $n.Speed, $(if ($n.Mac -and -not $Mask) { $n.Mac })) | Where-Object { $_ }) -join ', ') }
+            [void]$sb.AppendLine('</table>')
+        }
+        # Logs, guided tests, method
+        if ($P.Events) {
+            $e = $P.Events
+            [void]$sb.AppendLine(('<h2>{0}</h2><table>' -f (& $h (L 'The last {0} days in Windows'' logs' $e.Days))))
+            & $row (N 'Fatal hardware errors (WHEA 18)') $e.Whea18
+            & $row (N 'Corrected processor errors (WHEA 19)') (L '{0}, on {1} day(s)' $e.Whea19 $e.Whea19Days)
+            & $row (N 'Corrected PCI Express errors (WHEA 17)') $e.Whea17
+            & $row (N 'Corrected memory errors (WHEA 47)') $e.Whea47
+            & $row (N 'Graphics driver resets and timeouts') (L '{0}, on {1} day(s)' $e.GpuResets $e.GpuResetDays)
+            & $row (N 'Blue screens') $e.Bsod
+            & $row (N 'Unexpected shutdowns') $e.Unexpected
+            if ($null -ne $P.Stability) { & $row (N 'Stability index of Windows') ('{0}/10' -f $P.Stability) }
+            [void]$sb.AppendLine('</table>')
+        }
+        if ($P.Guided) {
+            [void]$sb.AppendLine(('<h2>{0}</h2><table>' -f (& $h (L 'Guided tests'))))
+            $names = [ordered]@{ Screen = (N 'Screen'); Keyboard = (N 'Keyboard'); Touchpad = (N 'Touchpad'); Sound = (N 'Speakers'); Mic = (N 'Microphone'); Webcam = (N 'Webcam'); Usb = (N 'USB ports'); Wifi = (N 'Wi-Fi'); Bluetooth = (N 'Bluetooth'); Charger = (N 'Charger') }
+            foreach ($k in $names.Keys) { $r = $P.Guided.PSObject.Properties[$k]; if ($r -and $r.Value) { & $row $names[$k] (Get-GuidedText $r.Value) } }
+            [void]$sb.AppendLine('</table>')
+        }
+        [void]$sb.AppendLine(('<h2>{0}</h2>' -f (& $h (L 'Method and limits'))))
+        foreach ($t in @(
+                (N 'Each part gets a score out of 100. When the hardware gives a percentage (battery health, SSD life left), the score is that percentage; otherwise YSO calculates it with fixed rules, written next to each factor. Grades: A from 85, B from 70, C from 50, D below; the battery follows Back Market (85 % for computers), SSDs their life left (A from 90 %).'),
+                (N 'The grade of the PC is the grade of its weakest part, as refurbishers do. The score of the PC is the weighted mean of its parts: drives and battery 20 each, processor and memory 15 each, graphics card, screen and the rest 10 each.'),
+                (N 'Performance against the same model: the Blender Benchmark (the official tool of Blender Open Data) is run three times, and the median of each scene is compared with the median of the public results of the same processor or graphics card, with the same Blender version. Every point from 95 % of the median, none at 55 %.'),
+                (N 'Exact computations: each core repeats computations whose result is known in advance (SHA-256, floating point, integers). One wrong result means a faulty core: grade D. Video memory: memtest_vulkan writes patterns and reads them back for 5 minutes.'),
+                (N 'Limits: no consumer chip counts its own wear, so the processor and graphics card are judged on what wear causes: speed, heat, errors. The exact processor temperature needs a kernel driver, which YSO does not install. A test that passes does not prove that a rare fault never happens. This report was made on the PC by its owner and is not certified.'))) {
+            [void]$sb.AppendLine(('<p>{0}</p>' -f (& $h (L $t))))
+        }
+        [void]$sb.AppendLine(('<div class="foot">{0}</div></body></html>' -f (& $h $(if ($Mask) { L 'Serial numbers are shortened in this copy. No user name or PC name is in it.' } else { L 'No user name or PC name is in this report.' }))))
+        return $sb.ToString()
+    } finally { $script:Lang = $keep }
+}
+
+function Save-PassportFiles($P, $Score, [switch]$Mask, [string]$Language = '') {
+    # The PDF and the JSON file of every measure, side by side on the Desktop.
+    $desktop = Get-DesktopFolder
+    $keep = $script:Lang
+    if ($Language) { $script:Lang = $Language }
+    $name = (L 'PC passport') + ' ' + ([datetime]$P.When).ToString('yyyy-MM-dd HHmm')
+    $script:Lang = $keep
+    $jsonPath = [System.IO.Path]::Combine($desktop, "$name.json")
+    $copy = $P | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+    if ($Mask) {
+        $copy.Machine.Serial = Hide-Serial $copy.Machine.Serial; $copy.Machine.BoardSerial = Hide-Serial $copy.Machine.BoardSerial; $copy.Machine.EkHash = ''
+        foreach ($d in @($copy.Disks | Where-Object { $_ })) { $d.Serial = Hide-Serial $d.Serial }
+        if ($copy.Memory) { foreach ($s in @($copy.Memory.Sticks | Where-Object { $_ })) { $s.Serial = Hide-Serial $s.Serial } }
+        foreach ($mo in @($copy.Monitors | Where-Object { $_ })) { $mo.Serial = Hide-Serial $mo.Serial }
+        foreach ($n in @($copy.Network | Where-Object { $_ })) { $n.Mac = '' }
+        if ($copy.Battery) { $copy.Battery.Serial = Hide-Serial $copy.Battery.Serial }
+    }
+    [System.IO.File]::WriteAllText($jsonPath, ($copy | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding $false))
+    $html = [System.IO.Path]::Combine($env:TEMP, "$name.html")
+    [System.IO.File]::WriteAllText($html, (New-PassportHtml $copy $Score -Mask:$Mask -Language $Language), (New-Object System.Text.UTF8Encoding $false))
+    $pdf = [System.IO.Path]::Combine($desktop, "$name.pdf")
+    if (ConvertTo-PdfWithEdge $html $pdf) {
+        Remove-Item -LiteralPath $html -Force -ErrorAction SilentlyContinue
+        Write-Ok (L 'Saved on your Desktop: {0} and the JSON file of every measure' ([System.IO.Path]::GetFileName($pdf)))
+        Start-Process explorer.exe -ArgumentList "/select,`"$pdf`""
+    } else {
+        $keepHtml = [System.IO.Path]::Combine($desktop, "$name.html")
+        Move-Item -LiteralPath $html -Destination $keepHtml -Force
+        Write-Warn 'Edge could not make the PDF: the passport is saved as a web page on your Desktop. Open it, then print it to PDF (Ctrl+P).'
+        Start-Process explorer.exe -ArgumentList "/select,`"$keepHtml`""
+    }
+}
+
+# --- The tool ---
+function Write-PassportScore($Score) {
+    $colors = @{ A = 'Green'; B = 'Green'; C = 'Yellow'; D = 'Red' }
+    Write-Section 'SCORE'
+    if ($null -eq $Score.Global) { Write-Info 'Nothing could be scored on this PC.'; return }
+    Write-Kv 'This PC' (L '{0}/100, grade {1}' $Score.Global $Score.Grade) $colors[$Score.Grade]
+    if ($Score.LimitedBy) { Write-Info (L 'Grade {0}, limited by: {1}. The grade of the PC is the grade of its weakest part.' $Score.Grade (L $Score.LimitedBy)) }
+    foreach ($c in $Score.Components) {
+        $why = @($c.Factors | Where-Object { $null -ne $_.Score -and $_.Note } | Select-Object -First 1 | ForEach-Object { $_.Note }) + @($c.Notes | Select-Object -First 1)
+        $txt = '{0}/100  {1}' -f $c.Score, $c.Grade
+        if ($c.Partial) { $txt += '  (' + (L 'partial') + ')' }
+        if (@($why | Where-Object { $_ }).Count) { $txt += '  ' + ((@($why | Where-Object { $_ })) -join ' ; ') }
+        Write-Kv $c.Name $txt $colors[$c.Grade]
+    }
+    Write-Host ''
+    if ($Score.Deep) { Write-Info 'Margin: about 5 points either way, mostly because two PCs of the same model differ by a few %, and two runs on the same PC by 2 to 5 %. Between two passports of this PC, about 2 to 3 points.' }
+    else { Write-Info 'Without the deep test, the scores come from what the parts report and from the tests run: no comparison with other PCs of the same model.' }
+}
+
+function Show-PassportHistory {
+    $all = @(Read-PassportRecords)
+    Write-Section 'PREVIOUS PASSPORTS'
+    if ($all.Count -eq 0) { Write-Info 'No passport yet on this PC.'; return }
+    foreach ($r in $all) { Write-Kv ([datetime]$r.When).ToString('g') $(if ($r.Score -and $null -ne $r.Score.Global) { L '{0}/100, grade {1}' $r.Score.Global $r.Score.Grade } else { '' }) }
+    if ($all.Count -ge 2) {
+        Write-Section 'SINCE THE FIRST PASSPORT'
+        foreach ($l in (Compare-Passports $all[0] $all[-1])) { Write-Info $l }
+    }
+    if (Confirm-Action 'Open the folder of the passports?' $false) { Start-Process explorer.exe -ArgumentList "`"$(Get-PassportDir)`"" }
+}
+
+function Show-PcPassport($Sample = $null) {
+    # -Sample: a made-up passport for the window's pictures: only its score is shown.
+    Clear-Host
+    Write-Section 'PC PASSPORT'
+    if ($null -ne $Sample) { Write-PassportScore (Get-PassportScore $Sample); return }
+    Write-Info 'The precise state of every part of this PC, with a score out of 100 for each, and a detailed PDF to send to a professional or a buyer.'
+    Write-Info 'Reading the parts changes nothing. The tests load the PC: plug a laptop in, and close your other apps first.'
+    Write-Host ''
+    Write-Option '1' 'Quick passport (about 2 minutes)' 'What every part reports about itself, and the hardware errors of the last 90 days.'
+    Write-Option '2' 'Complete passport (about 20 minutes)' 'Adds the processor under load for 10 minutes, a read of each drive and the guided tests: screen, keyboard, sound, microphone, webcam, ports.'
+    Write-Option '3' 'Complete passport with the deep test (about 50 minutes)' 'Adds the Blender Benchmark, compared with the same model, and a test of the video memory. Downloads a few hundred MB from Blender and GitHub.'
+    Write-Option '4' 'Previous passports' 'What changed since the first one, and the folder where YSO keeps them.'
+    Write-Option '0' 'Back'
+    $c = Read-Choice -Hint 'Click the passport you want.'
+    if ($c -eq '4') { Show-PassportHistory; return }
+    if (@('1', '2', '3') -notcontains $c) { return }
+    if ($c -eq '3') {
+        Write-Info 'The deep test downloads the Blender Benchmark launcher and Blender (download.blender.org), 3 test scenes and memtest_vulkan (GitHub). Your results are not sent anywhere.'
+        if (-not (Confirm-Action 'Download them and start?' $true)) { return }
+    }
+    $p = Get-PassportReadings
+    $p.Mode = $(switch ($c) { '3' { 'deep' } '2' { 'complete' } default { 'quick' } })
+    if ($c -ne '1') {
+        Write-Step 'Processor under load for 10 minutes, every computation checked'
+        try { $p.Cpu.Check = Invoke-PassportCpuTest 600 } catch { if (Test-StopError $_) { throw }; Write-YsoError -Context 'passport: processor test' -ErrorRecord $_; Write-Warn (L 'Processor test not done: {0}' $_.Exception.Message) }
+        foreach ($d in @($p.Disks)) {
+            Write-Step (L 'Reading {0} (512 samples over the whole disk, nothing is written)' $d.Name)
+            try { $d.Read = Invoke-PassportDiskRead $d } catch { if (Test-StopError $_) { throw }; Write-YsoError -Context 'passport: disk read' -ErrorRecord $_ }
+        }
+        $p.Guided = Show-GuidedTests $p
+    }
+    if ($c -eq '3') { Invoke-PassportDeepTest $p }
+    $score = Get-PassportScore $p
+    $p | Add-Member -NotePropertyName Score -NotePropertyValue $score -Force
+    $first = @(Read-PassportRecords) | Select-Object -First 1
+    [void](Save-PassportRecord $p)
+    Clear-Host
+    Write-PassportScore $score
+    if ($first) {
+        $lines = @(Compare-Passports $first $p)
+        if ($lines.Count) { Write-Section 'SINCE THE FIRST PASSPORT'; foreach ($l in $lines) { Write-Info $l } }
+    }
+    if ($p.Cpu -and $p.Cpu.Raptor -and $p.Cpu.MicrocodeOk -eq $false) { Write-Warn (L 'Intel Core 13th/14th gen with microcode {0}: update the BIOS to 0x12F or later' $p.Cpu.Microcode) }
+    Write-Host ''
+    $who = Read-Choice 'P = PDF for a professional (full serial numbers), A = PDF for a listing (shortened serial numbers), Enter = no PDF' -Buttons @(@('P', 'PDF for a professional'), @('A', 'PDF for a listing'), @('', 'No PDF')) -Hint 'A professional gets the full serial numbers; a public listing gets them shortened.'
+    if ($who -eq 'P' -or $who -eq 'A') {
+        $lang = Read-Choice 'E = English, F = French' -Buttons @(@('E', 'English'), @('F', 'French')) -Hint 'In which language?'
+        Save-PassportFiles $p $score -Mask:($who -eq 'A') -Language $(if ($lang -eq 'F') { 'fr' } elseif ($lang -eq 'E') { 'en' } else { '' })
+    }
+    if (-not $p.Memory.LastTest -and $c -ne '1') {
+        Write-Info 'The memory was never tested on this PC. Windows Memory Diagnostic runs at the next restart, before Windows loads (10 to 30 minutes); the next passport reads its result.'
+        if (Confirm-Action 'Open Windows Memory Diagnostic now? (you then choose: restart now, or at next start)' $false) { Start-Process mdsched.exe }
+    }
+}
+
+# ==================================================================
 #  GUIDE  (G in the console, Help in the window) - what each tool does, what it changes and
 #  how to undo it. docs/GUIDE.md and docs/GUIDE.fr.md are made from the same texts:
 #  pwsh tests/tools/build-guide.ps1 (a test checks they are up to date).
@@ -5607,7 +8311,7 @@ function New-HelpTopic([string]$Key, [string]$Title, [string]$What, [string]$Cha
 function Get-HelpTopics {
     return @(
         (New-HelpTopic 'start' 'How YSO works' 'YSO looks after Windows: it frees space, checks the health of the PC, installs updates and fixes common problems. The home page shows the state of the PC in green, orange or red, and each card has the button that helps. Every tool says what it does while it works, asks its questions with buttons, and can be stopped.' 'YSO needs administrator rights (one Windows prompt), because it cleans system folders and changes Windows settings. It asks before it changes anything, except the cleanups you start yourself.' 'Settings YSO changes can be put back with Undo YSO changes (32). The files it deletes are temporary files and caches: Windows and your apps make them again when they need them.' @('Click Analyze: YSO measures what can be freed, and deletes nothing.', 'On the Clean page, untick what you want to keep, then click Clean selected.', 'Once a month, run Full maintenance, or switch on Weekly auto-clean.'))
-        (New-HelpTopic 'safety' 'What YSO never touches' 'YSO never deletes your passwords, cookies, browsing history, bookmarks, site data, messages, Downloads, Documents, browser extensions or game files. Files in use are skipped, recent temporary files are kept (24 hours by default), folder links are never followed, and system folders are refused.' 'What cannot be undone is always asked separately: emptying the Recycle Bin, old driver versions, Windows.old, old restore points, a network reset. Full maintenance and driver updates create a restore point first.' 'In Settings (O) you can list folders YSO must never touch. Started with -DryRun, YSO is in analyze-only mode: it shows everything and changes nothing. Each session is written to C:\ProgramData\YSO\Logs.')
+        (New-HelpTopic 'safety' 'What YSO never touches' 'YSO never deletes your passwords, cookies, browsing history, bookmarks, site data, messages, Downloads, Documents, browser extensions or game files. The only files of yours it can delete are the build folders of code projects you tick yourself (34). Files in use are skipped, recent temporary files are kept (24 hours by default), folder links are never followed, and system folders are refused.' 'What cannot be undone is always asked separately: emptying the Recycle Bin, old driver versions, old copies of Windows updates, Windows.old, old restore points, the files of an account not used for 6 months, a network reset. Full maintenance and driver updates create a restore point first.' 'In Settings (O) you can list folders YSO must never touch. Started with -DryRun, YSO is in analyze-only mode: it shows everything and changes nothing. Each session is written to C:\ProgramData\YSO\Logs.')
         (New-HelpTopic 'clean' 'The Clean page' 'The Clean page lists every part YSO can clean, with a sentence on what it is. Analyze shows how much each part frees. Tick what you want, then click Clean selected.' 'The ticked parts are cleaned one after the other, with a progress bar and what each one freed. The Recycle Bin and old driver versions are cleaned only if you tick them.' 'Deleted temporary files and caches do not go to the Recycle Bin: Windows and your apps make them again when they need them.')
         (New-HelpTopic '1' '' 'Deletes the temporary files of every user of the PC and of Windows. Apps leave them behind after installs, updates and crashes.' 'Only files older than 24 hours (you can change it in Settings), and never a file that is in use.' 'Not needed: apps make new temporary files when they need them.')
         (New-HelpTopic '2' '' 'Deletes the copies of web pages, images and scripts that Chrome, Edge, Brave, Vivaldi, Opera and Firefox keep, in every profile. Pages load from the internet again the first time.' 'Passwords, cookies, history, bookmarks, open tabs and extensions are not touched. If a browser is open, YSO offers to close it for a complete clean; its tabs come back when you open it again.' 'Not needed: the browser fills its cache again as you browse.')
@@ -5627,12 +8331,12 @@ function Get-HelpTopics {
         (New-HelpTopic '16' '' 'Chooses between Ultimate Performance, High Performance and Balanced. Performance plans keep the processor ready, for a slightly faster PC.' 'On a laptop they mean more heat, more fan noise and less battery: Balanced is better there.' 'Undo YSO changes (32), or choose Balanced here.')
         (New-HelpTopic '17' '' 'Lists the programs that start with Windows, with their publisher and how much they slow down startup. Click one to switch it on or off.' 'It works like Task Manager: the program stays installed and only stops starting by itself. Microsoft Store apps manage their own startup, in Windows Settings.' 'Click it again, or use Undo YSO changes (32).')
         (New-HelpTopic '18' '' 'Reads how long the last startups took, from Windows'' own records, and which apps, drivers and services slowed them down.' 'Nothing is changed. Only full startups are measured: Restart, or Shut down when Fast Startup is off.' 'Nothing to undo.')
-        (New-HelpTopic '30' '' 'Switches off, with tick boxes: ads and suggestions in Windows, tips on the lock screen, web results (Bing) in the Start menu search, ad tracking, diagnostic data and activity history, Copilot, Recall and Click to Do, the AI features of Edge, Notepad and Paint, and ads in Edge.' 'These are the settings Windows and Edge offer for it. Some are policies: Windows or Edge then shows "managed by your organization", which is normal. Some changes show after you sign out. Defender, Windows Update and the Store are never touched.' 'Untick a line and Apply to get the Windows default back, or use Undo YSO changes (32) for the exact previous state.' @('Tick what you do not want, or click Tick the recommended ones.', 'Click Apply, read the list of changes, and confirm.', 'Sign out and back in, or let YSO restart File Explorer when it offers to.'))
+        (New-HelpTopic '30' '' 'Switches off, with tick boxes: ads and suggestions in Windows, tips on the lock screen, web results (Bing) in the Start menu search, ad tracking, unwanted apps that come with downloads (Defender and Edge block them), diagnostic data and activity history, Copilot, Recall and Click to Do, the AI features of Edge, Notepad and Paint, and ads in Edge.' 'These are the settings Windows and Edge offer for it. Some are policies: Windows or Edge then shows "managed by your organization", which is normal. Some changes show after you sign out. Windows Update and the Store are never touched; of Defender, only the blocking of unwanted apps.' 'Untick a line and Apply to get the Windows default back, or use Undo YSO changes (32) for the exact previous state.' @('Tick what you do not want, or click Tick the recommended ones.', 'Click Apply, read the list of changes, and confirm.', 'Sign out and back in, or let YSO restart File Explorer when it offers to.'))
         (New-HelpTopic '31' '' 'Lists your desktop apps with their size and when they were last used. YSO starts the app''s own uninstaller, then looks for what it left behind: folders and registry keys named like it. W shows the apps Windows or the shop put on the PC (Candy Crush, TikTok, News...): tick the ones you do not use, and YSO removes them for your account.' 'YSO never offers the folder of another installed app, a system folder, or a name another app also uses. Folders of 1 GB or more start unticked: a folder can hold your own data, like game saves or a mail profile. Runtimes and drivers get a warning.' 'The app can be installed again. Removed folders go to the Recycle Bin and registry keys are saved to a file first: Undo YSO changes (32) puts them back. For a removed Windows app, it installs it again, or opens its page in the Microsoft Store.' @('Find the app: sort by size or by last use, or type part of its name.', 'Click it, read what YSO shows about it, and confirm.', 'Follow the window of its uninstaller to the end.', 'Among the leftovers, untick what you want to keep, then click Remove the ticked ones.'))
         (New-HelpTopic '32' '' 'Every setting YSO changes is written down first, with what it was before: startup programs, power plan, hibernation file, DNS, privacy settings, app leftovers, Windows apps removed, right-click menu, performance mode, Windows Update hours and pause, and the space settings of Windows. This list shows them, newest first.' 'Click one to see what it changed, then confirm: it is back exactly as it was. Cleaned files are not in this list: they are caches that come back by themselves.' 'An undone change is marked as such. The last 300 changes are kept.')
-        (New-HelpTopic '19' '' 'Everything about the PC in one report: Windows and hardware, disk space and wear, battery capacity, Windows Update, recent crashes, security and drivers. For each problem, an arrow shows the tool that helps.' 'Nothing is changed. It can make Windows'' detailed battery report, which opens in your browser, and a one-page PDF of the report on your Desktop, to send to someone who helps you (no user name, PC name or file name in it).' 'Nothing to undo.')
+        (New-HelpTopic '19' '' 'Everything about the PC in one report: Windows and how long it gets security updates, hardware, disk space and wear, battery capacity, Windows Update, recent crashes, Windows'' stability index, what woke the PC from sleep, security and drivers. It also says when the memory runs slower than it is made for, or when one memory stick works alone. For each problem, an arrow shows the tool that helps.' 'Nothing is changed. It can make Windows'' detailed battery report and, on laptops with modern standby, the sleep report (what used the battery while asleep); both open in your browser. It can also save a one-page PDF of the report on your Desktop, to send to someone who helps you (no user name, PC name or file name in it).' 'Nothing to undo.')
         (New-HelpTopic '20' '' 'Shows the recent blue screens, app crashes and serious errors from Windows'' logs, and what caused them when Windows knows.' 'Nothing is changed. A few errors are normal on every PC: look for the ones that repeat, or happen when you have a problem.' 'Nothing to undo.')
-        (New-HelpTopic '21' '' 'Checks the antivirus, the firewall and Windows Update. With Microsoft Defender, it can update the virus definitions and run a quick scan (5 to 15 minutes).' 'Only Defender''s own update and scan: no setting is changed.' 'Nothing to undo.')
+        (New-HelpTopic '21' '' 'Checks the antivirus, the firewall, Windows Update, how long this version of Windows gets security updates, and the Secure Boot certificates (the 2011 ones expired in 2026). Then it looks for what scams and malware leave behind: remote access apps (AnyDesk, TeamViewer...), commands pasted in Win+R that download something (fake "I am not a robot" pages), a hosts file that blocks security sites or sends a site elsewhere, and a proxy. With Microsoft Defender, it can update the virus definitions and run a quick scan (5 to 15 minutes).' 'Only Defender''s own update and scan: no setting is changed. Each finding can also be normal (a remote app you use, a proxy at work): what matters is whether you set it up yourself.' 'Nothing to undo.')
         (New-HelpTopic '22' '' 'Lists the scheduled tasks and services that do not come from Microsoft, and whether their program is signed. Takes 10 to 60 seconds.' 'Nothing is changed. Not signed does not mean malware. To remove something, uninstall the program it belongs to.' 'Nothing to undo.')
         (New-HelpTopic '23' '' 'Lists the devices with a missing or broken driver, then helps: Device Manager, optional driver updates in Windows Update, or a new scan of the hardware.' 'Nothing is changed unless you choose one of these actions.' 'Nothing to undo.')
         (New-HelpTopic '24' '' 'Scans each drive for file-system errors, while you keep working.' 'If errors are found, YSO asks before repairing: other drives are repaired at once, the Windows drive at the next restart, before Windows loads.' 'A repair cannot be undone, but it only fixes the records of the file system.')
@@ -5641,13 +8345,14 @@ function Get-HelpTopics {
         (New-HelpTopic '27' '' 'Shows which folders fill a drive, biggest first. Click a folder to open it, Back to go up, Biggest files to see the largest files, Show in Explorer to open it there.' 'Nothing is changed or deleted: it only shows. Delete what you do not need yourself, in File Explorer.' 'Nothing to undo.')
         (New-HelpTopic '28' '' 'Finds app updates (with winget) and driver updates (with Windows Update), and shows them in one list where you tick what to install. YSO can also check on a schedule and tell you, or install safe updates by itself. Option 7 sets the hours when Windows must not restart for updates, and pauses Windows updates for 1 to 5 weeks.' 'A restore point is made before drivers are installed. In automatic mode, big new versions (7.x to 8.x), optional drivers and the apps you exclude are left for you. Only apps in the winget catalog are checked.' 'An app can be uninstalled, then its previous version installed from its website. A driver can be rolled back in Device Manager, or with the restore point. Restart hours and the pause: Undo YSO changes (32), or Resume updates now.' @('Click Check for updates now.', 'Tick what to install, then click Install the ticked updates.', 'If you want, choose Notify me or Automatic, and when it runs.'))
         (New-HelpTopic '29' '' 'The disk of a virtual machine is one big file on your PC (.vdi for VirtualBox, .vhdx for WSL and Docker Desktop). It grows when the machine writes, but never shrinks, even when you delete files inside it. Compacting removes the empty space from the file: the file gets smaller, and nothing inside the machine changes.' 'YSO refuses a machine that is running, in saved state or with snapshots, and wants VirtualBox and Docker Desktop closed. The file is rewritten in place: a power cut or a crash during compaction can damage it.' 'Compacting cannot be undone, and does not need to be. Copy a disk you cannot lose before, so you can put it back if something goes wrong.' @('Docker: option D cleans Docker first (stopped containers, unused images and build cache; your volumes stay), so there is more to give back.', 'VirtualBox: compacting only removes empty blocks, and deleted files are not empty until the free space is filled with zeros. Inside the machine, run sdelete -z C: (Windows) or the dd command YSO shows (Linux), then shut the machine down from inside.', 'WSL and Docker: nothing to do inside. YSO frees the unused blocks and stops WSL by itself.', 'Copy the disk file of the machine somewhere else, an external drive for example: that is your backup.', 'Keep the PC plugged in. Open Virtual disks, check that the disk says it can be compacted, and confirm.', 'Start the machine to check that it works. Then you can delete the copy.'))
-        (New-HelpTopic '33' '' 'Settings of Windows itself that give space back: Compact OS (Windows compresses its own files, 2 to 4 GB), the space Windows keeps for updates (about 7 GB), the space restore points may use, OneDrive files not opened for 60 days, and a search index that grew too big.' 'Each line says what it costs before YSO asks: a little more processor work for Compact OS, a big update that may wait for free space, the oldest restore points deleted to fit the limit, OneDrive files that need internet to open, a search that finds only part of your files for a few hours.' 'Compact OS, the reserved space and the restore point limit: Undo YSO changes (32). A OneDrive file: right-click it, Always keep on this device. The index builds itself again.')
-        (New-HelpTopic '34' '' 'Shows your own files that often take space for nothing: installers and disk images in Downloads not touched for 30 days, iPhone and iPad backups, and files that are there twice (same content) in Desktop, Documents, Downloads, Pictures, Videos and Music.' 'Nothing is deleted: a click shows the file in File Explorer, and you decide there. OneDrive files that are online only are never read, so nothing is downloaded.' 'Nothing to undo. A file you delete in File Explorer goes to the Recycle Bin.')
+        (New-HelpTopic '33' '' 'Settings and leftovers of Windows that give space back: Compact OS (Windows compresses its own files, 2 to 4 GB), the space Windows keeps for updates (about 7 GB), the space restore points may use, OneDrive files not opened for 60 days, a search index that grew too big, old copies of Windows updates (WinSxS), old driver versions, parts of Windows you do not use, accounts nobody used for 6 months, and the size of the Windows Installer cache.' 'Each line says what it costs before YSO asks: a little more processor work for Compact OS, a big update that may wait for free space, the oldest restore points deleted to fit the limit, OneDrive files that need internet to open, a search that finds only part of your files for a few hours, updates and drivers you can no longer go back to. For an unused account, YSO asks one by one and shows its size and last use. The Installer cache is only shown: Windows needs it.' 'Compact OS, the reserved space, the restore point limit and the parts of Windows: Undo YSO changes (32). A OneDrive file: right-click it, Always keep on this device. The index builds itself again. Old updates, old drivers and an account''s files cannot be put back.')
+        (New-HelpTopic '34' '' 'Shows your own files that often take space for nothing: installers and disk images in Downloads not touched for 30 days, iPhone and iPad backups, files that are there twice (same content) in Desktop, Documents, Downloads, Pictures, Videos and Music, build folders of code projects (node_modules, target, bin and obj...), the photos and videos of WhatsApp for PC and the cache of Telegram for PC.' 'Only the build folders can be deleted here, with tick boxes: those of projects not changed for 90 days are ticked, and the project''s own tool (npm install, cargo build, dotnet build...) makes them again. Everything else is shown only: a click opens it in File Explorer, and you decide there. OneDrive files that are online only are never read.' 'A build folder comes back the next time you build the project. A file you delete in File Explorer goes to the Recycle Bin.')
         (New-HelpTopic '35' '' 'Once a day, when YSO opens, it writes down how long the last startup took, the free space on the Windows drive and how many programs start with Windows. This page compares the first day with today, then shows one line a week.' 'Nothing is changed. The measures stay on this PC (pc-history.csv in C:\ProgramData\YSO). After a week, the home page shows the comparison too.' 'Nothing to undo.')
         (New-HelpTopic '36' '' 'Shows each drive with its type, temperature, wear and hours of use, and tests the read and write speed of a drive with Windows'' own tool (winsat), with what is normal for that kind of drive.' 'The test takes about a minute per drive: it writes a test file, then deletes it. A slow result can come from an almost full disk, an old cable or USB port, or a worn drive.' 'Nothing to undo.')
         (New-HelpTopic '37' '' 'On Windows 11, brings back the classic right-click menu (everything at once, without Show more options). It also lists the entries other programs add to the menu, so you can switch off the ones you never use: the right-click opens faster.' 'A switched-off entry is only hidden, with Windows'' own list of blocked entries: the program keeps working. Changes show after File Explorer restarts; YSO offers to restart it.' 'Click the entry again, or C again, or use Undo YSO changes (32).')
         (New-HelpTopic '38' '' 'For older or slower PCs: switches off animations, transparency, shadows and fading menus, and makes menus open faster. Windows looks a little plainer but answers faster. Text stays smooth.' 'The same as Adjust for best performance in Windows, for your account. It shows after you sign out and back in.' 'Run it again to switch it off, or use Undo YSO changes (32).')
-        (New-HelpTopic '39' '' 'Lists the extensions of Chrome, Edge, Brave, Vivaldi, Opera and Firefox, whether each one is on, and what it may do: read and change every site, see your browsing, or little. Extensions that do not come from the store are flagged.' 'Nothing is changed. An extension that can read every site sees what you type there, passwords included: keep only the ones you know and use.' 'Nothing to undo. To remove an extension, open the extensions page of the browser.')
+        (New-HelpTopic '39' '' 'Looks at your browsers: the extensions of Chrome, Edge, Brave, Vivaldi, Opera and Firefox and what each one may do, the default search engine, the sites allowed to send notifications, and the policies a program set (extensions installed by force, a search engine or home page you cannot change).' 'Nothing is changed. An extension that can read every site sees what you type there, passwords included. Pop-ups near the clock that say "you have a virus" usually come from a site allowed to send notifications. An unknown search engine or policy often comes from adware.' 'Nothing to undo. Remove an extension or a notification site from the browser''s own settings; YSO says where.')
+        (New-HelpTopic '40' '' 'The precise state of each part of the PC, with a score out of 100 and a grade (A to D): drives, battery, processor, memory, graphics card, screen and devices. Each score comes from measures, not from a guess: what the part reports about itself (the drive''s wear, the battery''s capacity), the hardware errors Windows recorded in 90 days, and tests that load the part and check every result.' 'Quick (2 minutes) only reads. Complete (20 minutes) adds the processor under load for 10 minutes with every computation checked core by core, a read of each drive and guided tests (screen, keyboard, sound, microphone, webcam, ports). Deep (50 minutes) adds the Blender Benchmark, compared with the median of the same model on Blender Open Data, and a test of the video memory (memtest_vulkan); it downloads them first. No chip measures its own wear, so a score has a margin: about 5 points for one passport, 2 to 3 points between two passports of the same PC. Each passport stays on this PC and can be saved as a PDF on your Desktop: full serial numbers for a professional, shortened ones for a listing.' 'Nothing to undo: the tests change nothing. The tools the deep test downloads (a few hundred MB) are kept for the next one.' @('Plug a laptop in and close your other apps.', 'Choose Quick, Complete or Deep, and answer the guided tests.', 'Save the PDF for a professional or for a listing.', 'Run a passport again in a few months: it shows what changed since the first one.'))
         (New-HelpTopic 'A' '' 'Measures how much each part of the cleaning would free. Deletes nothing.' 'Nothing is changed. Deep clean (8) usually frees more on top of it, but cannot be measured in advance.' 'Nothing to undo.')
         (New-HelpTopic 'F' '' 'Everything at once: a restore point, then temporary files, browser caches, offline copies of sites, system junk, developer and app caches, GPU caches, the Windows Update cache, DNS, deep clean, and drive optimization. The Recycle Bin and updates only if you choose them.' 'All the questions are asked at the start, then you can walk away. If Windows is waiting for a restart, restart first: some parts can only be cleaned after it.' 'The restore point (R) takes Windows and its settings back to before; your documents are not touched by it.')
         (New-HelpTopic 'R' '' 'A restore point takes Windows, its settings and your programs back to an earlier state. Your documents are not touched. Here you see yours, create one, keep only the newest, or open System Protection.' 'Deleting old restore points is asked separately, and cannot be undone.' 'To go back to a restore point: System Protection, then System Restore.')
@@ -8200,6 +10905,7 @@ function Invoke-MenuOption {
             '37' { Show-ContextMenuTool }
             '38' { Show-PerformanceMode }
             '39' { Show-BrowserExtensions }
+            '40' { Show-PcPassport }
             'A'  { Invoke-Analysis }
             'F'  { Invoke-FullMaintenance -Plan $Plan }
             'R'  { Show-RestorePoints }
@@ -8372,6 +11078,7 @@ function Show-Menu {
         (M '26' 'Repair Windows files (DISM + SFC)'),
         (M '35' 'My PC over time'),
         (M '36' 'Disk speed & temperature'),
+        (M '40' 'PC passport (health of each part)'),
         (M ''   ''),
         (M '#'  'SPACE & UPDATES'),
         (M '27' 'Space finder (what fills my disk?)'),
@@ -8383,7 +11090,7 @@ function Show-Menu {
         (M '#'  'APPS & PRIVACY'),
         (M '30' 'Privacy & ads (Windows, Edge, Copilot)'),
         (M '31' 'Uninstall apps (and their leftovers)'),
-        (M '39' 'Browser extensions'),
+        (M '39' 'Browsers (extensions, search)'),
         (M '32' 'Undo YSO changes')
     )
     $bottom = @(
@@ -9525,10 +12232,10 @@ function Get-GuiToolGroups {
         @{ Title = (N 'NETWORK'); Items = @((M '11' 'Network check (speed, DNS, Wi-Fi)'), (M '12' 'Change DNS servers'), (M '13' 'Flush DNS cache'), (M '14' 'Full network reset')) }
         @{ Title = (N 'OPTIMIZE'); Items = @((M '15' 'Optimize drives (TRIM / defrag)'), (M '16' 'Power plan'), (M '17' 'Startup programs'), (M '18' 'Boot time analyzer'),
             (M '37' 'Right-click menu'), (M '38' 'Performance mode (older PCs)')) }
-        @{ Title = (N 'APPS & PRIVACY'); Items = @((M '30' 'Privacy & ads (Windows, Edge, Copilot)'), (M '31' 'Uninstall apps (and their leftovers)'), (M '39' 'Browser extensions'), (M '32' 'Undo YSO changes')) }
+        @{ Title = (N 'APPS & PRIVACY'); Items = @((M '30' 'Privacy & ads (Windows, Edge, Copilot)'), (M '31' 'Uninstall apps (and their leftovers)'), (M '39' 'Browsers (extensions, search)'), (M '32' 'Undo YSO changes')) }
         @{ Title = (N 'DIAGNOSE & REPAIR'); Items = @((M '19' 'System health report'), (M '20' 'Crashes & errors'), (M '21' 'Security check & Defender scan'),
             (M '22' 'What runs automatically? (audit)'), (M '23' 'Driver problems'), (M '24' 'Check drives for errors'), (M '25' 'Memory test'), (M '26' 'Repair Windows files (DISM + SFC)'),
-            (M '35' 'My PC over time'), (M '36' 'Disk speed & temperature')) }
+            (M '35' 'My PC over time'), (M '36' 'Disk speed & temperature'), (M '40' 'PC passport (health of each part)')) }
         @{ Title = (N 'SPACE & UPDATES'); Items = @((M '27' 'Space finder (what fills my disk?)'), (M '28' 'Updates: apps & drivers'), (M '29' 'Virtual disks (compact VMs, WSL, Docker)'),
             (M '33' 'More space from Windows'), (M '34' 'Files you might not need')) }
         @{ Title = (N 'ONE-CLICK'); Items = @((M 'A' 'Analyze (deletes nothing)'), (M 'F' 'Full maintenance'), (M 'R' 'Restore points'), (M 'S' 'Weekly auto-clean'),
@@ -10668,13 +13375,14 @@ function Get-GuiToolInfo([string]$Key) {
         '30' = @(0xE72E, (N 'Switch off ads, tracking and AI features. Undo any time.'))
         '31' = @(0xE738, (N 'Removes an app, then what it left behind.'))
         '32' = @(0xE7A7, (N 'Puts back any setting YSO changed.'))
-        '33' = @(0xEDA2, (N 'Compact OS, restore points, OneDrive: space Windows keeps.'))
-        '34' = @(0xE8B7, (N 'Old installers, phone backups, files there twice.'))
+        '33' = @(0xEDA2, (N 'Compact OS, old updates and drivers, unused parts of Windows.'))
+        '34' = @(0xE8B7, (N 'Old installers, phone backups, files there twice, code build folders.'))
         '35' = @(0xE81C, (N 'Startup time and free space, since the first day.'))
         '36' = @(0xE916, (N 'How fast and how warm each drive is.'))
         '37' = @(0xE700, (N 'Classic menu, and entries added by other programs.'))
         '38' = @(0xE945, (N 'Fewer effects, so an older PC feels faster.'))
-        '39' = @(0xE774, (N 'What each extension of your browsers may do.'))
+        '39' = @(0xE774, (N 'Extensions, search engine, notifications, policies.'))
+        '40' = @(0xE9D9, (N 'The state of each part, with a score and a PDF.'))
         'A'  = @(0xE721, (N 'See what can be freed. Deletes nothing.'))
         'F'  = @(0xE74D, (N 'Everything at once, with a restore point first.'))
         'R'  = @(0xE777, (N 'Create one, or see the ones you have.'))
@@ -11190,6 +13898,9 @@ function Initialize-GuiSnapshot([string]$Dir) {
         { Start-GuiExtensionsSample; $true },
         { -not $script:GuiCurrent -and $script:GuiJobs.Count -eq 0 },
         { $script:Ui.RunScroll.ScrollToTop(); Save-GuiPng '26-extensions'; $true },
+        { Start-GuiPassportSample; $true },
+        { -not $script:GuiCurrent -and $script:GuiJobs.Count -eq 0 },
+        { $script:Ui.RunScroll.ScrollToTop(); Save-GuiPng '27-passport'; $true },
         { Show-GuiHelpTopic '29'; $true },
         { Save-GuiPng '20-help'; $true },
         { Start-GuiOption 'O'; $true },
@@ -11322,7 +14033,7 @@ Show-UndoCenter -Sample $changes
 function Start-GuiMoreSpaceSample {
     Start-GuiSample '33' 'more space sample' @'
 Show-WindowsSpace ([pscustomobject]@{ Compact = $false; Reserved = 'Enabled'; Shadow = [pscustomobject]@{ Max = -1L; Used = 9.4GB; Size = 476GB }
-    OneDrive = @('sample'); IdleCount = 1843; IdleBytes = 12.6GB; Index = 2.3GB })
+    OneDrive = @('sample'); IdleCount = 1843; IdleBytes = 12.6GB; Index = 2.3GB; Profiles = 1; Installer = 6.8GB })
 '@
 }
 
@@ -11361,6 +14072,34 @@ Show-BrowserExtensions -Sample @((New-SampleExt 'Chrome' 'Bitwarden Password Man
     (New-SampleExt 'Edge' 'uBlock Origin Lite' $true 'small'), (New-SampleExt 'Firefox' 'Dark Reader' $true 'all'))
 '@
 }
+
+function Start-GuiPassportSample {
+    Start-GuiSample '40' 'passport sample' @'
+$p = [pscustomobject]@{ Format = 1; Yso = $script:Version; When = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss'); Mode = 'deep'
+    Machine = [pscustomobject]@{ Maker = 'LENOVO'; Model = 'ThinkPad T14'; Serial = 'SAMPLE01'; Board = 'LENOVO'; BoardSerial = 'SAMPLE'; Bios = 'N3MET18W'; BiosDate = '2025-05-01'; Os = 'Windows 11 Pro'; OsBuild = '26200'; Installed = '2024-01-01'
+        Tpm = [pscustomobject]@{ Present = $true; Ready = $true; Maker = 'IFX'; Version = '7.85' }; SecureBoot = $true; EkHash = '' }
+    Cpu = [pscustomobject]@{ Name = 'AMD Ryzen 7 PRO 6850U'; Cores = 8; Threads = 16; BaseMHz = 2700; Microcode = '0xA404102'; Raptor = $false; MicrocodeOk = $null
+        Check = [pscustomobject]@{ Seconds = 600; Workers = 16; Pinned = $true; Iterations = 123456; Errors = 0; ErrorCores = @(); ErrorKind = ''; Sustain = 0.93; PerfStart = 112; PerfEnd = 104; LimitMin = 92; MHzAvg = 3900; WheaDuring = 0 }
+        Blender = [pscustomobject]@{ Version = '4.5.0'; Type = 'CPU'; Device = 'AMD Ryzen 7 PRO 6850U'; Scenes = @{ monster = 60 }; Runs = 3; Spread = 2.1; Score = 150; Compare = [pscustomobject]@{ Ratio = 0.97; Count = 120; Scenes = 3 } } }
+    Memory = [pscustomobject]@{ Total = 16GB; Sticks = @([pscustomobject]@{ Slot = 'DIMM 0'; Size = 16GB; Maker = 'Samsung'; Part = 'M425'; Serial = 'SAMPLE'; Rated = 6400; Speed = 6400 }); Slow = $false; Single = $true
+        LastTest = [pscustomobject]@{ When = '2026-11-01'; Pass = $true }; Whea47 = 0 }
+    Disks = @([pscustomobject]@{ Number = 0; System = $true; Name = 'Samsung SSD 980 1TB'; Bus = 'NVMe'; Media = 'SSD'; Size = 1TB; Serial = 'SAMPLE'; Firmware = '3B4QFXO7'; Health = 'Healthy'; Temp = 41; TempMax = 70; Hours = 3120; Cycles = 900; Unsafe = 35
+        WrittenBytes = 14.9TB; ReadBytes = 34TB; LifeLeft = 96; LifeSource = 'nvme'; Spare = 100; SpareThreshold = 10; Critical = 0; MediaErrors = 0; Reallocated = $null; Pending = $null; Uncorrectable = $null; Predict = $false; ReadErrors = 0
+        Read = [pscustomobject]@{ Mode = 'samples'; Bytes = 2GB; Errors = 0; Problem = ''; Median = 1800; Min = 900; Max = 2400; SlowShare = 0; NewErrors = 0 } })
+    Battery = [pscustomobject]@{ Name = '5B10W51867'; Maker = 'SMP'; Serial = 'SAMPLE'; Design = 52500; Full = 43700; Health = 83; Reported = 83; Cycles = 312; GaugeOff = $false; Same = $false }
+    Gpus = @([pscustomobject]@{ Name = 'AMD Radeon 680M'; Driver = '31.0'; DriverDate = '2025-10-01'; Vram = 512MB; Temp = 45; TempWarn = 95; TempMax = 110; Fan = $null; FanMax = $null; Nvidia = $false; Tdr = 0
+        Load = [pscustomobject]@{ TempMax = 82; FanMax = $null; FanPercent = $null; Thermal = $false; Samples = 40 }; Blender = $null; Vmem = [pscustomobject]@{ Result = 'ok'; Checked = 300; Seconds = 330 } })
+    Monitors = @([pscustomobject]@{ Maker = 'LEN'; Name = ''; Serial = '0'; Year = 2022; Week = 14; Screen = $null })
+    Network = @([pscustomobject]@{ Name = 'Intel Wi-Fi 6E AX211'; Kind = 'wifi'; Status = 'Up'; Speed = '1.2 Gbps'; Mac = '' })
+    Events = [pscustomobject]@{ Days = 90; Whea17 = 0; Whea18 = 0; Whea19 = 0; Whea47 = 0; Whea19Days = 0; GpuResetDays = 1; GpuResets = 1; Bsod = 0; Unexpected = 2 }
+    Stability = 8.7
+    Guided = [pscustomobject]@{ Screen = (New-GuidedResult 'pixels' '1'); Keyboard = (New-GuidedResult 'ok'); Touchpad = (New-GuidedResult 'ok'); Sound = (New-GuidedResult 'ok'); Mic = (New-GuidedResult 'ok' '35 %')
+        Webcam = (New-GuidedResult 'ok'); Usb = (New-GuidedResult 'ok'); Wifi = (New-GuidedResult 'ok'); Bluetooth = (New-GuidedResult 'ok'); Charger = (New-GuidedResult 'ok') }
+}
+Show-PcPassport $p
+'@
+}
+
 
 function Start-GuiPreinstalledSample {
     Start-GuiSample '31' 'pre-installed sample' @'
@@ -12404,7 +15143,6 @@ FULL MAINTENANCE ==> ENTRETIEN COMPLET
 Full maintenance ==> Entretien complet
 Full maintenance finished in {0} min {1} s. ==> Entretien complet terminé en {0} min {1} s.
 Full network reset ==> Réinitialisation réseau complète
-Full security details: option 21. Crash details: option 20. ==> Détails de sécurité : option 21. Détails des plantages : option 20.
 Games rebuild these on next launch (first load may stutter briefly). ==> Les jeux les reconstruisent au prochain lancement (le premier chargement peut saccader un peu).
 Going back to the previous version is no longer possible, so this is just leftover files. ==> Le retour à la version précédente n'est plus possible : ce ne sont que des restes.
 good ==> bon
@@ -13185,8 +15923,6 @@ Click Analyze: YSO measures what can be freed, and deletes nothing. ==> Cliquez 
 On the Clean page, untick what you want to keep, then click Clean selected. ==> Sur la page Nettoyer, décochez ce que vous voulez garder, puis cliquez sur Nettoyer la sélection.
 Once a month, run Full maintenance, or switch on Weekly auto-clean. ==> Une fois par mois, lancez l'Entretien complet, ou activez le Nettoyage auto.
 What YSO never touches ==> Ce que YSO ne touche jamais
-YSO never deletes your passwords, cookies, browsing history, bookmarks, site data, messages, Downloads, Documents, browser extensions or game files. Files in use are skipped, recent temporary files are kept (24 hours by default), folder links are never followed, and system folders are refused. ==> YSO ne supprime jamais vos mots de passe, cookies, historique, favoris, données de sites, messages, Téléchargements, Documents, extensions de navigateur ni fichiers de jeux. Les fichiers utilisés sont ignorés, les fichiers temporaires récents sont gardés (24 heures par défaut), les liens de dossiers ne sont jamais suivis, et les dossiers du système sont refusés.
-What cannot be undone is always asked separately: emptying the Recycle Bin, old driver versions, Windows.old, old restore points, a network reset. Full maintenance and driver updates create a restore point first. ==> Ce qui ne peut pas être annulé est toujours demandé à part : vider la Corbeille, les anciennes versions de pilotes, Windows.old, les anciens points de restauration, la réinitialisation du réseau. L'Entretien complet et les mises à jour de pilotes créent d'abord un point de restauration.
 In Settings (O) you can list folders YSO must never touch. Started with -DryRun, YSO is in analyze-only mode: it shows everything and changes nothing. Each session is written to C:\ProgramData\YSO\Logs. ==> Dans les Paramètres (O), vous pouvez donner des dossiers que YSO ne doit jamais toucher. Lancé avec -DryRun, YSO est en mode analyse seule : il montre tout et ne change rien. Chaque session est notée dans C:\ProgramData\YSO\Logs.
 The Clean page ==> La page Nettoyer
 The Clean page lists every part YSO can clean, with a sentence on what it is. Analyze shows how much each part frees. Tick what you want, then click Clean selected. ==> La page Nettoyer liste chaque partie que YSO peut nettoyer, avec une phrase qui dit ce que c'est. Analyse montre combien chaque partie libère. Cochez ce que vous voulez, puis cliquez sur Nettoyer la sélection.
@@ -13237,8 +15973,6 @@ It works like Task Manager: the program stays installed and only stops starting 
 Click it again, or use Undo YSO changes (32). ==> Cliquez de nouveau dessus, ou utilisez Annuler les modifications de YSO (32).
 Reads how long the last startups took, from Windows' own records, and which apps, drivers and services slowed them down. ==> Lit la durée des derniers démarrages dans les relevés de Windows, et quelles applications, pilotes et services les ont ralentis.
 Nothing is changed. Only full startups are measured: Restart, or Shut down when Fast Startup is off. ==> Rien n'est modifié. Seuls les démarrages complets sont mesurés : Redémarrer, ou Arrêter quand le démarrage rapide est désactivé.
-Switches off, with tick boxes: ads and suggestions in Windows, tips on the lock screen, web results (Bing) in the Start menu search, ad tracking, diagnostic data and activity history, Copilot, Recall and Click to Do, the AI features of Edge, Notepad and Paint, and ads in Edge. ==> Désactive, avec des cases à cocher : les publicités et suggestions de Windows, les conseils de l'écran de verrouillage, les résultats web (Bing) dans la recherche du menu Démarrer, le suivi publicitaire, les données de diagnostic et l'historique des activités, Copilot, Recall et Click to Do, les fonctions IA d'Edge, du Bloc-notes et de Paint, et les publicités d'Edge.
-These are the settings Windows and Edge offer for it. Some are policies: Windows or Edge then shows "managed by your organization", which is normal. Some changes show after you sign out. Defender, Windows Update and the Store are never touched. ==> Ce sont les réglages que Windows et Edge prévoient pour cela. Certains sont des stratégies : Windows ou Edge affiche alors « géré par votre organisation », c'est normal. Certains changements apparaissent après une déconnexion. Defender, Windows Update et le Store ne sont jamais touchés.
 Untick a line and Apply to get the Windows default back, or use Undo YSO changes (32) for the exact previous state. ==> Décochez une ligne puis Appliquer pour revenir au réglage de Windows, ou utilisez Annuler les modifications de YSO (32) pour l'état exact d'avant.
 Tick what you do not want, or click Tick the recommended ones. ==> Cochez ce que vous ne voulez pas, ou cliquez sur Cocher les recommandés.
 Click Apply, read the list of changes, and confirm. ==> Cliquez sur Appliquer, lisez la liste des changements, et confirmez.
@@ -13250,11 +15984,8 @@ Follow the window of its uninstaller to the end. ==> Suivez la fenêtre de sa d�
 Among the leftovers, untick what you want to keep, then click Remove the ticked ones. ==> Parmi les restes, décochez ce que vous voulez garder, puis cliquez sur Supprimer ce qui est coché.
 Click one to see what it changed, then confirm: it is back exactly as it was. Cleaned files are not in this list: they are caches that come back by themselves. ==> Cliquez sur l'un d'eux pour voir ce qu'il a changé, puis confirmez : tout revient exactement comme avant. Les fichiers nettoyés ne sont pas dans cette liste : ce sont des caches qui reviennent tout seuls.
 An undone change is marked as such. The last 300 changes are kept. ==> Une modification annulée est marquée comme telle. Les 300 dernières modifications sont gardées.
-Everything about the PC in one report: Windows and hardware, disk space and wear, battery capacity, Windows Update, recent crashes, security and drivers. For each problem, an arrow shows the tool that helps. ==> Tout le PC dans un seul rapport : Windows et matériel, espace et usure des disques, capacité de la batterie, Windows Update, plantages récents, sécurité et pilotes. Pour chaque problème, une flèche montre l'outil qui aide.
 Shows the recent blue screens, app crashes and serious errors from Windows' logs, and what caused them when Windows knows. ==> Montre les écrans bleus, plantages d'applications et erreurs graves récents des journaux de Windows, et leur cause quand Windows la connaît.
 Nothing is changed. A few errors are normal on every PC: look for the ones that repeat, or happen when you have a problem. ==> Rien n'est modifié. Quelques erreurs sont normales sur tout PC : cherchez celles qui se répètent, ou qui arrivent quand vous avez un problème.
-Checks the antivirus, the firewall and Windows Update. With Microsoft Defender, it can update the virus definitions and run a quick scan (5 to 15 minutes). ==> Vérifie l'antivirus, le pare-feu et Windows Update. Avec Microsoft Defender, il peut mettre à jour les définitions de virus et lancer une analyse rapide (5 à 15 minutes).
-Only Defender's own update and scan: no setting is changed. ==> Seulement la mise à jour et l'analyse de Defender : aucun réglage n'est modifié.
 Lists the scheduled tasks and services that do not come from Microsoft, and whether their program is signed. Takes 10 to 60 seconds. ==> Liste les tâches planifiées et les services qui ne viennent pas de Microsoft, et si leur programme est signé. Prend 10 à 60 secondes.
 Nothing is changed. Not signed does not mean malware. To remove something, uninstall the program it belongs to. ==> Rien n'est modifié. Non signé ne veut pas dire malveillant. Pour retirer quelque chose, désinstallez le programme auquel il appartient.
 Lists the devices with a missing or broken driver, then helps: Device Manager, optional driver updates in Windows Update, or a new scan of the hardware. ==> Liste les appareils dont le pilote manque ou ne marche pas, puis aide : Gestionnaire de périphériques, mises à jour facultatives de pilotes dans Windows Update, ou nouvelle recherche du matériel.
@@ -13444,7 +16175,6 @@ At startup ==> Au démarrage
 Back to the Windows 11 menu ==> Revenir au menu de Windows 11
 Bing Search ==> Recherche Bing
 Browser ==> Navigateur
-Browser extensions ==> Extensions de navigateur
 BROWSER EXTENSIONS ==> EXTENSIONS DE NAVIGATEUR
 Browser extensions (39) ==> Extensions de navigateur (39)
 Can use up to ==> Peut utiliser jusqu'à
@@ -13464,8 +16194,6 @@ Click the entry again, or C again, or use Undo YSO changes (32). ==> Recliquez s
 Compact OS ==> Compact OS
 Compact OS (Windows files compressed) ==> Compact OS (fichiers de Windows compressés)
 Compact OS is on. Uncompress Windows files now? (uses 2 to 4 GB again) ==> Compact OS est activé. Décompresser les fichiers de Windows maintenant ? (reprend 2 à 4 Go)
-Compact OS, restore points, OneDrive: space Windows keeps. ==> Compact OS, points de restauration, OneDrive : l'espace que garde Windows.
-Compact OS, the reserved space and the restore point limit: Undo YSO changes (32). A OneDrive file: right-click it, Always keep on this device. The index builds itself again. ==> Compact OS, l'espace réservé et la limite des points de restauration : Annuler les modifications de YSO (32). Un fichier OneDrive : clic droit dessus, Toujours conserver sur cet appareil. L'index se reconstruit tout seul.
 compact.exe stopped with code {0}: {1} ==> compact.exe s'est arrêté avec le code {0} : {1}
 Compress Windows files (Compact OS) ==> Compresser les fichiers de Windows (Compact OS)
 Compress Windows files now? ==> Compresser les fichiers de Windows maintenant ?
@@ -13498,7 +16226,6 @@ Done: Windows will not restart between {0}:00 and {1}:00. ==> Terminé : Windows
 Done: {0} files are online only now. OneDrive frees the space within a few minutes, while it runs. ==> Terminé : {0} fichiers sont maintenant disponibles en ligne uniquement. OneDrive libère la place en quelques minutes, pendant qu'il tourne.
 Done: {0} freed. ==> Terminé : {0} libérés.
 Drives ==> Disques
-Each line says what it costs before YSO asks: a little more processor work for Compact OS, a big update that may wait for free space, the oldest restore points deleted to fit the limit, OneDrive files that need internet to open, a search that finds only part of your files for a few hours. ==> Chaque ligne dit ce qu'elle coûte avant que YSO demande : un peu plus de travail pour le processeur avec Compact OS, une grosse mise à jour qui peut attendre de la place libre, les plus vieux points de restauration supprimés pour tenir dans la limite, des fichiers OneDrive qui demandent internet pour s'ouvrir, une recherche qui ne trouve qu'une partie de vos fichiers pendant quelques heures.
 Edge could not make the PDF: the report is saved as a web page on your Desktop. Open it, then print it to PDF (Ctrl+P). ==> Edge n'a pas pu créer le PDF : le rapport est enregistré comme page web sur votre Bureau. Ouvrez-le, puis imprimez-le en PDF (Ctrl+P).
 Entries other programs add to the menu. Each one can slow down the right-click a little; switched off, it disappears from the menu and the program keeps working. ==> Les entrées que d'autres programmes ajoutent au menu. Chacune peut ralentir un peu le clic droit ; désactivée, elle disparaît du menu et le programme continue de fonctionner.
 Every extension of your browsers, and what it may do. An extension that can read every site sees your passwords as you type them: keep only the ones you know and use. ==> Toutes les extensions de vos navigateurs, et ce qu'elles peuvent faire. Une extension qui peut lire tous les sites voit vos mots de passe quand vous les tapez : gardez seulement celles que vous connaissez et utilisez.
@@ -13537,7 +16264,6 @@ It shows after you sign out and back in. Undo YSO changes (32) puts everything b
 Kept while you can still go back to the previous Windows version: going back needs them. ==> Gardés tant que vous pouvez revenir à la version précédente de Windows : le retour en arrière en a besoin.
 Leftovers of Windows upgrades ==> Restes des mises à niveau de Windows
 Limit restore points to {0}? ==> Limiter les points de restauration à {0} ?
-Lists the extensions of Chrome, Edge, Brave, Vivaldi, Opera and Firefox, whether each one is on, and what it may do: read and change every site, see your browsing, or little. Extensions that do not come from the store are flagged. ==> Liste les extensions de Chrome, Edge, Brave, Vivaldi, Opera et Firefox, si chacune est activée, et ce qu'elle peut faire : lire et modifier tous les sites, voir votre navigation, ou peu de chose. Les extensions qui ne viennent pas du magasin sont signalées.
 Lists your desktop apps with their size and when they were last used. YSO starts the app's own uninstaller, then looks for what it left behind: folders and registry keys named like it. W shows the apps Windows or the shop put on the PC (Candy Crush, TikTok, News...): tick the ones you do not use, and YSO removes them for your account. ==> Liste vos applications de bureau avec leur taille et leur dernière utilisation. YSO lance le programme de désinstallation de l'application, puis cherche ce qu'elle a laissé : les dossiers et clés du registre qui portent son nom. W montre les applications que Windows ou le magasin ont mises sur le PC (Candy Crush, TikTok, Actualités...) : cochez celles que vous n'utilisez pas, et YSO les retire pour votre compte.
 little ==> peu de chose
 Looking at Windows... ==> Examen de Windows...
@@ -13577,14 +16303,9 @@ not from the store ==> ne vient pas du magasin
 Not needed: apps rebuild their caches, and a project downloads again what it needs (it needs internet). ==> Inutile : les applications reconstruisent leurs caches, et un projet retélécharge ce dont il a besoin (il faut internet).
 not paused ==> pas suspendues
 Nothing found. ==> Rien trouvé.
-Nothing is changed. An extension that can read every site sees what you type there, passwords included: keep only the ones you know and use. ==> Rien n'est modifié. Une extension qui peut lire tous les sites voit ce que vous y tapez, mots de passe compris : gardez seulement celles que vous connaissez et utilisez.
-Nothing is changed. It can make Windows' detailed battery report, which opens in your browser, and a one-page PDF of the report on your Desktop, to send to someone who helps you (no user name, PC name or file name in it). ==> Rien n'est modifié. Il peut créer le rapport détaillé de batterie de Windows, qui s'ouvre dans votre navigateur, et un PDF d'une page du rapport sur votre Bureau, à envoyer à quelqu'un qui vous aide (sans nom d'utilisateur, nom de PC ni nom de fichier).
 Nothing is changed. The measures stay on this PC (pc-history.csv in C:\ProgramData\YSO). After a week, the home page shows the comparison too. ==> Rien n'est modifié. Les mesures restent sur ce PC (pc-history.csv dans C:\ProgramData\YSO). Après une semaine, la page d'accueil montre aussi la comparaison.
-Nothing is deleted: a click shows the file in File Explorer, and you decide there. OneDrive files that are online only are never read, so nothing is downloaded. ==> Rien n'est supprimé : un clic montre le fichier dans l'Explorateur de fichiers, et vous décidez là. Les fichiers OneDrive disponibles en ligne uniquement ne sont jamais lus, donc rien n'est téléchargé.
 Nothing measured yet: come back tomorrow. ==> Rien de mesuré pour l'instant : revenez demain.
 Nothing to free: every file was opened recently, or is online only already. ==> Rien à libérer : chaque fichier a été ouvert récemment, ou est déjà en ligne uniquement.
-Nothing to undo. A file you delete in File Explorer goes to the Recycle Bin. ==> Rien à annuler. Un fichier que vous supprimez dans l'Explorateur de fichiers va dans la Corbeille.
-Nothing to undo. To remove an extension, open the extensions page of the browser. ==> Rien à annuler. Pour supprimer une extension, ouvrez la page des extensions du navigateur.
 Nothing yet. Settings changed by YSO show up here: privacy, apps removed, startup programs, power plan, DNS servers, hibernation, right-click menu, performance mode, Windows Update hours and pause, space settings of Windows. ==> Rien pour l'instant. Les réglages modifiés par YSO apparaissent ici : vie privée, applications retirées, programmes au démarrage, mode d'alimentation, serveurs DNS, veille prolongée, menu du clic droit, mode performance, heures et pause de Windows Update, réglages d'espace de Windows.
 Now ==> Actuellement
 Number = show it in File Explorer, Enter = back ==> Numéro = le montrer dans l'Explorateur de fichiers, Entrée = retour
@@ -13596,7 +16317,6 @@ Off already. ==> Déjà désactivé.
 Off. Usually gives back 2 to 4 GB. ==> Désactivé. Rend en général 2 à 4 Go.
 Old installers and disk images in Downloads ==> Anciens installeurs et images disque dans Téléchargements
 Old installers and disk images in Downloads: {0} ==> Anciens installeurs et images disque dans Téléchargements : {0}
-Old installers, phone backups, files there twice. ==> Anciens installeurs, sauvegardes de téléphone, fichiers en double.
 On already. ==> Déjà activé.
 On Windows 11, brings back the classic right-click menu (everything at once, without Show more options). It also lists the entries other programs add to the menu, so you can switch off the ones you never use: the right-click opens faster. ==> Sur Windows 11, ramène le menu du clic droit classique (tout d'un coup, sans Afficher d'autres options). Il liste aussi les entrées que d'autres programmes ajoutent au menu, pour désactiver celles dont vous ne vous servez jamais : le clic droit s'ouvre plus vite.
 On: about 7 GB kept free for updates. ==> Activé : environ 7 Go gardés libres pour les mises à jour.
@@ -13648,10 +16368,7 @@ Search index ==> Index de recherche
 Security updates wait too: do not pause for long. ==> Les mises à jour de sécurité attendent aussi : ne suspendez pas longtemps.
 see your browsing (tabs, history...) ==> voir votre navigation (onglets, historique...)
 set by Windows ==> choisies par Windows
-Settings of Windows itself that give space back: Compact OS (Windows compresses its own files, 2 to 4 GB), the space Windows keeps for updates (about 7 GB), the space restore points may use, OneDrive files not opened for 60 days, and a search index that grew too big. ==> Des réglages de Windows lui-même qui rendent de la place : Compact OS (Windows compresse ses propres fichiers, 2 à 4 Go), l'espace que Windows garde pour les mises à jour (environ 7 Go), l'espace que peuvent prendre les points de restauration, les fichiers OneDrive pas ouverts depuis 60 jours, et un index de recherche devenu trop gros.
-Settings of Windows that give space back. Each one says what it costs; YSO asks before changing anything, and Undo YSO changes (32) puts the settings back. ==> Des réglages de Windows qui rendent de la place. Chacun dit ce qu'il coûte ; YSO demande avant de changer quoi que ce soit, et Annuler les modifications de YSO (32) remet les réglages.
 Shows each drive with its type, temperature, wear and hours of use, and tests the read and write speed of a drive with Windows' own tool (winsat), with what is normal for that kind of drive. ==> Montre chaque disque avec son type, sa température, son usure et ses heures d'utilisation, et teste la vitesse de lecture et d'écriture d'un disque avec l'outil de Windows (winsat), avec ce qui est normal pour ce type de disque.
-Shows your own files that often take space for nothing: installers and disk images in Downloads not touched for 30 days, iPhone and iPad backups, and files that are there twice (same content) in Desktop, Documents, Downloads, Pictures, Videos and Music. ==> Montre vos propres fichiers qui prennent souvent de la place pour rien : installeurs et images disque dans Téléchargements pas touchés depuis 30 jours, sauvegardes d'iPhone et d'iPad, et fichiers en double (même contenu) dans Bureau, Documents, Téléchargements, Images, Vidéos et Musique.
 since {0}: {1} ==> depuis le {0} : {1}
 Since {0}: {1}. ==> Depuis le {0} : {1}.
 Size now ==> Taille actuelle
@@ -13703,7 +16420,6 @@ warm ==> tiède
 Wear ==> Usure
 Weather ==> Météo
 What it may do ==> Ce qu'elle peut faire
-What each extension of your browsers may do. ==> Ce que peut faire chaque extension de vos navigateurs.
 Windows 11 (the rest under "Show more options") ==> Windows 11 (le reste sous « Afficher d'autres options »)
 Windows 11 right-click menu back ==> Retour du menu du clic droit de Windows 11
 Windows allows 18 hours at most. ==> Windows accepte 18 heures au plus.
@@ -13726,7 +16442,6 @@ Windows.old holds the previous version of Windows after a big update, so you can
 winsat.exe is not on this Windows (speed test) ==> winsat.exe n'est pas sur ce Windows (test de vitesse)
 Write ==> Écriture
 Writing... ==> Écriture...
-Your own files that often take space for nothing. YSO only shows them: you decide, in File Explorer. ==> Vos propres fichiers qui prennent souvent de la place pour rien. YSO ne fait que les montrer : vous décidez, dans l'Explorateur de fichiers.
 Your volumes (the data of your containers) stay. ==> Vos volumes (les données de vos conteneurs) restent.
 YSO can limit it to {0} (5 % of the drive). That is enough for several restore points. ==> YSO peut le limiter à {0} (5 % du disque). C'est assez pour plusieurs points de restauration.
 YSO deletes nothing here. Click a line to see the file in File Explorer, and delete it there if you do not need it. ==> YSO ne supprime rien ici. Cliquez sur une ligne pour voir le fichier dans l'Explorateur de fichiers, et supprimez-le là si vous n'en avez pas besoin.
@@ -13756,6 +16471,481 @@ YSO shows the size and whether going back is still possible, then asks. While yo
 {0} old installer(s) in Downloads ==> {0} ancien(s) installeur(s) dans Téléchargements
 {0} removed from the right-click menu ==> {0} retiré du menu du clic droit
 {0}:00 and {1}:00 ==> {0} h et {1} h
+(SHA-256 of the JSON file saved with this PDF) ==> (SHA-256 du fichier JSON enregistré avec ce PDF)
+{0:N0} % of nominal at the start, {1:N0} % at the end, {2} MHz on average ==> {0:N0} % du nominal au début, {1:N0} % à la fin, {2} MHz en moyenne
+{0:N0} % of the median of {1} results ==> {0:N0} % de la médiane de {1} résultats
+{0:N0} h of use ({1:N0} days) ==> {0:N0} h d'utilisation ({1:N0} jours)
+{0} (newest {1}), {2} ==> {0} (la plus récente : {1}), {2}
+{0} / 10 (Windows' own score, Reliability Monitor) ==> {0} / 10 (la note de Windows, Moniteur de fiabilité)
+{0} % of life left ==> {0} % de durée de vie restante
+{0} % of the disk reads very slowly ==> {0} % du disque se lit très lentement
+{0} checks on {1} cores, none wrong ==> {0} vérifications sur {1} cœurs, aucune fausse
+{0} corrected memory error(s) ==> {0} erreur(s) mémoire corrigée(s)
+{0} could not be deleted completely (a program or an editor is using it?). ==> {0} n'ont pas pu être supprimés entièrement (un programme ou un éditeur s'en sert ?).
+{0} dead pixel(s) ==> {0} pixel(s) mort(s)
+{0} did not finish in {1} minutes. ==> {0} n'a pas fini en {1} minutes.
+{0} fatal and {1} corrected hardware error(s) in {2} days ==> {0} erreur(s) matérielle(s) fatale(s) et {1} corrigée(s) en {2} jours
+{0} media error(s) ==> {0} erreur(s) de support
+{0} min {1:00} s left ==> encore {0} min {1:00} s
+{0} min {1:00} s left, speed {2:N0} % of nominal ==> encore {0} min {1:00} s, vitesse {2:N0} % du nominal
+{0} MT/s (rated {1}) ==> {0} MT/s (prévue pour {1})
+{0} mWh now, {1} mWh when new ({2} %) ==> {0} mWh aujourd'hui, {1} mWh neuve ({2} %)
+{0} network(s) found ==> {0} réseau(x) trouvé(s)
+{0} of {1} mWh ==> {0} sur {1} mWh
+{0} of {1} ports answered ==> {0} port(s) sur {1} ont répondu
+{0} on this PC: {1} ==> {0} sur ce PC : {1}
+{0} on this PC. For each one, YSO asks before deleting its files. ==> {0} sur ce PC. Pour chacun, YSO demande avant de supprimer ses fichiers.
+{0} plugged in so far, {1} s left ==> {0} branché(s) jusqu'ici, encore {1} s
+{0} read error(s) Windows could not correct ==> {0} erreur(s) de lecture que Windows n'a pas pu corriger
+{0} read in {1} mode, {2} error(s), median {3} MB/s, slowest {4} MB/s ==> {0} lus en mode {1}, {2} erreur(s), médiane {3} Mo/s, le plus lent {4} Mo/s
+{0} read, {1} error(s) ==> {0} lus, {1} erreur(s)
+{0} reallocated sector(s) ==> {0} secteur(s) réalloué(s)
+{0} s left ==> encore {0} s
+{0} s on {1} cores, {2} checks, {3} wrong ==> {0} s sur {1} cœurs, {2} vérifications, {3} fausse(s)
+{0} samples/min (Blender {1}, {2}, median of {3} runs) ==> {0} échantillons/min (Blender {1}, {2}, médiane de {3} passages)
+{0} samples/min (Blender {1}, median of {2} runs, spread {3} %) ==> {0} échantillons/min (Blender {1}, médiane de {2} passages, écart {3} %)
+{0} sector(s) that could not be read ==> {0} secteur(s) illisible(s)
+{0} sector(s) waiting to be reallocated ==> {0} secteur(s) en attente de réallocation
+{0} security or update sites blocked ==> {0} site(s) de sécurité ou de mise à jour bloqué(s)
+{0} sites blocked (an ad blocker list?) ==> {0} sites bloqués (une liste anti-pub ?)
+{0} sites sent to another address ==> {0} site(s) envoyé(s) vers une autre adresse
+{0} that download and run something ==> {0} qui téléchargent et lancent quelque chose
+{0} wrong result(s) on core(s) {1} ==> {0} résultat(s) faux sur le(s) cœur(s) {1}
+{0}, changed {1}, made again by: {2} ==> {0}, modifié {1}, refait par : {2}
+{0}, on {1} day(s) ==> {0}, sur {1} jour(s)
+{0}: {1:N0} % faster than on {2} (same scenes, Blender {3}) ==> {0} : {1:N0} % plus rapide que le {2} (mêmes scènes, Blender {3})
+{0}: {1:N0} % slower than on {2} (same scenes, Blender {3}) ==> {0} : {1:N0} % plus lent que le {2} (mêmes scènes, Blender {3})
+{0}: {1} % of life left now, {2} % on {3} ==> {0} : {1} % de durée de vie restante aujourd'hui, {2} % le {3}
+{0}: {1} written since {2} ==> {0} : {1} écrits depuis le {2}
+{0}: as fast as on {1} (Blender {2}, within the normal 2 to 5 %) ==> {0} : aussi rapide que le {1} (Blender {2}, dans les 2 à 5 % normaux)
+{0}: fewer hours of use than on {1}: its counter went back ==> {0} : moins d'heures d'utilisation que le {1} : son compteur a reculé
+{0}: gets security updates ==> {0} : reçoit les mises à jour de sécurité
+{0}: not a known search engine ==> {0} : pas un moteur de recherche connu
+{0}: security updates end on {1}. Install the newer version from Settings > Windows Update. ==> {0} : les mises à jour de sécurité s'arrêtent le {1}. Installez la version plus récente depuis Paramètres > Windows Update.
+{0}: security updates ended on {1}. Settings > Windows Update offers the newer version. ==> {0} : les mises à jour de sécurité se sont arrêtées le {1}. Paramètres > Windows Update propose la version plus récente.
+{0}: security updates until {1} ==> {0} : mises à jour de sécurité jusqu'au {1}
+{0}. Shown only: Windows needs these files. ==> {0}. Affiché seulement : Windows a besoin de ces fichiers.
+{0}/100, grade {1} ==> {0}/100, niveau {1}
+1. Screen ==> 1. Écran
+2 or 3 dead pixels ==> 2 ou 3 pixels morts
+2. Keyboard ==> 2. Clavier
+3. Touchpad ==> 3. Pavé tactile
+4 or more dead pixels ==> 4 pixels morts ou plus
+4. Speakers, left and right ==> 4. Haut-parleurs, gauche et droite
+5. Microphone ==> 5. Micro
+6 or more ==> 6 ou plus
+6. Webcam ==> 6. Webcam
+7. USB ports ==> 7. Ports USB
+8. Wi-Fi and Bluetooth ==> 8. Wi-Fi et Bluetooth
+9. Charger ==> 9. Chargeur
+A build folder comes back the next time you build the project. A file you delete in File Explorer goes to the Recycle Bin. ==> Un dossier de build revient à la prochaine compilation du projet. Un fichier supprimé dans l'Explorateur de fichiers va dans la Corbeille.
+A company, a school or an antivirus can set these. On a home PC, unknown ones often come from adware: the browser then shows "Managed by your organization". Uninstall the program that set them, or ask for help. ==> Une entreprise, une école ou un antivirus peut les définir. Sur un PC personnel, celles qu'on ne connaît pas viennent souvent d'un logiciel publicitaire : le navigateur affiche alors « Géré par votre organisation ». Désinstallez le programme qui les a mises, ou demandez de l'aide.
+A dead area or a crack ==> Une zone morte ou une fissure
+A mouse or a network card that wakes the PC at night: Device Manager > the device > Power Management > untick Allow this device to wake the computer. ==> Une souris ou une carte réseau qui réveille le PC la nuit : Gestionnaire de périphériques > le périphérique > Gestion de l'alimentation > décochez Autoriser ce périphérique à sortir l'ordinateur du mode veille.
+A professional gets the full serial numbers; a public listing gets them shortened. ==> Un professionnel reçoit les numéros de série complets ; une annonce publique les reçoit raccourcis.
+A stain or light leaking ==> Une tache ou une fuite de lumière
+A web page that asks you to press Win+R and paste something is a scam (a fake "I am not a robot" check). If you did it, run a full scan in Windows Security and change your passwords from another device. ==> Une page web qui vous demande d'appuyer sur Win+R et de coller quelque chose est une arnaque (une fausse vérification « Je ne suis pas un robot »). Si vous l'avez fait, lancez une analyse complète dans Sécurité Windows et changez vos mots de passe depuis un autre appareil.
+Account ==> Compte
+Accounts not used for 6 months ==> Comptes inutilisés depuis 6 mois
+adapter present and working ==> adaptateur présent et fonctionnel
+adapter reports a problem ==> l'adaptateur signale un problème
+Adds the Blender Benchmark, compared with the same model, and a test of the video memory. Downloads a few hundred MB from Blender and GitHub. ==> Ajoute le Blender Benchmark, comparé au même modèle, et un test de la mémoire vidéo. Télécharge quelques centaines de Mo depuis Blender et GitHub.
+Adds the processor under load for 10 minutes, a read of each drive and the guided tests: screen, keyboard, sound, microphone, webcam, ports. ==> Ajoute le processeur en charge pendant 10 minutes, une lecture de chaque disque et les tests guidés : écran, clavier, son, micro, webcam, ports.
+All your browsing goes through it. Normal at work or school; on a home PC, if you did not set it up, switch it off in Settings > Network & internet > Proxy. ==> Toute votre navigation passe par lui. Normal au travail ou à l'école ; sur un PC personnel, si vous ne l'avez pas configuré, désactivez-le dans Paramètres > Réseau et Internet > Proxy.
+almost silent ({0} %) ==> presque muet ({0} %)
+Also lock in the updates installed so far (ResetBase)? A little more space, but no installed update can be uninstalled after it. ==> Rendre aussi définitives les mises à jour installées jusqu'ici (ResetBase) ? Un peu plus de place, mais aucune mise à jour installée ne pourra plus être désinstallée.
+An unknown search engine is often set by a program installed with something else (adware). Change it in the browser: Settings > Search engine. ==> Un moteur de recherche inconnu est souvent mis par un programme installé avec autre chose (logiciel publicitaire). Changez-le dans le navigateur : Paramètres > Moteur de recherche.
+Asking Windows for its optional parts... ==> Demande à Windows ses composants facultatifs...
+Backspace ==> Retour arrière
+backup of its cache failed ==> la sauvegarde de son cache a échoué
+Battery: {0} % now, {1} % on {2} ==> Batterie : {0} % aujourd'hui, {1} % le {2}
+Battery: fewer charge cycles than on {0}: not the same battery, or its counter was reset ==> Batterie : moins de cycles de charge que le {0} : ce n'est pas la même batterie, ou son compteur a été remis à zéro
+Beep {0} of {1}: where did you hear it? ==> Bip {0} sur {1} : où l'avez-vous entendu ?
+Blender Benchmark ==> Blender Benchmark
+Blender Benchmark on the {0}, run {1} of {2} ==> Blender Benchmark sur le {0}, passage {1} sur {2}
+Blender Benchmark: available versions ==> Blender Benchmark : versions disponibles
+Blender Benchmark: devices ==> Blender Benchmark : appareils
+Bluetooth ==> Bluetooth
+Browsers (extensions, search) ==> Navigateurs (extensions, recherche)
+Build folders of code projects ==> Dossiers de build des projets de code
+C:\Windows\Installer keeps a copy of each program installed with Windows Installer (.msi) and of its updates. Windows needs them to repair, update or uninstall those programs. ==> C:\Windows\Installer garde une copie de chaque programme installé avec Windows Installer (.msi) et de ses mises à jour. Windows en a besoin pour réparer, mettre à jour ou désinstaller ces programmes.
+calculated by YSO ==> calculé par YSO
+Capacity ==> Capacité
+Capacity left ==> Capacité restante
+Charger ==> Chargeur
+Checks the antivirus, the firewall, Windows Update, how long this version of Windows gets security updates, and the Secure Boot certificates (the 2011 ones expired in 2026). Then it looks for what scams and malware leave behind: remote access apps (AnyDesk, TeamViewer...), commands pasted in Win+R that download something (fake "I am not a robot" pages), a hosts file that blocks security sites or sends a site elsewhere, and a proxy. With Microsoft Defender, it can update the virus definitions and run a quick scan (5 to 15 minutes). ==> Vérifie l'antivirus, le pare-feu, Windows Update, jusqu'à quand cette version de Windows reçoit les mises à jour de sécurité, et les certificats Secure Boot (ceux de 2011 ont expiré en 2026). Puis cherche ce que laissent les arnaques et les logiciels malveillants : applis d'accès à distance (AnyDesk, TeamViewer...), commandes collées dans Win+R qui téléchargent quelque chose (fausses pages « Je ne suis pas un robot »), un fichier hosts qui bloque des sites de sécurité ou envoie un site ailleurs, et un proxy. Avec Microsoft Defender, il peut mettre à jour les définitions de virus et lancer une analyse rapide (5 à 15 minutes).
+Choose Quick, Complete or Deep, and answer the guided tests. ==> Choisissez Rapide, Complet ou Approfondi, et répondez aux tests guidés.
+Clean the old copies now? ==> Nettoyer les anciennes copies maintenant ?
+Click (or press a key) for the next colour. Esc to finish. Look closely at the whole screen. ==> Cliquez (ou appuyez sur une touche) pour la couleur suivante. Échap pour finir. Regardez bien tout l'écran.
+Click the passport you want. ==> Cliquez sur le passeport voulu.
+Commands pasted in Win+R ==> Commandes collées dans Win+R
+Compact OS, old updates and drivers, unused parts of Windows. ==> Compact OS, anciennes mises à jour et anciens pilotes, composants de Windows inutilisés.
+Compact OS, the reserved space, the restore point limit and the parts of Windows: Undo YSO changes (32). A OneDrive file: right-click it, Always keep on this device. The index builds itself again. Old updates, old drivers and an account's files cannot be put back. ==> Compact OS, l'espace réservé, la limite des points de restauration et les composants de Windows : Annuler les modifications de YSO (32). Un fichier OneDrive : clic droit, Toujours conserver sur cet appareil. L'index se reconstruit tout seul. Les anciennes mises à jour, les anciens pilotes et les fichiers d'un compte ne peuvent pas être remis.
+complete passport ==> passeport complet
+Complete passport (about 20 minutes) ==> Passeport complet (environ 20 minutes)
+complete passport with the deep test ==> passeport complet avec le test approfondi
+Complete passport with the deep test (about 50 minutes) ==> Passeport complet avec le test approfondi (environ 50 minutes)
+Cooling ==> Refroidissement
+Copy what must be kept first: open C:\Users and look in its folder. ==> Copiez d'abord ce qu'il faut garder : ouvrez C:\Users et regardez dans son dossier.
+Cores and threads ==> Cœurs et threads
+Corrected memory errors (WHEA 47) ==> Erreurs mémoire corrigées (WHEA 47)
+Corrected PCI Express errors (WHEA 17) ==> Erreurs PCI Express corrigées (WHEA 17)
+Corrected processor errors (WHEA 19) ==> Erreurs processeur corrigées (WHEA 19)
+Cost: the updates cleaned can no longer be uninstalled. It takes 5 to 30 minutes and can stay on the same percentage for a while. ==> Coût : les mises à jour nettoyées ne peuvent plus être désinstallées. Cela prend 5 à 30 minutes et peut rester un moment sur le même pourcentage.
+Create a sleep report (what used the battery while the PC was asleep)? ==> Créer un rapport de veille (ce qui a utilisé la batterie pendant que le PC dormait) ?
+critical warning: {0} ==> alerte critique : {0}
+Data read ==> Données lues
+Data written ==> Données écrites
+dead area or crack ==> zone morte ou fissure
+DEEP TEST ==> TEST APPROFONDI
+Delete {0} build folder(s), {1}? They do not go to the Recycle Bin. ==> Supprimer {0} dossier(s) de build, {1} ? Ils ne vont pas dans la Corbeille.
+Delete the files and settings of {0}? This cannot be undone. ==> Supprimer les fichiers et les réglages de {0} ? C'est définitif.
+Delete the ticked ones ==> Supprimer ce qui est coché
+Deleted: {0} ==> Supprimé : {0}
+Deleting build folders ==> Suppression des dossiers de build
+Do you see the picture of the webcam? ==> Voyez-vous l'image de la webcam ?
+does not work ==> ne fonctionne pas
+Done: {0} folder(s) deleted, {1} freed. ==> Terminé : {0} dossier(s) supprimé(s), {1} libérés.
+Download them and start? ==> Les télécharger et commencer ?
+Downloading Blender {0} ==> Téléchargement de Blender {0}
+Downloading memtest_vulkan ==> Téléchargement de memtest_vulkan
+Downloading the benchmark scenes ==> Téléchargement des scènes du test
+Downloading the Blender Benchmark launcher ==> Téléchargement du lanceur Blender Benchmark
+Drive {0} of {1} is no longer in this PC ==> Le disque {0} du {1} n'est plus dans ce PC
+E = English, F = French ==> E = anglais, F = français
+Each line says what it costs before YSO asks: a little more processor work for Compact OS, a big update that may wait for free space, the oldest restore points deleted to fit the limit, OneDrive files that need internet to open, a search that finds only part of your files for a few hours, updates and drivers you can no longer go back to. For an unused account, YSO asks one by one and shows its size and last use. The Installer cache is only shown: Windows needs it. ==> Chaque ligne dit ce qu'elle coûte avant que YSO ne demande : un peu plus de travail du processeur pour Compact OS, une grosse mise à jour qui peut attendre de la place libre, les plus anciens points de restauration supprimés pour tenir dans la limite, des fichiers OneDrive qui demandent Internet pour s'ouvrir, une recherche qui ne trouve qu'une partie de vos fichiers pendant quelques heures, des mises à jour et des pilotes vers lesquels on ne peut plus revenir. Pour un compte inutilisé, YSO demande un par un et montre sa taille et sa dernière utilisation. Le cache de Windows Installer est seulement affiché : Windows en a besoin.
+Each part gets a score out of 100. When the hardware gives a percentage (battery health, SSD life left), the score is that percentage; otherwise YSO calculates it with fixed rules, written next to each factor. Grades: A from 85, B from 70, C from 50, D below; the battery follows Back Market (85 % for computers), SSDs their life left (A from 90 %). ==> Chaque composant reçoit une note sur 100. Quand le matériel donne un pourcentage (santé de la batterie, durée de vie restante du SSD), la note est ce pourcentage ; sinon YSO la calcule avec des règles fixes, écrites à côté de chaque facteur. Niveaux : A dès 85, B dès 70, C dès 50, D en dessous ; la batterie suit Back Market (85 % pour les ordinateurs), les SSD leur durée de vie restante (A dès 90 %).
+Edge could not make the PDF: the passport is saved as a web page on your Desktop. Open it, then print it to PDF (Ctrl+P). ==> Edge n'a pas pu créer le PDF : le passeport est enregistré comme page web sur votre Bureau. Ouvrez-la, puis imprimez-la en PDF (Ctrl+P).
+English ==> Anglais
+Enter = {0} ==> Entrée = {0}
+errors found ==> erreurs trouvées
+estimated by the maker ==> estimé par le fabricant
+Every account of this PC was used in the last 6 months. ==> Chaque compte de ce PC a servi dans les 6 derniers mois.
+Every part in detail ==> Chaque composant en détail
+Everything about the PC in one report: Windows and how long it gets security updates, hardware, disk space and wear, battery capacity, Windows Update, recent crashes, Windows' stability index, what woke the PC from sleep, security and drivers. It also says when the memory runs slower than it is made for, or when one memory stick works alone. For each problem, an arrow shows the tool that helps. ==> Tout sur le PC dans un seul rapport : Windows et jusqu'à quand il reçoit les mises à jour de sécurité, le matériel, l'espace disque et l'usure, la capacité de la batterie, Windows Update, les plantages récents, l'indice de stabilité de Windows, ce qui a réveillé le PC, la sécurité et les pilotes. Il dit aussi quand la mémoire tourne moins vite que prévu, ou quand une seule barrette travaille seule. Pour chaque problème, une flèche montre l'outil qui aide.
+Exact computations ==> Calculs exacts
+Exact computations: each core repeats computations whose result is known in advance (SHA-256, floating point, integers). One wrong result means a faulty core: grade D. Video memory: memtest_vulkan writes patterns and reads them back for 5 minutes. ==> Calculs exacts : chaque cœur répète des calculs dont le résultat est connu d'avance (SHA-256, virgule flottante, entiers). Un seul résultat faux signifie un cœur défectueux : niveau D. Mémoire vidéo : memtest_vulkan écrit des motifs et les relit pendant 5 minutes.
+Extensions, search engine, notifications, policies. ==> Extensions, moteur de recherche, notifications, stratégies.
+Factor ==> Facteur
+Fan at rest ==> Ventilateur au repos
+Fatal hardware errors (WHEA 18) ==> Erreurs matérielles fatales (WHEA 18)
+Firmware ==> Micrologiciel
+Firmware (BIOS) ==> Micrologiciel (BIOS)
+Folders a code project makes when it is built (node_modules, target, bin and obj...). The project's own tool makes them again in a few minutes; your code is not touched. Ticked: projects not changed for 90 days. ==> Dossiers qu'un projet de code crée quand il est compilé (node_modules, target, bin et obj...). L'outil du projet les recrée en quelques minutes ; votre code n'est pas touché. Cochés : les projets non modifiés depuis 90 jours.
+For 60 seconds YSO watches the USB ports. Plug a USB stick or a mouse into each port, one after the other. ==> Pendant 60 secondes, YSO surveille les ports USB. Branchez une clé USB ou une souris dans chaque port, l'un après l'autre.
+For each one, YSO asks. Its files (Desktop, Documents, Pictures...) and settings are deleted: this cannot be undone. The account itself stays and starts empty if someone signs in to it again. ==> Pour chacun, YSO demande. Ses fichiers (Bureau, Documents, Images...) et ses réglages sont supprimés : c'est définitif. Le compte lui-même reste et repart vide si quelqu'un s'y reconnecte.
+Four short beeps, each in one speaker, in an order YSO picks at random. Say where you heard each one. ==> Quatre bips courts, chacun dans un haut-parleur, dans un ordre choisi au hasard par YSO. Dites où vous avez entendu chacun.
+French ==> Français
+Full security details: option 21. Crash details: option 20. Every part of the PC with a score: PC passport (40). ==> Détails de sécurité : option 21. Détails des plantages : option 20. Chaque composant du PC avec une note : Passeport du PC (40).
+Grade ==> Niveau
+Grade {0}, limited by: {1}. The grade of the PC is the grade of its weakest part. ==> Niveau {0}, limité par : {1}. Le niveau du PC est celui de son composant le plus faible.
+Grade {0}: every part tested is in the best band. ==> Niveau {0} : chaque composant testé est dans la meilleure tranche.
+Graphics card ==> Carte graphique
+Graphics cards ==> Cartes graphiques
+graphics driver reset on {0} day(s) in {1} days ==> pilote graphique réinitialisé sur {0} jour(s) en {1} jours
+Graphics driver resets and timeouts ==> Réinitialisations et délais dépassés du pilote graphique
+Guided tests ==> Tests guidés
+GUIDED TESTS ==> TESTS GUIDÉS
+Handwriting ==> Écriture manuscrite
+Hardware errors of the last 90 days ==> Erreurs matérielles des 90 derniers jours
+highest {0} °C ==> au plus {0} °C
+highest {0} rpm ==> au plus {0} tr/min
+Hosts file ==> Fichier hosts
+Hours of use ==> Heures d'utilisation
+I did not press them ==> Je ne les ai pas appuyées
+I heard nothing ==> Je n'ai rien entendu
+In which language? ==> Dans quelle langue ?
+installed on {0} ==> installé le {0}
+Intel Core 13th/14th gen with microcode {0}: update the BIOS to 0x12F or later ==> Intel Core 13e/14e génération avec le microcode {0} : mettez à jour le BIOS vers 0x12F ou plus récent
+Internet Explorer mode files ==> Fichiers du mode Internet Explorer
+its charge gauge needs a reset: the real wear is not known ==> sa jauge de charge doit être réinitialisée : l'usure réelle n'est pas connue
+Its files ==> Ses fichiers
+kept {0:N0} % of its speed after {1} min, limit down to {2} % ==> a gardé {0:N0} % de sa vitesse après {1} min, limite descendue à {2} %
+Keyboard ==> Clavier
+Keyboard test ==> Test du clavier
+Keyboard, sound, ports ==> Clavier, son, ports
+Kind ==> Type
+Left ==> Gauche
+left and right swapped or unclear ==> gauche et droite inversés ou pas clairs
+left speaker silent ==> haut-parleur gauche muet
+Left-click here ==> Clic gauche ici
+Life left ==> Durée de vie restante
+life left not reported ==> durée de vie restante non indiquée
+Limits: no consumer chip counts its own wear, so the processor and graphics card are judged on what wear causes: speed, heat, errors. The exact processor temperature needs a kernel driver, which YSO does not install. A test that passes does not prove that a rare fault never happens. This report was made on the PC by its owner and is not certified. ==> Limites : aucune puce grand public ne compte sa propre usure, donc le processeur et la carte graphique sont jugés sur ce que l'usure provoque : vitesse, chaleur, erreurs. La température exacte du processeur demande un pilote noyau, que YSO n'installe pas. Un test réussi ne prouve pas qu'une panne rare n'arrive jamais. Ce rapport a été fait sur le PC par son propriétaire et n'est pas certifié.
+Load test ==> Test en charge
+long-term edition (LTSC) ==> édition à long terme (LTSC)
+Looking for {0} files... ==> Recherche des fichiers de {0}...
+Looking for code projects in your folders (can take a minute)... ==> Recherche des projets de code dans vos dossiers (peut prendre une minute)...
+Looks at your browsers: the extensions of Chrome, Edge, Brave, Vivaldi, Opera and Firefox and what each one may do, the default search engine, the sites allowed to send notifications, and the policies a program set (extensions installed by force, a search engine or home page you cannot change). ==> Examine vos navigateurs : les extensions de Chrome, Edge, Brave, Vivaldi, Opera et Firefox et ce que chacune peut faire, le moteur de recherche par défaut, les sites autorisés à envoyer des notifications, et les stratégies qu'un programme a définies (extensions installées de force, moteur de recherche ou page d'accueil impossibles à changer).
+loudest moment {0} % ==> moment le plus fort {0} %
+Lowest performance limit ==> Limite de performance la plus basse
+Made in ==> Fabriqué en
+Made on {0} by YSO {1}, {2} ==> Fait le {0} par YSO {1}, {2}
+Margin: about 5 points either way, mostly because two PCs of the same model differ by a few %, and two runs on the same PC by 2 to 5 %. Between two passports of this PC, about 2 to 3 points. ==> Marge : environ 5 points dans un sens ou dans l'autre, surtout parce que deux PC du même modèle diffèrent de quelques %, et deux passages sur le même PC de 2 à 5 %. Entre deux passeports de ce PC, environ 2 à 3 points.
+Math Input Panel (handwritten equations) ==> Panneau de saisie mathématique (équations manuscrites)
+Math Input Panel, Steps Recorder, WordPad, XPS Viewer, and handwriting, OCR and speech for languages you do not use. ==> Panneau de saisie mathématique, Enregistreur d'actions, WordPad, Visionneuse XPS, et l'écriture manuscrite, l'OCR et la parole des langues que vous n'utilisez pas.
+Measure ==> Mesure
+measured ==> mesuré
+measured by a test ==> mesuré par un test
+Measured when you choose it (about a minute). The updates cleaned can no longer be uninstalled. ==> Mesuré quand vous le choisissez (environ une minute). Les mises à jour nettoyées ne peuvent plus être désinstallées.
+measured, no reference for this model ==> mesuré, pas de référence pour ce modèle
+Measuring (about a minute)... ==> Mesure en cours (environ une minute)...
+Media Telegram for PC keeps after you open it. Shown only. ==> Les médias que Telegram pour PC garde après les avoir ouverts. Affiché seulement.
+memtest_vulkan could not be downloaded: the video memory is not tested. ==> memtest_vulkan n'a pas pu être téléchargé : la mémoire vidéo n'est pas testée.
+memtest_vulkan found errors ==> memtest_vulkan a trouvé des erreurs
+memtest_vulkan was not used: the file does not match the checksum GitHub publishes for it. ==> memtest_vulkan n'a pas été utilisé : le fichier ne correspond pas à l'empreinte que GitHub publie pour lui.
+memtest_vulkan: no errors in {0} min ==> memtest_vulkan : aucune erreur en {0} min
+Method and limits ==> Méthode et limites
+Microcode ==> Microcode
+Microphone ==> Micro
+Microsoft Defender and Edge block the extras bundled with free programs: toolbars, coupon add-ons, coin miners, ad injectors. ==> Microsoft Defender et Edge bloquent les extras fournis avec les programmes gratuits : barres d'outils, modules de coupons, mineurs de cryptomonnaie, injecteurs de pubs.
+Motherboard ==> Carte mère
+Network adapters ==> Cartes réseau
+Never delete files there by hand: programs could no longer be updated or uninstalled. To make it smaller, uninstall programs you no longer use (Uninstall apps, 31). ==> N'y supprimez jamais de fichiers à la main : des programmes ne pourraient plus être mis à jour ni désinstallés. Pour le réduire, désinstallez les programmes que vous n'utilisez plus (Désinstaller des applications, 31).
+never tested: the score comes from the error logs only ==> jamais testée : la note vient seulement des journaux d'erreurs
+No Chrome, Edge, Brave, Vivaldi or Opera profile found. ==> Aucun profil Chrome, Edge, Brave, Vivaldi ou Opera trouvé.
+no errors ==> aucune erreur
+no microphone could record ==> aucun micro n'a pu enregistrer
+no network found ==> aucun réseau trouvé
+No passport yet on this PC. ==> Aucun passeport sur ce PC pour l'instant.
+No PDF ==> Pas de PDF
+no signature ==> aucune signature
+No site may send notifications. ==> Aucun site ne peut envoyer de notifications.
+No user name or PC name is in this report. ==> Aucun nom d'utilisateur ni nom de PC ne figure dans ce rapport.
+node_modules, target, bin and obj...: the project's own tool makes them again. Ticked: projects not changed for 90 days. ==> node_modules, target, bin et obj... : l'outil du projet les recrée. Cochés : les projets non modifiés depuis 90 jours.
+Nominal speed ==> Vitesse nominale
+none on this PC ==> aucun sur ce PC
+None on this PC. ==> Aucun sur ce PC.
+None: your browsers do what you set in them. ==> Aucune : vos navigateurs font ce que vous y avez réglé.
+not all keys pressed ==> toutes les touches n'ont pas été appuyées
+not measured ==> non mesuré
+not tested ==> non testé
+Nothing could be scored on this PC. ==> Rien n'a pu être noté sur ce PC.
+Nothing is changed. An extension that can read every site sees what you type there, passwords included. Pop-ups near the clock that say "you have a virus" usually come from a site allowed to send notifications. An unknown search engine or policy often comes from adware. ==> Rien n'est modifié. Une extension qui peut lire tous les sites voit ce que vous y tapez, mots de passe compris. Les fenêtres près de l'horloge qui disent « vous avez un virus » viennent en général d'un site autorisé à envoyer des notifications. Un moteur de recherche ou une stratégie inconnus viennent souvent d'un logiciel publicitaire.
+Nothing is changed. It can make Windows' detailed battery report and, on laptops with modern standby, the sleep report (what used the battery while asleep); both open in your browser. It can also save a one-page PDF of the report on your Desktop, to send to someone who helps you (no user name, PC name or file name in it). ==> Rien n'est modifié. Il peut créer le rapport détaillé de la batterie de Windows et, sur les portables à veille moderne, le rapport de veille (ce qui a utilisé la batterie pendant la veille) ; les deux s'ouvrent dans votre navigateur. Il peut aussi enregistrer un PDF d'une page du rapport sur votre Bureau, à envoyer à quelqu'un qui vous aide (sans nom d'utilisateur, nom de PC ni nom de fichier).
+nothing suspicious ==> rien de suspect
+Nothing to clean: Windows did it already. ==> Rien à nettoyer : Windows l'a déjà fait.
+Nothing to remove: these parts are not on this PC. ==> Rien à supprimer : ces composants ne sont pas sur ce PC.
+Nothing to undo: the tests change nothing. The tools the deep test downloads (a few hundred MB) are kept for the next one. ==> Rien à annuler : les tests ne modifient rien. Les outils que télécharge le test approfondi (quelques centaines de Mo) sont gardés pour le prochain.
+Nothing to undo. Remove an extension or a notification site from the browser's own settings; YSO says where. ==> Rien à annuler. Retirez une extension ou un site de notifications dans les paramètres du navigateur ; YSO dit où.
+Nothing wrong ==> Rien d'anormal
+Number = tick or untick, D = delete the ticked ones, Enter = back ==> Numéro = cocher ou décocher, D = supprimer ce qui est coché, Entrée = retour
+Number = tick or untick, D = remove the ticked ones, Enter = back ==> Numéro = cocher ou décocher, D = retirer ce qui est coché, Entrée = retour
+Old copies in it ==> Anciennes copies dedans
+Old copies of Windows updates ==> Anciennes copies des mises à jour de Windows
+Old copies of Windows updates (WinSxS) ==> Anciennes copies des mises à jour de Windows (WinSxS)
+Old installers, phone backups, files there twice, code build folders. ==> Vieux installateurs, sauvegardes de téléphone, fichiers en double, dossiers de build.
+Old updates that can go ==> Anciennes mises à jour à retirer
+One dead pixel ==> Un pixel mort
+One memory stick only: a second identical one (dual channel) doubles the memory bandwidth, which games and built-in graphics feel. ==> Une seule barrette de mémoire : une deuxième identique (double canal) double la bande passante mémoire, ce que ressentent les jeux et la puce graphique intégrée.
+one module only: a second one would double the bandwidth, if the PC has a free slot ==> une seule barrette : une deuxième doublerait la bande passante, si le PC a un emplacement libre
+Only Defender's own update and scan: no setting is changed. Each finding can also be normal (a remote app you use, a proxy at work): what matters is whether you set it up yourself. ==> Seulement la mise à jour et l'analyse de Defender : aucun réglage n'est modifié. Chaque constat peut aussi être normal (une appli à distance que vous utilisez, un proxy au travail) : ce qui compte, c'est si vous l'avez mis en place vous-même.
+Only the build folders can be deleted here, with tick boxes: those of projects not changed for 90 days are ticked, and the project's own tool (npm install, cargo build, dotnet build...) makes them again. Everything else is shown only: a click opens it in File Explorer, and you decide there. OneDrive files that are online only are never read. ==> Seuls les dossiers de build peuvent être supprimés ici, avec des cases à cocher : ceux des projets non modifiés depuis 90 jours sont cochés, et l'outil du projet (npm install, cargo build, dotnet build...) les recrée. Tout le reste est seulement affiché : un clic l'ouvre dans l'Explorateur de fichiers, et vous décidez là. Les fichiers OneDrive uniquement en ligne ne sont jamais lus.
+Open it ==> L'ouvrir
+Open the Camera app to check the webcam? ==> Ouvrir l'appli Caméra pour vérifier la webcam ?
+Open the folder of the passports? ==> Ouvrir le dossier des passeports ?
+Optional parts of Windows. Each one can be added back from Settings > System > Optional features (Windows downloads it again). ==> Composants facultatifs de Windows. Chacun peut être rajouté depuis Paramètres > Système > Fonctionnalités facultatives (Windows le télécharge à nouveau).
+P = PDF for a professional (full serial numbers), A = PDF for a listing (shortened serial numbers), Enter = no PDF ==> P = PDF pour un professionnel (numéros de série complets), A = PDF pour une annonce (numéros de série raccourcis), Entrée = pas de PDF
+Part ==> Composant
+Part of Windows: {0} (downloaded again from Windows Update) ==> Composant de Windows : {0} (retéléchargé depuis Windows Update)
+partial ==> partiel
+Parts of Windows ==> Composants de Windows
+Parts of Windows removed: {0} ==> Composants de Windows retirés : {0}
+Parts of Windows you do not use ==> Composants de Windows inutilisés
+PARTS OF WINDOWS YOU DO NOT USE ==> COMPOSANTS DE WINDOWS INUTILISÉS
+Passport fingerprint ==> Empreinte du passeport
+PC passport ==> Passeport du PC
+PC PASSPORT ==> PASSEPORT DU PC
+PC passport (health of each part) ==> Passeport du PC (santé de chaque composant)
+PDF for a listing ==> PDF pour une annonce
+PDF for a professional ==> PDF pour un professionnel
+Performance against the same model ==> Performance face au même modèle
+Performance against the same model: the Blender Benchmark (the official tool of Blender Open Data) is run three times, and the median of each scene is compared with the median of the public results of the same processor or graphics card, with the same Blender version. Every point from 95 % of the median, none at 55 %. ==> Performance face au même modèle : le Blender Benchmark (l'outil officiel de Blender Open Data) tourne trois fois, et la médiane de chaque scène est comparée à la médiane des résultats publics du même processeur ou de la même carte graphique, avec la même version de Blender. Tous les points dès 95 % de la médiane, aucun à 55 %.
+Photos, videos and documents you received and opened on this PC. Keep what you want to save before you delete: WhatsApp may no longer download old media again. ==> Photos, vidéos et documents reçus et ouverts sur ce PC. Gardez ce que vous voulez conserver avant de supprimer : WhatsApp peut ne plus retélécharger les anciens médias.
+Plain colours fill the screen. Look for a dot that never changes colour (a dead pixel), a stain, or light leaking at the edges. ==> Des couleurs unies remplissent l'écran. Cherchez un point qui ne change jamais de couleur (un pixel mort), une tache ou de la lumière qui fuit sur les bords.
+Play it again ==> Rejouer
+Plug a laptop in and close your other apps. ==> Branchez le portable et fermez vos autres applications.
+Plug a USB stick or mouse into each port, one after the other ==> Branchez une clé USB ou une souris dans chaque port, l'un après l'autre
+Plug the charger in: YSO waits 30 seconds for it. ==> Branchez le chargeur : YSO l'attend 30 secondes.
+Points ==> Points
+Pop-ups "you have a virus" or "you won" near the clock usually come from a site allowed here. To stop one: in the browser, Settings > Privacy and security > Site settings > Notifications (Chrome), or Settings > Cookies and site permissions > Notifications (Edge). ==> Les fenêtres « vous avez un virus » ou « vous avez gagné » près de l'horloge viennent en général d'un site autorisé ici. Pour en arrêter un : dans le navigateur, Paramètres > Confidentialité et sécurité > Paramètres des sites > Notifications (Chrome), ou Paramètres > Cookies et autorisations de site > Notifications (Edge).
+Power cycles ==> Mises sous tension
+PowerShell ISE (for scripts) ==> PowerShell ISE (pour les scripts)
+Press every key below, one after the other. They turn green. Then click Done. ==> Appuyez sur chaque touche ci-dessous, l'une après l'autre. Elles deviennent vertes. Puis cliquez sur Terminé.
+Previous passports ==> Passeports précédents
+PREVIOUS PASSPORTS ==> PASSEPORTS PRÉCÉDENTS
+processor ==> processeur
+Processor test not done: {0} ==> Test du processeur non fait : {0}
+Processor under load for 10 minutes, every computation checked ==> Processeur en charge pendant 10 minutes, chaque calcul vérifié
+Processor under load, {0} cores ==> Processeur en charge, {0} cœurs
+Proxy ==> Proxy
+no proxy ==> aucun proxy
+Quick (2 minutes) only reads. Complete (20 minutes) adds the processor under load for 10 minutes with every computation checked core by core, a read of each drive and guided tests (screen, keyboard, sound, microphone, webcam, ports). Deep (50 minutes) adds the Blender Benchmark, compared with the median of the same model on Blender Open Data, and a test of the video memory (memtest_vulkan); it downloads them first. No chip measures its own wear, so a score has a margin: about 5 points for one passport, 2 to 3 points between two passports of the same PC. Each passport stays on this PC and can be saved as a PDF on your Desktop: full serial numbers for a professional, shortened ones for a listing. ==> Rapide (2 minutes) ne fait que lire. Complet (20 minutes) ajoute le processeur en charge pendant 10 minutes avec chaque calcul vérifié cœur par cœur, une lecture de chaque disque et des tests guidés (écran, clavier, son, micro, webcam, ports). Approfondi (50 minutes) ajoute le Blender Benchmark, comparé à la médiane du même modèle sur Blender Open Data, et un test de la mémoire vidéo (memtest_vulkan) ; il les télécharge d'abord. Aucune puce ne mesure sa propre usure, donc une note a une marge : environ 5 points pour un passeport, 2 à 3 points entre deux passeports du même PC. Chaque passeport reste sur ce PC et peut être enregistré en PDF sur votre Bureau : numéros de série complets pour un professionnel, raccourcis pour une annonce.
+quick passport ==> passeport rapide
+Quick passport (about 2 minutes) ==> Passeport rapide (environ 2 minutes)
+Read test ==> Test de lecture
+Reading {0} ==> Lecture de {0}
+Reading {0} (512 samples over the whole disk, nothing is written) ==> Lecture de {0} (512 échantillons sur tout le disque, rien n'est écrit)
+Reading the parts changes nothing. The tests load the PC: plug a laptop in, and close your other apps first. ==> Lire les composants ne change rien. Les tests chargent le PC : branchez le portable et fermez d'abord vos autres applications.
+Reading the parts of the PC ==> Lecture des composants du PC
+Reallocated sectors ==> Secteurs réalloués
+Recording: speak now ==> Enregistrement : parlez maintenant
+Reference results of Blender Open Data ==> Résultats de référence de Blender Open Data
+reliability reduced by media errors ==> fiabilité réduite par des erreurs de support
+Remote access apps ==> Applis d'accès à distance
+Remove {0} part(s) of Windows? ==> Retirer {0} composant(s) de Windows ?
+Removing parts of Windows ==> Retrait des composants de Windows
+Right ==> Droite
+right speaker silent ==> haut-parleur droit muet
+Right-click here ==> Clic droit ici
+Run a passport again in a few months: it shows what changed since the first one. ==> Refaites un passeport dans quelques mois : il montre ce qui a changé depuis le premier.
+Run it anyway? It comes from download.blender.org. ==> Le lancer quand même ? Il vient de download.blender.org.
+running ==> en cours
+runs below its rated speed: turn on XMP or EXPO in the BIOS ==> tourne sous sa vitesse prévue : activez XMP ou EXPO dans le BIOS
+samples ==> échantillons
+Save the PDF for a professional or for a listing. ==> Enregistrez le PDF pour un professionnel ou pour une annonce.
+Saved on your Desktop: {0} and the JSON file of every measure ==> Enregistré sur votre Bureau : {0} et le fichier JSON de chaque mesure
+Score ==> Note
+SCORE ==> NOTE
+Screen ==> Écran
+Screen test ==> Test de l'écran
+Screens ==> Écrans
+Scroll here (two fingers) ==> Faites défiler ici (deux doigts)
+SEARCH ENGINE ==> MOTEUR DE RECHERCHE
+Sectors waiting ==> Secteurs en attente
+Secure Boot certificates ==> Certificats Secure Boot
+Security chip (TPM) ==> Puce de sécurité (TPM)
+serial {0} ==> n° de série {0}
+Serial number ==> Numéro de série
+Serial numbers are shortened in this copy. No user name or PC name is in it. ==> Les numéros de série sont raccourcis dans cette copie. Aucun nom d'utilisateur ni nom de PC n'y figure.
+SET BY A PROGRAM (POLICIES) ==> DÉFINI PAR UN PROGRAMME (STRATÉGIES)
+Settings and leftovers of Windows that give space back: Compact OS (Windows compresses its own files, 2 to 4 GB), the space Windows keeps for updates (about 7 GB), the space restore points may use, OneDrive files not opened for 60 days, a search index that grew too big, old copies of Windows updates (WinSxS), old driver versions, parts of Windows you do not use, accounts nobody used for 6 months, and the size of the Windows Installer cache. ==> Réglages et restes de Windows qui rendent de la place : Compact OS (Windows compresse ses propres fichiers, 2 à 4 Go), l'espace que Windows garde pour les mises à jour (environ 7 Go), l'espace que peuvent prendre les points de restauration, les fichiers OneDrive pas ouverts depuis 60 jours, un index de recherche devenu trop gros, les anciennes copies des mises à jour de Windows (WinSxS), les anciennes versions de pilotes, les composants de Windows inutilisés, les comptes que personne n'a utilisés depuis 6 mois, et la taille du cache de Windows Installer.
+Settings and leftovers of Windows that give space back. Each one says what it costs and whether it can be undone; YSO asks before changing anything. ==> Réglages et restes de Windows qui rendent de la place. Chacun dit ce qu'il coûte et s'il peut être annulé ; YSO demande avant de modifier quoi que ce soit.
+setup script {0} ==> script de configuration {0}
+Shows your own files that often take space for nothing: installers and disk images in Downloads not touched for 30 days, iPhone and iPad backups, files that are there twice (same content) in Desktop, Documents, Downloads, Pictures, Videos and Music, build folders of code projects (node_modules, target, bin and obj...), the photos and videos of WhatsApp for PC and the cache of Telegram for PC. ==> Montre vos propres fichiers qui prennent souvent de la place pour rien : installateurs et images disque dans Téléchargements non touchés depuis 30 jours, sauvegardes d'iPhone et d'iPad, fichiers en double (même contenu) dans Bureau, Documents, Téléchargements, Images, Vidéos et Musique, dossiers de build des projets de code (node_modules, target, bin et obj...), les photos et vidéos de WhatsApp pour PC et le cache de Telegram pour PC.
+SIGNS OF A SCAM OR HIJACK ==> SIGNES D'ARNAQUE OU DE DÉTOURNEMENT
+SINCE THE FIRST PASSPORT ==> DEPUIS LE PREMIER PASSEPORT
+SITES THAT MAY SEND NOTIFICATIONS ==> SITES QUI PEUVENT ENVOYER DES NOTIFICATIONS
+Size of the folder ==> Taille du dossier
+Skip ==> Passer
+slowed down by heat ==> ralenti par la chaleur
+Slows down from ==> Ralentit à partir de
+slows down from {0} °C ==> ralentit à partir de {0} °C
+Some parts are removed for good at the next restart. ==> Certains composants sont retirés pour de bon au prochain redémarrage.
+Spare space ==> Réserve
+spare space {0} %, below its threshold ==> réserve {0} %, sous son seuil
+spare space below its threshold ==> réserve sous son seuil
+Speakers ==> Haut-parleurs
+Speech recognition ==> Reconnaissance vocale
+Speed during the test ==> Vitesse pendant le test
+Stability ==> Stabilité
+Stability index ==> Indice de stabilité
+Stability index of Windows ==> Indice de stabilité de Windows
+stain or light leak ==> tache ou fuite de lumière
+Start the keyboard test? ==> Commencer le test du clavier ?
+Start the microphone test? ==> Commencer le test du micro ?
+Start the screen test? ==> Commencer le test de l'écran ?
+Start the sound test? ==> Commencer le test du son ?
+Start the touchpad test? ==> Commencer le test du pavé tactile ?
+Start the USB test? ==> Commencer le test USB ?
+starts with Windows ==> démarre avec Windows
+Steps Recorder (Windows removes it in a later version) ==> Enregistreur d'actions (Windows le retire dans une prochaine version)
+still the 2011 ones, which expired in 2026 ==> encore ceux de 2011, qui ont expiré en 2026
+Summary ==> Résumé
+switched to read-only ==> passé en lecture seule
+Switches off, with tick boxes: ads and suggestions in Windows, tips on the lock screen, web results (Bing) in the Start menu search, ad tracking, unwanted apps that come with downloads (Defender and Edge block them), diagnostic data and activity history, Copilot, Recall and Click to Do, the AI features of Edge, Notepad and Paint, and ads in Edge. ==> Désactive, avec des cases à cocher : les pubs et suggestions de Windows, les astuces de l'écran de verrouillage, les résultats web (Bing) dans la recherche du menu Démarrer, le suivi publicitaire, les applis indésirables qui viennent avec les téléchargements (Defender et Edge les bloquent), les données de diagnostic et l'historique d'activités, Copilot, Recall et Cliquer pour faire, les fonctions d'IA d'Edge, du Bloc-notes et de Paint, et les pubs d'Edge.
+Telegram cache ==> Cache de Telegram
+Temperature at rest ==> Température au repos
+temperature beyond its limit ==> température au-delà de sa limite
+Testing the video memory (memtest_vulkan) ==> Test de la mémoire vidéo (memtest_vulkan)
+Text recognition (OCR) ==> Reconnaissance de texte (OCR)
+Text to speech ==> Synthèse vocale
+the battery did not see a charger ==> la batterie n'a vu aucun chargeur
+the battery reports the same original and current capacity: possibly misread ==> la batterie indique la même capacité d'origine et actuelle : peut-être mal lue
+The Blender Benchmark launcher gave no Blender version: performance is not measured. ==> Le lanceur Blender Benchmark n'a donné aucune version de Blender : la performance n'est pas mesurée.
+The Blender Benchmark launcher is not signed by the Blender Foundation ({0}). ==> Le lanceur Blender Benchmark n'est pas signé par la Blender Foundation ({0}).
+the browser's own ==> celui du navigateur
+The deep test downloads the Blender Benchmark launcher and Blender (download.blender.org), 3 test scenes and memtest_vulkan (GitHub). Your results are not sent anywhere. ==> Le test approfondi télécharge le lanceur Blender Benchmark et Blender (download.blender.org), 3 scènes de test et memtest_vulkan (GitHub). Vos résultats ne sont envoyés nulle part.
+the drive predicts its own failure ==> le disque prévoit sa propre panne
+the fan turns at {0:N0} % of the speed it is asked for ==> le ventilateur tourne à {0:N0} % de la vitesse demandée
+The grade of the PC is the grade of its weakest part, as refurbishers do. The score of the PC is the weighted mean of its parts: drives and battery 20 each, processor and memory 15 each, graphics card, screen and the rest 10 each. ==> Le niveau du PC est celui de son composant le plus faible, comme font les reconditionneurs. La note du PC est la moyenne pondérée de ses composants : disques et batterie 20 chacun, processeur et mémoire 15 chacun, carte graphique, écran et le reste 10 chacun.
+The hosts file (C:\Windows\System32\drivers\etc\hosts) can send a site to another address. Malware uses it to block antivirus updates or fake a site. If you did not change it yourself, Windows Security can restore it. ==> Le fichier hosts (C:\Windows\System32\drivers\etc\hosts) peut envoyer un site vers une autre adresse. Des logiciels malveillants s'en servent pour bloquer les mises à jour de l'antivirus ou imiter un site. Si vous ne l'avez pas modifié vous-même, Sécurité Windows peut le restaurer.
+The last {0} days in Windows' logs ==> Les {0} derniers jours dans les journaux de Windows
+The memory runs at {0} MT/s, below the {1} it is made for. The processor may not allow more; otherwise the memory profile in the BIOS (XMP or EXPO) sets it to full speed. ==> La mémoire tourne à {0} MT/s, sous les {1} pour lesquels elle est faite. Le processeur ne permet peut-être pas plus ; sinon le profil mémoire du BIOS (XMP ou EXPO) la met à pleine vitesse.
+The memory was never tested on this PC. Windows Memory Diagnostic runs at the next restart, before Windows loads (10 to 30 minutes); the next passport reads its result. ==> La mémoire n'a jamais été testée sur ce PC. Diagnostic de mémoire Windows tourne au prochain redémarrage, avant le chargement de Windows (10 à 30 minutes) ; le prochain passeport lit son résultat.
+The PC keeps starting, but it cannot get new protections for startup. Windows Update installs the new certificates by itself; if it does not, a BIOS (UEFI) update from your PC maker usually brings them. ==> Le PC continue de démarrer, mais il ne peut plus recevoir de nouvelles protections du démarrage. Windows Update installe les nouveaux certificats tout seul ; sinon, une mise à jour du BIOS (UEFI) du fabricant de votre PC les apporte en général.
+The precise state of each part of the PC, with a score out of 100 and a grade (A to D): drives, battery, processor, memory, graphics card, screen and devices. Each score comes from measures, not from a guess: what the part reports about itself (the drive's wear, the battery's capacity), the hardware errors Windows recorded in 90 days, and tests that load the part and check every result. ==> L'état précis de chaque composant du PC, avec une note sur 100 et un niveau (A à D) : disques, batterie, processeur, mémoire, carte graphique, écran et périphériques. Chaque note vient de mesures, pas d'une estimation : ce que le composant dit de lui-même (l'usure du disque, la capacité de la batterie), les erreurs matérielles que Windows a notées en 90 jours, et des tests qui chargent le composant et vérifient chaque résultat.
+The precise state of every part of this PC, with a score out of 100 for each, and a detailed PDF to send to a professional or a buyer. ==> L'état précis de chaque composant de ce PC, avec une note sur 100 pour chacun, et un PDF détaillé à envoyer à un professionnel ou à un acheteur.
+the read test hit {0} unreadable block(s) ==> le test de lecture a rencontré {0} bloc(s) illisible(s)
+The reference results of Blender Open Data could not be downloaded: the scores are measured, but not compared with the same model. ==> Les résultats de référence de Blender Open Data n'ont pas pu être téléchargés : les notes sont mesurées, mais pas comparées au même modèle.
+The state of each part, with a score and a PDF. ==> L'état de chaque composant, avec une note et un PDF.
+These are the settings Windows and Edge offer for it. Some are policies: Windows or Edge then shows "managed by your organization", which is normal. Some changes show after you sign out. Windows Update and the Store are never touched; of Defender, only the blocking of unwanted apps. ==> Ce sont les réglages que Windows et Edge proposent pour cela. Certains sont des stratégies : Windows ou Edge affiche alors « géré par votre organisation », ce qui est normal. Certains changements apparaissent après la déconnexion. Windows Update et le Store ne sont jamais touchés ; de Defender, seulement le blocage des applis indésirables.
+These keys sent nothing: {0}. Do they not work? ==> Ces touches n'ont rien envoyé : {0}. Ne fonctionnent-elles pas ?
+They do not work ==> Elles ne fonctionnent pas
+They let someone else control this PC. If you did not install one yourself, or someone on the phone asked you to, uninstall it (Settings > Apps) and change your passwords. ==> Elles permettent à quelqu'un d'autre de contrôler ce PC. Si vous n'en avez pas installé une vous-même, ou si quelqu'un au téléphone vous l'a demandé, désinstallez-la (Paramètres > Applications) et changez vos mots de passe.
+This PC and its firmware ==> Ce PC et son micrologiciel
+This PC has no sleep report: it uses classic sleep, which Windows does not record this way. ==> Ce PC n'a pas de rapport de veille : il utilise la veille classique, que Windows n'enregistre pas ainsi.
+threshold {0} ==> seuil {0}
+Tick the folders of projects you do not work on, then Delete. ==> Cochez les dossiers des projets sur lesquels vous ne travaillez pas, puis Supprimer.
+Tick what you do not use, then Remove. ==> Cochez ce que vous n'utilisez pas, puis Retirer.
+Ticked: {0} ==> Coché : {0}
+To empty it the Telegram way: Telegram > Settings > Advanced > Manage local storage. Your chats stay online. ==> Pour le vider à la manière de Telegram : Telegram > Paramètres > Avancé > Gérer le stockage local. Vos discussions restent en ligne.
+Total ==> Total
+Touchpad ==> Pavé tactile
+Touchpad test ==> Test du pavé tactile
+TPM endorsement key (SHA-256) ==> Clé d'approbation du TPM (SHA-256)
+Under load ==> En charge
+Unsafe shutdowns ==> Arrêts brutaux
+Unused accounts ==> Comptes inutilisés
+Unwanted apps that come with downloads ==> Applis indésirables qui viennent avec les téléchargements
+up to {0} °C ==> jusqu'à {0} °C
+up to {0} °C under load ==> jusqu'à {0} °C en charge
+up to date (2023) ==> à jour (2023)
+USB ports ==> Ports USB
+Values reported by the hardware ==> Valeurs indiquées par le matériel
+version {0} ==> version {0}
+Versions a newer driver replaced and that no device uses. A graphics driver is often 1 GB each. ==> Versions remplacées par un pilote plus récent et qu'aucun périphérique n'utilise. Un pilote graphique fait souvent 1 Go chacun.
+Video memory ==> Mémoire vidéo
+Video memory not tested: {0} ==> Mémoire vidéo non testée : {0}
+Video memory test ==> Test de la mémoire vidéo
+Waiting for the charger ==> En attente du chargeur
+Webcam ==> Webcam
+week {0} of {1} ==> semaine {0} de {1}
+Weight ==> Poids
+What cannot be undone is always asked separately: emptying the Recycle Bin, old driver versions, old copies of Windows updates, Windows.old, old restore points, the files of an account not used for 6 months, a network reset. Full maintenance and driver updates create a restore point first. ==> Ce qui ne peut pas être annulé est toujours demandé à part : vider la Corbeille, les anciennes versions de pilotes, les anciennes copies des mises à jour de Windows, Windows.old, les anciens points de restauration, les fichiers d'un compte inutilisé depuis 6 mois, une réinitialisation réseau. La maintenance complète et les mises à jour de pilotes créent d'abord un point de restauration.
+What changed since the first one, and the folder where YSO keeps them. ==> Ce qui a changé depuis le premier, et le dossier où YSO les garde.
+What decides it ==> Ce qui la décide
+What did you see? ==> Qu'avez-vous vu ?
+What every part reports about itself, and the hardware errors of the last 90 days. ==> Ce que chaque composant dit de lui-même, et les erreurs matérielles des 90 derniers jours.
+What scams and malware often leave behind. Each one can also be normal: what matters is whether you set it up yourself. ==> Ce que les arnaques et les logiciels malveillants laissent souvent derrière eux. Chaque point peut aussi être normal : ce qui compte, c'est si vous l'avez mis en place vous-même.
+What woke the PC (7 days) ==> Ce qui a réveillé le PC (7 jours)
+What you received and opened in WhatsApp for PC. Shown only. ==> Ce que vous avez reçu et ouvert dans WhatsApp pour PC. Affiché seulement.
+WhatsApp photos and videos ==> Photos et vidéos de WhatsApp
+When Windows updates its files, it keeps the old copies so that an update can be uninstalled. Windows removes them by itself after a while; this does it now. ==> Quand Windows met à jour ses fichiers, il garde les anciennes copies pour qu'une mise à jour puisse être désinstallée. Windows les retire tout seul au bout d'un moment ; ceci le fait maintenant.
+Wi-Fi ==> Wi-Fi
+Wi-Fi: {0}. Bluetooth: {1}. ==> Wi-Fi : {0}. Bluetooth : {1}.
+Windows 10 {0}: no more security updates. Windows 11, or Extended Security Updates for Windows 10 22H2, keeps it protected. ==> Windows 10 {0} : plus de mises à jour de sécurité. Windows 11, ou les mises à jour de sécurité étendues (ESU) de Windows 10 22H2, le gardent protégé.
+Windows 10: support ended in October 2025. Security updates go on until {0} only if this PC is enrolled in Extended Security Updates (Settings > Windows Update). ==> Windows 10 : le support a pris fin en octobre 2025. Les mises à jour de sécurité continuent jusqu'au {0} seulement si ce PC est inscrit aux mises à jour de sécurité étendues (Paramètres > Windows Update).
+Windows could not measure it now. Try again after a restart. ==> Windows n'a pas pu le mesurer maintenant. Réessayez après un redémarrage.
+Windows did not answer: {0} ==> Windows n'a pas répondu : {0}
+Windows Installer cache ==> Cache de Windows Installer
+Windows is installing the 2023 ones: restart when it asks ==> Windows installe ceux de 2023 : redémarrez quand il le demande
+Windows is waiting for a restart: this can only be done after it. Restart, then try again. ==> Windows attend un redémarrage : ceci ne peut se faire qu'après. Redémarrez, puis réessayez.
+Windows keeps every version of a driver it ever installed, and a graphics driver is often 1 GB each time. Only versions that no device uses and that a newer one replaced are shown. ==> Windows garde chaque version d'un pilote qu'il a installée, et un pilote graphique fait souvent 1 Go à chaque fois. Seules les versions qu'aucun périphérique n'utilise et qu'une plus récente a remplacées sont affichées.
+Windows Media Player Legacy ==> Lecteur Windows Media hérité
+Windows Memory Diagnostic on {0}: {1} ==> Diagnostic de mémoire Windows le {0} : {1}
+Windows reports a warning ==> Windows signale un avertissement
+Windows reports it as failing ==> Windows le signale en panne
+Windows support ==> Support de Windows
+Without the deep test, the scores come from what the parts report and from the tests run: no comparison with other PCs of the same model. ==> Sans le test approfondi, les notes viennent de ce que disent les composants et des tests faits : pas de comparaison avec d'autres PC du même modèle.
+WordPad (no longer part of Windows) ==> WordPad (ne fait plus partie de Windows)
+works ==> fonctionne
+XPS Viewer ==> Visionneuse XPS
+Your own files that often take space for nothing. YSO deletes only build folders you tick yourself; everything else opens in File Explorer, where you decide. ==> Vos propres fichiers qui prennent souvent de la place pour rien. YSO ne supprime que les dossiers de build que vous cochez vous-même ; tout le reste s'ouvre dans l'Explorateur de fichiers, où vous décidez.
+YSO never deletes your passwords, cookies, browsing history, bookmarks, site data, messages, Downloads, Documents, browser extensions or game files. The only files of yours it can delete are the build folders of code projects you tick yourself (34). Files in use are skipped, recent temporary files are kept (24 hours by default), folder links are never followed, and system folders are refused. ==> YSO ne supprime jamais vos mots de passe, cookies, historique de navigation, favoris, données de sites, messages, Téléchargements, Documents, extensions de navigateur ni fichiers de jeux. Les seuls fichiers à vous qu'il peut supprimer sont les dossiers de build des projets de code que vous cochez vous-même (34). Les fichiers utilisés sont sautés, les fichiers temporaires récents sont gardés (24 heures par défaut), les liens de dossiers ne sont jamais suivis, et les dossiers système sont refusés.
+YSO records 3 seconds. Speak or clap during them. ==> YSO enregistre 3 secondes. Parlez ou tapez dans vos mains pendant ce temps.
+YSO saw {0} device(s) plugged in. How many ports did you try? ==> YSO a vu {0} appareil(s) branché(s). Combien de ports avez-vous essayés ?
+YSO shows something, you say what you saw or heard. Each test can be skipped. ==> YSO montre quelque chose, vous dites ce que vous avez vu ou entendu. Chaque test peut être passé.
 '@
     $h = New-Object System.Collections.Hashtable ([StringComparer]::Ordinal)
     foreach ($line in ($pairs -split "`r?`n")) {

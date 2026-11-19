@@ -35,6 +35,7 @@ for lang in en fr; do
 24-right-click right-click
 25-preinstalled preinstalled
 26-extensions extensions
+27-passport passport
 MAP
 done
 git log -1 --format='pictures from %s' origin/ci-pictures
